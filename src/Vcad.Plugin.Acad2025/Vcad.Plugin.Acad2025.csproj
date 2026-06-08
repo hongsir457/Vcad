@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <AssemblyName>Vcad.Plugin.Acad2025</AssemblyName>
+    <RootNamespace>Vcad.Plugin</RootNamespace>
+    <PlatformTarget>x64</PlatformTarget>
+    <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>true</UseWPF>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <OutputType>Library</OutputType>
+    <Description>VCAD plugin for AutoCAD 2025+ (.NET 8).</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Vcad.Plugin.Shared\**\*.cs" LinkBase="Shared" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Vcad.Core\Vcad.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <!--
+    Autodesk managed DLLs MUST NOT be committed or packaged.
+    Set the AutoCAD2025_Managed environment variable to your local
+    "AutoCAD 2025\inc" path containing AcMgd.dll / AcDbMgd.dll / AcCoreMgd.dll.
+  -->
+  <ItemGroup Condition="'$(AutoCAD2025_Managed)' != ''">
+    <Reference Include="AcMgd">
+      <HintPath>$(AutoCAD2025_Managed)\AcMgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="AcDbMgd">
+      <HintPath>$(AutoCAD2025_Managed)\AcDbMgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="AcCoreMgd">
+      <HintPath>$(AutoCAD2025_Managed)\AcCoreMgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

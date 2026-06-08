@@ -1,0 +1,39 @@
+{
+  "version": "vcad_dsl_v1",
+  "unit": "mm",
+  "coordinate_system": "WCS",
+  "commands": [
+    {
+      "type": "create_layer",
+      "id": "LAYER-A-WALL",
+      "name": "A-WALL",
+      "color": 7
+    },
+    {
+      "type": "create_layer",
+      "id": "LAYER-T-TEXT",
+      "name": "T-TEXT",
+      "color": 2
+    },
+    {
+      "type": "draw_rectangle",
+      "id": "RECT-001",
+      "origin": [0, 0],
+      "width": 6000,
+      "height": 4000,
+      "rotation": 0,
+      "layer": "A-WALL"
+    },
+    {
+      "type": "draw_text",
+      "id": "TEXT-001",
+      "text": "VCAD DEMO",
+      "position": [1000, 500],
+      "height": 250,
+      "rotation": 0,
+      "alignment": "left",
+      "text_style": "STANDARD",
+      "layer": "T-TEXT"
+    }
+  ]
+}

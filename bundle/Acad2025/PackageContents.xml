@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ApplicationPackage
+  SchemaVersion="1.0"
+  AutodeskProduct="AutoCAD"
+  ProductType="Application"
+  Name="VCAD Plugin (AutoCAD 2025+)"
+  Description="Open-source AutoCAD plugin for executing VCAD DSL commands."
+  AppVersion="0.1.0"
+  Author="VCAD Contributors"
+  HelpFile="./Contents/README_FIRST.txt"
+  ProductCode="{8F5C7C70-9B36-4F8C-A9F7-2C5A5B7A0011}"
+  UpgradeCode="{8F5C7C70-9B36-4F8C-A9F7-2C5A5B7A0010}">
+
+  <CompanyDetails Name="VCAD Contributors" Url="" />
+
+  <Components>
+    <RuntimeRequirements
+      OS="Win64"
+      Platform="AutoCAD"
+      SeriesMin="R25.0" />
+    <ComponentEntry
+      AppName="VCAD"
+      AppDescription="VCAD Plugin"
+      Version="0.1.0"
+      ModuleName="./Contents/Vcad.Plugin.Acad2025.dll"
+      PerDocument="False"
+      LoadOnAutoCADStartup="True"
+      LoadOnCommandInvocation="True">
+      <Commands GroupName="VCADCommands">
+        <Command Global="VCAD" Local="VCAD" />
+      </Commands>
+    </ComponentEntry>
+  </Components>
+
+</ApplicationPackage>

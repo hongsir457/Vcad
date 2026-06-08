@@ -1,0 +1,45 @@
+name: Bug report
+description: Plugin load failure, drawing error, sidebar issue, crash.
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: VCAD version
+      placeholder: e.g. v0.1.0
+    validations: { required: true }
+  - type: dropdown
+    id: autocad
+    attributes:
+      label: AutoCAD version
+      options:
+        - "AutoCAD 2017"
+        - "AutoCAD 2018"
+        - "AutoCAD 2019"
+        - "AutoCAD 2020"
+        - "AutoCAD 2021"
+        - "AutoCAD 2022"
+        - "AutoCAD 2023"
+        - "AutoCAD 2024"
+        - "AutoCAD 2025"
+        - "AutoCAD 2026"
+        - "Other"
+    validations: { required: true }
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Open AutoCAD ...
+        2. Type VCAD ...
+        3. Paste this JSON ...
+        4. Click Run.
+    validations: { required: true }
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened? (paste sidebar log if relevant)

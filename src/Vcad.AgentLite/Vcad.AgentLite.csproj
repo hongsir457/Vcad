@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Vcad.AgentLite</AssemblyName>
+    <RootNamespace>Vcad.AgentLite</RootNamespace>
+    <Description>Local HTTP service that turns natural language into VCAD DSL. Binds 127.0.0.1 only.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Vcad.Core\Vcad.Core.csproj" />
+  </ItemGroup>
+
+</Project>

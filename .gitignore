@@ -1,0 +1,44 @@
+# Build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+out/
+artifacts/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Rider
+.idea/
+
+# NuGet
+packages/
+*.nupkg
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
+
+# User secrets / agent config (never commit real keys)
+agent.config.json
+secrets/
+**/*.local.json
+
+# Autodesk DLLs must never be committed
+**/AcMgd.dll
+**/AcDbMgd.dll
+**/AcCoreMgd.dll
+**/acmgd.dll
+**/acdbmgd.dll
+**/accoremgd.dll
+
+# Release zips
+*.zip

@@ -1,0 +1,22 @@
+name: Command request (RFC)
+description: Propose a new VCAD DSL command.
+labels: ["rfc", "command"]
+body:
+  - type: input
+    id: name
+    attributes: { label: "Command name (snake_case)", placeholder: "e.g. draw_polyline" }
+    validations: { required: true }
+  - type: textarea
+    id: usecase
+    attributes: { label: "Use case", placeholder: "Why is this needed? Who asks for it?" }
+    validations: { required: true }
+  - type: textarea
+    id: schema
+    attributes: { label: "Draft DSL schema (JSON snippet)", render: json }
+    validations: { required: true }
+  - type: textarea
+    id: example
+    attributes: { label: "Example DSL", render: json }
+  - type: textarea
+    id: notes
+    attributes: { label: "Notes / open questions" }

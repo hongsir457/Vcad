@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://vcad.dev/schema/vcad_dsl_v1.schema.json",
+  "title": "VCAD DSL v1",
+  "type": "object",
+  "required": ["version", "commands"],
+  "properties": {
+    "version": { "type": "string", "const": "vcad_dsl_v1" },
+    "unit": { "type": "string", "enum": ["mm"] },
+    "coordinate_system": { "type": "string", "enum": ["WCS"] },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "max_commands": { "type": "integer", "minimum": 1, "maximum": 200 }
+      }
+    },
+    "commands": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 200,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/createLayer" },
+          { "$ref": "#/$defs/drawLine" },
+          { "$ref": "#/$defs/drawRectangle" },
+          { "$ref": "#/$defs/drawText" }
+        ]
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "point2d": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 3,
+      "items": { "type": "number" }
+    },
+    "createLayer": {
+      "type": "object",
+      "required": ["type", "name"],
+      "properties": {
+        "type": { "const": "create_layer" },
+        "id": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "color": { "type": "integer", "minimum": 1, "maximum": 255 },
+        "linetype": { "type": "string", "maxLength": 64 },
+        "lineweight": { "type": "integer" },
+        "plot": { "type": "boolean" },
+        "idempotent": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "drawLine": {
+      "type": "object",
+      "required": ["type", "start", "end"],
+      "properties": {
+        "type": { "const": "draw_line" },
+        "id": { "type": "string", "maxLength": 64 },
+        "start": { "$ref": "#/$defs/point2d" },
+        "end": { "$ref": "#/$defs/point2d" },
+        "layer": { "type": "string", "minLength": 1, "maxLength": 255 }
+      },
+      "additionalProperties": false
+    },
+    "drawRectangle": {
+      "type": "object",
+      "required": ["type", "origin", "width", "height"],
+      "properties": {
+        "type": { "const": "draw_rectangle" },
+        "id": { "type": "string", "maxLength": 64 },
+        "origin": { "$ref": "#/$defs/point2d" },
+        "width": { "type": "number", "exclusiveMinimum": 0, "maximum": 100000000 },
+        "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 100000000 },
+        "rotation": { "type": "number" },
+        "layer": { "type": "string", "minLength": 1, "maxLength": 255 }
+      },
+      "additionalProperties": false
+    },
+    "drawText": {
+      "type": "object",
+      "required": ["type", "text", "position", "height"],
+      "properties": {
+        "type": { "const": "draw_text" },
+        "id": { "type": "string", "maxLength": 64 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "position": { "$ref": "#/$defs/point2d" },
+        "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 100000000 },
+        "rotation": { "type": "number" },
+        "alignment": { "type": "string" },
+        "text_style": { "type": "string", "maxLength": 64 },
+        "layer": { "type": "string", "minLength": 1, "maxLength": 255 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

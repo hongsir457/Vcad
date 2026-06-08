@@ -1,0 +1,36 @@
+name: AutoCAD compatibility report
+description: Report whether VCAD loads cleanly on your AutoCAD version.
+labels: ["compat"]
+body:
+  - type: dropdown
+    id: autocad
+    attributes:
+      label: AutoCAD version
+      options:
+        - "AutoCAD 2017"
+        - "AutoCAD 2018"
+        - "AutoCAD 2019"
+        - "AutoCAD 2020"
+        - "AutoCAD 2021"
+        - "AutoCAD 2022"
+        - "AutoCAD 2023"
+        - "AutoCAD 2024"
+        - "AutoCAD 2025"
+        - "AutoCAD 2026"
+    validations: { required: true }
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - "Loaded, VCAD command works, sample DSL drew correctly"
+        - "Loaded but sample DSL failed"
+        - "Failed to load (NETLOAD)"
+        - "Failed to load (bundle)"
+    validations: { required: true }
+  - type: input
+    id: dotnet
+    attributes: { label: ".NET runtime", placeholder: "e.g. 4.8, 8.0.x" }
+  - type: textarea
+    id: notes
+    attributes: { label: "Any notes (error message, SECURELOAD value, etc.)" }
