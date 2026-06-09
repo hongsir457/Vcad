@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Text;
@@ -74,34 +75,55 @@ namespace Vcad.Plugin.UI
                 Padding = new Padding(8),
             };
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 60));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 120));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
 
-            var nlPanel = new Panel { Dock = DockStyle.Fill };
+            // Top: natural-language box with a clear title and a Parse button.
+            var nlGroup = new GroupBox
+            {
+                Text = "1. Natural language  (optional, calls Agent Lite)",
+                Dock = DockStyle.Fill,
+                Padding = new Padding(6, 4, 6, 4),
+            };
+            var nlInner = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1,
+            };
+            nlInner.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            nlInner.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
+            nlInner.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
             _txtNaturalLanguage = new TextBox
             {
                 Multiline = true,
                 Dock = DockStyle.Fill,
+                ScrollBars = ScrollBars.Vertical,
                 Font = new Font("Microsoft YaHei", 9F),
             };
-            var nlHint = new Label
+            _btnUseAgent = new Button
             {
-                Text = "Optional: describe what you want (sent to Agent Lite). Leave empty to paste raw VCAD DSL JSON below.",
-                Dock = DockStyle.Top,
-                ForeColor = Color.DimGray,
-                AutoSize = false,
-                Height = 28,
+                Text = "Parse via Agent",
+                Dock = DockStyle.Fill,
+                Margin = new Padding(6, 0, 0, 0),
             };
-            _btnUseAgent = new Button { Text = "Parse via Agent", Dock = DockStyle.Right, Width = 130 };
             _btnUseAgent.Click += async (s, e) => await OnUseAgentAsync();
-            nlPanel.Controls.Add(_txtNaturalLanguage);
-            nlPanel.Controls.Add(nlHint);
-            nlPanel.Controls.Add(_btnUseAgent);
-            layout.Controls.Add(nlPanel, 0, 0);
+            nlInner.Controls.Add(_txtNaturalLanguage, 0, 0);
+            nlInner.Controls.Add(_btnUseAgent, 1, 0);
+            nlGroup.Controls.Add(nlInner);
+            layout.Controls.Add(nlGroup, 0, 0);
 
+            // Middle: DSL JSON box.
+            var dslGroup = new GroupBox
+            {
+                Text = "2. VCAD DSL JSON  (paste or auto-filled by Agent)",
+                Dock = DockStyle.Fill,
+                Padding = new Padding(6, 4, 6, 4),
+            };
             _txtDsl = new TextBox
             {
                 Multiline = true,
@@ -112,7 +134,8 @@ namespace Vcad.Plugin.UI
                 AcceptsTab = true,
                 Font = new Font("Consolas", 10F),
             };
-            layout.Controls.Add(_txtDsl, 0, 1);
+            dslGroup.Controls.Add(_txtDsl);
+            layout.Controls.Add(dslGroup, 0, 1);
 
             var btnPanel = new FlowLayoutPanel
             {
@@ -129,6 +152,12 @@ namespace Vcad.Plugin.UI
             btnPanel.Controls.Add(_btnSample);
             layout.Controls.Add(btnPanel, 0, 2);
 
+            var logGroup = new GroupBox
+            {
+                Text = "3. Result / log",
+                Dock = DockStyle.Fill,
+                Padding = new Padding(6, 4, 6, 4),
+            };
             _txtLog = new TextBox
             {
                 Multiline = true,
@@ -138,7 +167,8 @@ namespace Vcad.Plugin.UI
                 Font = new Font("Consolas", 9F),
                 BackColor = Color.FromArgb(0xF8, 0xFA, 0xFC),
             };
-            layout.Controls.Add(_txtLog, 0, 3);
+            logGroup.Controls.Add(_txtLog);
+            layout.Controls.Add(logGroup, 0, 3);
 
             _lblStatus = new Label { Text = "Ready.", Dock = DockStyle.Fill, ForeColor = Color.DimGray };
             layout.Controls.Add(_lblStatus, 0, 4);
@@ -180,6 +210,7 @@ namespace Vcad.Plugin.UI
             panel.Controls.Add(new Label { Text = "Provider", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
             _cmbProvider = new ComboBox { Width = 220, DropDownStyle = ComboBoxStyle.DropDownList };
             _cmbProvider.Items.AddRange(new object[] { "openai", "anthropic", "gemini", "ollama", "custom" });
+            _cmbProvider.SelectedIndexChanged += (s, e) => OnProviderChanged();
             panel.Controls.Add(_cmbProvider, 1, row++);
 
             panel.Controls.Add(new Label { Text = "API Base URL", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
@@ -310,6 +341,50 @@ namespace Vcad.Plugin.UI
 
         // --- Settings tab actions ---
 
+        private static readonly Dictionary<string, (string BaseUrl, string Model)> ProviderDefaults =
+            new Dictionary<string, (string, string)>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "openai",    ("https://api.openai.com", "gpt-4o-mini") },
+                { "anthropic", ("https://api.anthropic.com", "claude-3-5-haiku-latest") },
+                { "gemini",    ("https://generativelanguage.googleapis.com", "gemini-1.5-flash") },
+                { "ollama",    ("http://localhost:11434", "llama3.2") },
+                { "custom",    ("", "") },
+            };
+
+        private bool _suppressProviderChange;
+
+        private void OnProviderChanged()
+        {
+            if (_suppressProviderChange) return;
+            var provider = _cmbProvider.SelectedItem as string;
+            if (string.IsNullOrEmpty(provider)) return;
+            if (!ProviderDefaults.TryGetValue(provider, out var def)) return;
+
+            // Always fill defaults when the user picks a new provider,
+            // unless the field clearly holds a non-default value from
+            // a different provider's default (which we'd want to replace).
+            if (string.IsNullOrWhiteSpace(_txtBaseUrl.Text) || IsAnyKnownDefaultBaseUrl(_txtBaseUrl.Text))
+            {
+                _txtBaseUrl.Text = def.BaseUrl;
+            }
+            if (string.IsNullOrWhiteSpace(_txtModel.Text) || IsAnyKnownDefaultModel(_txtModel.Text))
+            {
+                _txtModel.Text = def.Model;
+            }
+        }
+
+        private static bool IsAnyKnownDefaultBaseUrl(string s)
+        {
+            foreach (var kv in ProviderDefaults) if (kv.Value.BaseUrl == s) return true;
+            return false;
+        }
+
+        private static bool IsAnyKnownDefaultModel(string s)
+        {
+            foreach (var kv in ProviderDefaults) if (kv.Value.Model == s) return true;
+            return false;
+        }
+
         private void LoadProfilesIntoUi()
         {
             var store = AgentConfigStore.LoadAll();
@@ -362,13 +437,28 @@ namespace Vcad.Plugin.UI
         private void ApplyProfileToUi(AgentSettings s)
         {
             if (s == null) return;
-            _cmbProvider.SelectedItem = string.IsNullOrEmpty(s.Provider) ? "openai" : s.Provider;
-            _txtBaseUrl.Text = s.ApiBaseUrl ?? "";
-            _txtModel.Text = s.Model ?? "";
-            _txtApiKey.Text = s.ApiKeyPlain ?? "";
-            _numPort.Value = s.AgentPort == 0 ? 8765 : s.AgentPort;
-            _chkStrictJson.Checked = s.StrictJson;
-            _numTimeout.Value = s.TimeoutSeconds == 0 ? 30 : s.TimeoutSeconds;
+            _suppressProviderChange = true;
+            try
+            {
+                var provider = string.IsNullOrEmpty(s.Provider) ? "openai" : s.Provider;
+                _cmbProvider.SelectedItem = provider;
+                var hasDefault = ProviderDefaults.TryGetValue(provider, out var def);
+
+                _txtBaseUrl.Text = !string.IsNullOrEmpty(s.ApiBaseUrl)
+                    ? s.ApiBaseUrl
+                    : (hasDefault ? def.BaseUrl : "");
+                _txtModel.Text = !string.IsNullOrEmpty(s.Model)
+                    ? s.Model
+                    : (hasDefault ? def.Model : "");
+                _txtApiKey.Text = s.ApiKeyPlain ?? "";
+                _numPort.Value = s.AgentPort == 0 ? 8765 : s.AgentPort;
+                _chkStrictJson.Checked = s.StrictJson;
+                _numTimeout.Value = s.TimeoutSeconds == 0 ? 30 : s.TimeoutSeconds;
+            }
+            finally
+            {
+                _suppressProviderChange = false;
+            }
         }
 
         private void OnSaveSettings()

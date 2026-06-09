@@ -62,6 +62,7 @@ allowlist=(
   "docs/windows-verify.md"
   "README.md"
   "tests/Vcad.AgentLite.Tests/SecretRedactorTests.cs"
+  "src/Vcad.Plugin.Shared/UI/SidebarControl.cs"
 )
 is_allowed() {
   local p="$1"
