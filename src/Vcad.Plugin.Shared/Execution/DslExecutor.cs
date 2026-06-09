@@ -38,7 +38,8 @@ namespace Vcad.Plugin.Execution
 
             using (var docLock = doc.LockDocument())
             {
-                doc.Database.StartUndoRecord();
+                // One Transaction.Commit() == one AutoCAD undo record,
+                // so Ctrl+Z undoes the whole batch with a single press.
                 using (var tr = doc.Database.TransactionManager.StartTransaction())
                 {
                     var ctx = new ExecutorContext(doc, tr, mapping);

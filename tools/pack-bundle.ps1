@@ -74,17 +74,33 @@ function Build-One {
     New-Item -ItemType Directory -Path $contents -Force | Out-Null
   }
 
-  # Copy plugin DLL + dependencies, excluding Autodesk managed DLLs
-  # and the compile-only stub assembly.
+  # ALLOWLIST: only ship the plugin's own DLLs plus its direct third-party
+  # dependency. AutoCAD already provides the .NET BCL, so we must NOT
+  # bundle the System.*/netstandard reference assemblies the SDK copies
+  # into bin\, and we must NEVER bundle Autodesk managed DLLs or the
+  # compile-only stub.
+  $allowedNames = @(
+    "Vcad.Plugin.$Name.dll",
+    "Vcad.Plugin.$Name.pdb",
+    'Vcad.Core.dll',
+    'Vcad.Core.pdb',
+    'Newtonsoft.Json.dll'
+  )
   $banned = @(
     'AcMgd.dll','AcDbMgd.dll','AcCoreMgd.dll',
     'acmgd.dll','acdbmgd.dll','accoremgd.dll',
     'Autodesk.AutoCAD.Stubs.dll'
   )
-  Get-ChildItem $outDir -File | Where-Object {
-    ($_.Extension -in '.dll','.pdb','.config') -and ($banned -notcontains $_.Name)
-  } | ForEach-Object {
-    Copy-Item $_.FullName (Join-Path $contents $_.Name) -Force
+  foreach ($name in $allowedNames) {
+    $src = Join-Path $outDir $name
+    if (-not (Test-Path $src -PathType Leaf)) {
+      if ($name -match '\.pdb$') { continue } # pdb is optional
+      throw "Expected build output missing: $name (under $outDir)"
+    }
+    if ($banned -contains $name) {
+      throw "Refusing to ship banned file: $name"
+    }
+    Copy-Item $src (Join-Path $contents $name) -Force
   }
 
   Write-Host "[pack-bundle] populated $contents" -ForegroundColor Green

@@ -255,7 +255,6 @@ namespace Autodesk.AutoCAD.DatabaseServices
         public ObjectId LinetypeTableId => default(ObjectId);
         public ObjectId TextStyleTableId => default(ObjectId);
         public TransactionManager TransactionManager { get; } = new TransactionManager();
-        public void StartUndoRecord() { }
     }
 }
 
