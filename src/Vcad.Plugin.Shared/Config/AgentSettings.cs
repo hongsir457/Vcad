@@ -34,5 +34,8 @@ namespace Vcad.Plugin.Config
 
         [JsonProperty("timeout_seconds")]
         public int TimeoutSeconds { get; set; } = 30;
+
+        [JsonProperty("auto_run_after_parse")]
+        public bool AutoRunAfterParse { get; set; } = false;
     }
 }

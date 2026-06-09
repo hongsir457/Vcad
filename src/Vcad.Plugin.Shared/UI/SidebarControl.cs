@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Text;
@@ -35,6 +36,7 @@ namespace Vcad.Plugin.UI
         private NumericUpDown _numPort;
         private CheckBox _chkStrictJson;
         private NumericUpDown _numTimeout;
+        private CheckBox _chkAutoRun;
         private Button _btnTestConnection;
         private Button _btnSaveSettings;
         private ComboBox _cmbProfile;
@@ -54,11 +56,11 @@ namespace Vcad.Plugin.UI
         {
             _tabs = new TabControl { Dock = DockStyle.Fill };
 
-            var dslTab = new TabPage("DSL Input");
+            var dslTab = new TabPage(Strings.TabDslInput);
             BuildDslTab(dslTab);
             _tabs.TabPages.Add(dslTab);
 
-            var settingsTab = new TabPage("Model Settings");
+            var settingsTab = new TabPage(Strings.TabModelSettings);
             BuildSettingsTab(settingsTab);
             _tabs.TabPages.Add(settingsTab);
 
@@ -84,7 +86,7 @@ namespace Vcad.Plugin.UI
             // Top: natural-language box with a clear title and a Parse button.
             var nlGroup = new GroupBox
             {
-                Text = "1. Natural language  (optional, calls Agent Lite)",
+                Text = Strings.GroupNaturalLanguage,
                 Dock = DockStyle.Fill,
                 Padding = new Padding(6, 4, 6, 4),
             };
@@ -107,7 +109,7 @@ namespace Vcad.Plugin.UI
             };
             _btnUseAgent = new Button
             {
-                Text = "Parse via Agent",
+                Text = Strings.BtnParseViaAgent,
                 Dock = DockStyle.Fill,
                 Margin = new Padding(6, 0, 0, 0),
             };
@@ -120,7 +122,7 @@ namespace Vcad.Plugin.UI
             // Middle: DSL JSON box.
             var dslGroup = new GroupBox
             {
-                Text = "2. VCAD DSL JSON  (paste or auto-filled by Agent)",
+                Text = Strings.GroupDslJson,
                 Dock = DockStyle.Fill,
                 Padding = new Padding(6, 4, 6, 4),
             };
@@ -144,8 +146,8 @@ namespace Vcad.Plugin.UI
                 AutoSize = false,
                 Padding = new Padding(0, 4, 0, 4),
             };
-            _btnRun = new Button { Text = "Run DSL", Width = 110, Height = 28 };
-            _btnSample = new Button { Text = "Load Sample", Width = 110, Height = 28 };
+            _btnRun = new Button { Text = Strings.BtnRunDsl, Width = 110, Height = 28 };
+            _btnSample = new Button { Text = Strings.BtnLoadSample, Width = 110, Height = 28 };
             _btnRun.Click += (s, e) => OnRunDsl();
             _btnSample.Click += (s, e) => OnLoadSample();
             btnPanel.Controls.Add(_btnRun);
@@ -154,7 +156,7 @@ namespace Vcad.Plugin.UI
 
             var logGroup = new GroupBox
             {
-                Text = "3. Result / log",
+                Text = Strings.GroupResultLog,
                 Dock = DockStyle.Fill,
                 Padding = new Padding(6, 4, 6, 4),
             };
@@ -170,7 +172,7 @@ namespace Vcad.Plugin.UI
             logGroup.Controls.Add(_txtLog);
             layout.Controls.Add(logGroup, 0, 3);
 
-            _lblStatus = new Label { Text = "Ready.", Dock = DockStyle.Fill, ForeColor = Color.DimGray };
+            _lblStatus = new Label { Text = Strings.StatusReady, Dock = DockStyle.Fill, ForeColor = Color.DimGray };
             layout.Controls.Add(_lblStatus, 0, 4);
 
             tab.Controls.Add(layout);
@@ -194,58 +196,62 @@ namespace Vcad.Plugin.UI
             }
 
             int row = 0;
-            panel.Controls.Add(new Label { Text = "Profile", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
+            panel.Controls.Add(new Label { Text = Strings.LblProfile, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
             var profileRow = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight };
             _cmbProfile = new ComboBox { Width = 180, DropDownStyle = ComboBoxStyle.DropDownList };
             _cmbProfile.SelectedIndexChanged += (s, e) => OnProfileChanged();
-            _btnNewProfile = new Button { Text = "+ New", Width = 60 };
+            _btnNewProfile = new Button { Text = Strings.BtnNewProfile, Width = 60 };
             _btnNewProfile.Click += (s, e) => OnNewProfile();
-            _btnDeleteProfile = new Button { Text = "Delete", Width = 60 };
+            _btnDeleteProfile = new Button { Text = Strings.BtnDeleteProfile, Width = 60 };
             _btnDeleteProfile.Click += (s, e) => OnDeleteProfile();
             profileRow.Controls.Add(_cmbProfile);
             profileRow.Controls.Add(_btnNewProfile);
             profileRow.Controls.Add(_btnDeleteProfile);
             panel.Controls.Add(profileRow, 1, row++);
 
-            panel.Controls.Add(new Label { Text = "Provider", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
+            panel.Controls.Add(new Label { Text = Strings.LblProvider, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
             _cmbProvider = new ComboBox { Width = 220, DropDownStyle = ComboBoxStyle.DropDownList };
             _cmbProvider.Items.AddRange(new object[] { "openai", "anthropic", "gemini", "ollama", "custom" });
             _cmbProvider.SelectedIndexChanged += (s, e) => OnProviderChanged();
             panel.Controls.Add(_cmbProvider, 1, row++);
 
-            panel.Controls.Add(new Label { Text = "API Base URL", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
+            panel.Controls.Add(new Label { Text = Strings.LblApiBaseUrl, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
             _txtBaseUrl = new TextBox { Width = 320 };
             panel.Controls.Add(_txtBaseUrl, 1, row++);
 
-            panel.Controls.Add(new Label { Text = "Model", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
+            panel.Controls.Add(new Label { Text = Strings.LblModel, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
             _txtModel = new TextBox { Width = 220 };
             panel.Controls.Add(_txtModel, 1, row++);
 
-            panel.Controls.Add(new Label { Text = "API Key", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
+            panel.Controls.Add(new Label { Text = Strings.LblApiKey, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
             var keyRow = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight };
             _txtApiKey = new TextBox { Width = 240, UseSystemPasswordChar = true };
-            _chkShowKey = new CheckBox { Text = "Show", AutoSize = true };
+            _chkShowKey = new CheckBox { Text = Strings.BtnShowKey, AutoSize = true };
             _chkShowKey.CheckedChanged += (s, e) => _txtApiKey.UseSystemPasswordChar = !_chkShowKey.Checked;
             keyRow.Controls.Add(_txtApiKey);
             keyRow.Controls.Add(_chkShowKey);
             panel.Controls.Add(keyRow, 1, row++);
 
-            panel.Controls.Add(new Label { Text = "Agent Port", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
+            panel.Controls.Add(new Label { Text = Strings.LblAgentPort, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
             _numPort = new NumericUpDown { Minimum = 1024, Maximum = 65535, Value = 8765, Width = 90 };
             panel.Controls.Add(_numPort, 1, row++);
 
-            panel.Controls.Add(new Label { Text = "Strict JSON", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
+            panel.Controls.Add(new Label { Text = Strings.LblStrictJson, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
             _chkStrictJson = new CheckBox { Checked = true, AutoSize = true };
             panel.Controls.Add(_chkStrictJson, 1, row++);
 
-            panel.Controls.Add(new Label { Text = "Timeout (s)", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
+            panel.Controls.Add(new Label { Text = Strings.LblTimeoutSec, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
             _numTimeout = new NumericUpDown { Minimum = 5, Maximum = 600, Value = 30, Width = 90 };
             panel.Controls.Add(_numTimeout, 1, row++);
 
+            panel.Controls.Add(new Label { Text = Strings.LblAutoRun, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
+            _chkAutoRun = new CheckBox { Checked = false, AutoSize = true };
+            panel.Controls.Add(_chkAutoRun, 1, row++);
+
             var actionRow = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight };
-            _btnTestConnection = new Button { Text = "Test Connection", Width = 140, Height = 28 };
+            _btnTestConnection = new Button { Text = Strings.BtnTestConnection, Width = 140, Height = 28 };
             _btnTestConnection.Click += async (s, e) => await OnTestConnectionAsync();
-            _btnSaveSettings = new Button { Text = "Save", Width = 100, Height = 28 };
+            _btnSaveSettings = new Button { Text = Strings.BtnSave, Width = 100, Height = 28 };
             _btnSaveSettings.Click += (s, e) => OnSaveSettings();
             actionRow.Controls.Add(_btnTestConnection);
             actionRow.Controls.Add(_btnSaveSettings);
@@ -253,8 +259,7 @@ namespace Vcad.Plugin.UI
 
             var notice = new Label
             {
-                Text = "VCAD never uploads your key. The key is encrypted with Windows DPAPI" + Environment.NewLine +
-                       "(CurrentUser) and stored under %APPDATA%\\VCAD\\agent.config.json.",
+                Text = Strings.PrivacyNotice,
                 ForeColor = Color.DimGray,
                 AutoSize = false,
                 Dock = DockStyle.Fill,
@@ -271,7 +276,7 @@ namespace Vcad.Plugin.UI
         private void OnLoadSample()
         {
             _txtDsl.Text = SampleDsl.RectangleAndText;
-            AppendLog("Sample loaded.");
+            AppendLog(Strings.LogSampleLoaded);
         }
 
         private void OnRunDsl()
@@ -279,23 +284,33 @@ namespace Vcad.Plugin.UI
             var json = _txtDsl.Text;
             if (string.IsNullOrWhiteSpace(json))
             {
-                AppendLog("Paste a VCAD DSL JSON first.");
+                AppendLog(Strings.LogPasteDslFirst);
                 return;
             }
             try
             {
                 _btnRun.Enabled = false;
-                _lblStatus.Text = "Executing...";
+                _lblStatus.Text = Strings.StatusValidating;
+                System.Windows.Forms.Application.DoEvents();
+
+                var sw = Stopwatch.StartNew();
+                _lblStatus.Text = Strings.StatusLocking;
+                System.Windows.Forms.Application.DoEvents();
 
                 var result = DslExecutor.Execute(json);
+                sw.Stop();
+
                 var pretty = JsonConvert.SerializeObject(result, Formatting.Indented);
                 AppendLog(pretty);
-                _lblStatus.Text = result.Success ? "Done." : "Completed with errors.";
+                AppendLog(string.Format(Strings.LogExecTimingMs, sw.ElapsedMilliseconds));
+                _lblStatus.Text = result.Success
+                    ? string.Format(Strings.StatusDoneWithMs, sw.ElapsedMilliseconds)
+                    : Strings.StatusWithErrors;
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
-                AppendLog("Unexpected error: " + ex.Message);
-                _lblStatus.Text = "Error.";
+                AppendLog(Strings.LogUnexpectedError + ex.Message);
+                _lblStatus.Text = Strings.StatusError;
             }
             finally
             {
@@ -308,30 +323,50 @@ namespace Vcad.Plugin.UI
             var text = _txtNaturalLanguage.Text;
             if (string.IsNullOrWhiteSpace(text))
             {
-                AppendLog("Type something in the natural-language box first.");
+                AppendLog(Strings.LogTypeNlFirst);
                 return;
             }
 
+            bool autoRun = false;
             try
             {
                 _btnUseAgent.Enabled = false;
-                _lblStatus.Text = "Calling Agent Lite...";
+                _lblStatus.Text = Strings.StatusCallingAgent;
+                System.Windows.Forms.Application.DoEvents();
+
+                var sw = Stopwatch.StartNew();
                 var settings = AgentConfigStore.LoadActive();
+                autoRun = settings.AutoRunAfterParse;
                 var client = new AgentLiteClient(settings);
                 var dsl = await client.ParseAsync(text);
+                sw.Stop();
+                AppendLog(string.Format(Strings.LogAgentTimingMs, sw.ElapsedMilliseconds));
+
                 if (dsl == null)
                 {
-                    AppendLog("Agent returned no DSL.");
+                    AppendLog(Strings.LogAgentReturnedNoDsl);
+                    _lblStatus.Text = Strings.StatusAgentError;
                     return;
                 }
                 _txtDsl.Text = dsl;
-                AppendLog("Agent returned DSL. Review then click 'Run DSL'.");
-                _lblStatus.Text = "Agent returned DSL.";
+
+                if (autoRun)
+                {
+                    AppendLog(Strings.LogAgentReturnedAutoRun);
+                    _lblStatus.Text = Strings.StatusAgentReturnedAutoRun;
+                    System.Windows.Forms.Application.DoEvents();
+                    OnRunDsl();
+                }
+                else
+                {
+                    AppendLog(Strings.LogAgentReturnedReview);
+                    _lblStatus.Text = Strings.StatusAgentReturned;
+                }
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
-                AppendLog("Agent call failed: " + ex.Message);
-                _lblStatus.Text = "Agent error.";
+                AppendLog(Strings.LogAgentCallFailed + SecretRedactor.Redact(ex.Message));
+                _lblStatus.Text = Strings.StatusAgentError;
             }
             finally
             {
@@ -415,7 +450,7 @@ namespace Vcad.Plugin.UI
 
         private void OnNewProfile()
         {
-            var name = Prompt("Profile name", "");
+            var name = Prompt(Strings.PromptProfileName, "");
             if (string.IsNullOrWhiteSpace(name)) return;
             var store = AgentConfigStore.LoadAll();
             store.UpsertProfile(new AgentSettings { Name = name });
@@ -454,6 +489,7 @@ namespace Vcad.Plugin.UI
                 _numPort.Value = s.AgentPort == 0 ? 8765 : s.AgentPort;
                 _chkStrictJson.Checked = s.StrictJson;
                 _numTimeout.Value = s.TimeoutSeconds == 0 ? 30 : s.TimeoutSeconds;
+                _chkAutoRun.Checked = s.AutoRunAfterParse;
             }
             finally
             {
@@ -475,15 +511,16 @@ namespace Vcad.Plugin.UI
                 s.AgentPort = (int)_numPort.Value;
                 s.StrictJson = _chkStrictJson.Checked;
                 s.TimeoutSeconds = (int)_numTimeout.Value;
+                s.AutoRunAfterParse = _chkAutoRun.Checked;
                 store.UpsertProfile(s);
                 store.ActiveProfileName = name;
                 AgentConfigStore.SaveAll(store);
-                _lblStatus.Text = "Settings saved.";
-                AppendLog("Settings saved to " + AgentConfigStore.ConfigPath);
+                _lblStatus.Text = Strings.StatusSettingsSaved;
+                AppendLog(Strings.LogSettingsSavedTo + AgentConfigStore.ConfigPath);
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
-                AppendLog("Failed to save settings: " + ex.Message);
+                AppendLog(Strings.LogFailedToSave + ex.Message);
             }
         }
 
@@ -492,18 +529,19 @@ namespace Vcad.Plugin.UI
             try
             {
                 _btnTestConnection.Enabled = false;
-                _lblStatus.Text = "Testing...";
+                _lblStatus.Text = Strings.StatusTesting;
+                System.Windows.Forms.Application.DoEvents();
                 OnSaveSettings();
                 var settings = AgentConfigStore.LoadActive();
                 var client = new AgentLiteClient(settings);
                 var ok = await client.HealthAsync();
-                _lblStatus.Text = ok ? "Connection OK." : "Connection failed.";
-                AppendLog(ok ? "Agent /health returned OK." : "Agent /health failed.");
+                _lblStatus.Text = ok ? Strings.StatusConnectionOk : Strings.StatusConnectionFailed;
+                AppendLog(ok ? Strings.LogHealthOk : Strings.LogHealthFailed);
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
-                AppendLog("Test failed: " + SecretRedactor.Redact(ex.Message));
-                _lblStatus.Text = "Connection failed.";
+                AppendLog(Strings.LogTestFailed + SecretRedactor.Redact(ex.Message));
+                _lblStatus.Text = Strings.StatusConnectionFailed;
             }
             finally
             {
@@ -530,8 +568,8 @@ namespace Vcad.Plugin.UI
                 f.ClientSize = new Size(320, 90);
 
                 var tb = new TextBox { Left = 10, Top = 14, Width = 300, Text = defaultValue };
-                var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Left = 150, Top = 50, Width = 70 };
-                var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Left = 230, Top = 50, Width = 70 };
+                var ok = new Button { Text = Strings.BtnOk, DialogResult = DialogResult.OK, Left = 150, Top = 50, Width = 70 };
+                var cancel = new Button { Text = Strings.BtnCancel, DialogResult = DialogResult.Cancel, Left = 230, Top = 50, Width = 70 };
                 f.Controls.AddRange(new Control[] { tb, ok, cancel });
                 f.AcceptButton = ok;
                 f.CancelButton = cancel;
