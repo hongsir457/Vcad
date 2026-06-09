@@ -35,7 +35,8 @@ param(
   [string]$Target = 'all',
   [ValidateSet('Release','Debug')]
   [string]$Configuration = 'Release',
-  [switch]$Zip
+  [switch]$Zip,
+  [switch]$Deploy
 )
 
 $ErrorActionPreference = 'Stop'
@@ -115,18 +116,55 @@ function Build-One {
   }
 }
 
+function Deploy-One {
+  param([string]$Name)
+
+  $bundle  = "bundle\$Name"
+  $dest    = Join-Path $env:APPDATA "Autodesk\ApplicationPlugins\VCAD-$Name.bundle"
+
+  # Kill any running AutoCAD so its loaded DLL handle is released.
+  $acad = Get-Process -Name acad -ErrorAction SilentlyContinue
+  if ($acad) {
+    Write-Host "[deploy] killing $($acad.Count) acad.exe process(es)" -ForegroundColor Yellow
+    $acad | Stop-Process -Force
+    Start-Sleep -Seconds 2
+  }
+
+  # Remove EVERY VCAD* bundle in BOTH plugin paths so an old one can't win
+  # the load race. We do not own anything else under ApplicationPlugins.
+  foreach ($root in @("$env:APPDATA\Autodesk\ApplicationPlugins",
+                      "$env:PROGRAMDATA\Autodesk\ApplicationPlugins")) {
+    if (Test-Path $root) {
+      Get-ChildItem $root -Directory -Filter "VCAD*" -ErrorAction SilentlyContinue | ForEach-Object {
+        Write-Host "[deploy] removing existing $($_.FullName)" -ForegroundColor Yellow
+        Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+      }
+    }
+  }
+
+  Copy-Item $bundle $dest -Recurse -Force
+  Write-Host "[deploy] installed -> $dest" -ForegroundColor Green
+  Get-ChildItem "$dest\Contents" | Select-Object Name, Length | Format-Table | Out-Host
+}
+
 # Final release-check before we hand off the bundle.
 Write-Host "[pack-bundle] running release-check.ps1" -ForegroundColor Cyan
 & "$PSScriptRoot\check-release.ps1" -Root $root
 if ($LASTEXITCODE -ne 0) { throw "release-check failed" }
 
+$built = @()
 switch ($Target) {
-  'acad2017' { Build-One -Name 'Acad2017' -Tfm 'net47' }
-  'acad2025' { Build-One -Name 'Acad2025' -Tfm 'net8.0-windows' }
+  'acad2017' { Build-One -Name 'Acad2017' -Tfm 'net47'; $built += 'Acad2017' }
+  'acad2025' { Build-One -Name 'Acad2025' -Tfm 'net8.0-windows'; $built += 'Acad2025' }
   'all'      {
-    Build-One -Name 'Acad2017' -Tfm 'net47'
-    Build-One -Name 'Acad2025' -Tfm 'net8.0-windows'
+    Build-One -Name 'Acad2017' -Tfm 'net47'; $built += 'Acad2017'
+    Build-One -Name 'Acad2025' -Tfm 'net8.0-windows'; $built += 'Acad2025'
   }
 }
 
-Write-Host "[pack-bundle] DONE" -ForegroundColor Green
+if ($Deploy) {
+  foreach ($name in $built) { Deploy-One -Name $name }
+  Write-Host "[pack-bundle] DEPLOY DONE — restart AutoCAD now" -ForegroundColor Green
+} else {
+  Write-Host "[pack-bundle] DONE" -ForegroundColor Green
+}

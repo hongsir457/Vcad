@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Reflection;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.Runtime;
 using Vcad.Plugin;
@@ -13,8 +15,20 @@ namespace Vcad.Plugin
         {
             try
             {
+                var asm = typeof(VcadExtensionApplication).Assembly;
+                var name = asm.GetName();
+                string built = "?";
+                try
+                {
+                    var path = new Uri(asm.CodeBase).LocalPath;
+                    built = File.GetLastWriteTime(path).ToString("yyyy-MM-dd HH:mm");
+                }
+                catch { /* best effort */ }
+
                 var ed = Application.DocumentManager.MdiActiveDocument?.Editor;
-                ed?.WriteMessage("\nVCAD plugin loaded. Type VCAD to open the sidebar.\n");
+                ed?.WriteMessage(
+                    "\nVCAD plugin loaded — " + name.Name + " v" + name.Version +
+                    " (built " + built + "). Type VCAD to open the sidebar.\n");
             }
             catch (System.Exception ex)
             {
