@@ -42,3 +42,8 @@ secrets/
 
 # Release zips
 *.zip
+
+# Bundle Contents are produced by pack-bundle.ps1; only .gitkeep is tracked.
+bundle/*/Contents/*.dll
+bundle/*/Contents/*.pdb
+bundle/*/Contents/*.config
