@@ -25,6 +25,7 @@
     <Reference Include="System.Net.Http" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Drawing" />
+    <Reference Include="System.Security" />
   </ItemGroup>
 
   <!--
@@ -46,6 +47,18 @@
       <HintPath>$(AutoCAD2017_Managed)\AcCoreMgd.dll</HintPath>
       <Private>False</Private>
     </Reference>
+  </ItemGroup>
+
+  <!--
+    Compile-only fallback: when no real AutoCAD install is available
+    (CI / Linux dev box), reference the API stubs so the plugin source
+    still compiles. The stub DLL must NEVER be packaged into a bundle.
+  -->
+  <ItemGroup Condition="'$(VCAD_STUB_AUTODESK)' == 'true' AND '$(AutoCAD2017_Managed)' == ''">
+    <ProjectReference Include="..\..\tools\autocad-stubs\Autodesk.AutoCAD.Stubs.csproj">
+      <Private>False</Private>
+      <ReferenceOutputAssembly>true</ReferenceOutputAssembly>
+    </ProjectReference>
   </ItemGroup>
 
 </Project>

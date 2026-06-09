@@ -16,7 +16,7 @@ namespace Vcad.Plugin
                 var ed = Application.DocumentManager.MdiActiveDocument?.Editor;
                 ed?.WriteMessage("\nVCAD plugin loaded. Type VCAD to open the sidebar.\n");
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine("VCAD Initialize error: " + ex);
             }

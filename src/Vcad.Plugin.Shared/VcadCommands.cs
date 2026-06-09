@@ -17,7 +17,7 @@ namespace Vcad.Plugin
             {
                 SidebarPalette.Show();
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
                 var doc = Application.DocumentManager.MdiActiveDocument;
                 doc?.Editor.WriteMessage("\n[VCAD] Failed to open sidebar: " + ex.Message + "\n");

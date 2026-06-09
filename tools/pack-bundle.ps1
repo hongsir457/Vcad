@@ -74,10 +74,12 @@ function Build-One {
     New-Item -ItemType Directory -Path $contents -Force | Out-Null
   }
 
-  # Copy plugin DLL + dependencies, excluding Autodesk managed DLLs.
+  # Copy plugin DLL + dependencies, excluding Autodesk managed DLLs
+  # and the compile-only stub assembly.
   $banned = @(
     'AcMgd.dll','AcDbMgd.dll','AcCoreMgd.dll',
-    'acmgd.dll','acdbmgd.dll','accoremgd.dll'
+    'acmgd.dll','acdbmgd.dll','accoremgd.dll',
+    'Autodesk.AutoCAD.Stubs.dll'
   )
   Get-ChildItem $outDir -File | Where-Object {
     ($_.Extension -in '.dll','.pdb','.config') -and ($banned -notcontains $_.Name)

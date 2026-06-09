@@ -31,5 +31,12 @@ jobs:
       - name: Run unit tests (Vcad.AgentLite)
         run: dotnet test tests/Vcad.AgentLite.Tests/Vcad.AgentLite.Tests.csproj -c Release --no-build
 
+      - name: Compile-check plugin source against Autodesk API stubs
+        env:
+          VCAD_STUB_AUTODESK: "true"
+        run: |
+          dotnet build tools/autocad-stubs/Autodesk.AutoCAD.Stubs.csproj -c Release
+          dotnet build src/Vcad.Plugin.Acad2017/Vcad.Plugin.Acad2017.csproj -c Release
+
       - name: Release check (no Autodesk DLLs, no real keys)
         run: bash tools/check-release.sh .

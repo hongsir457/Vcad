@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Compile-time-only stubs for the Autodesk.AutoCAD.* surface the VCAD
+    plugin uses. NEVER ship these to production. They exist so CI can
+    catch typos in the plugin's calls to the AutoCAD API without needing
+    a real AutoCAD install. At runtime the bundle resolves the real
+    AcMgd/AcDbMgd/AcCoreMgd from the user's AutoCAD installation.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net47</TargetFramework>
+    <AssemblyName>Autodesk.AutoCAD.Stubs</AssemblyName>
+    <RootNamespace>Autodesk.AutoCAD.Stubs</RootNamespace>
+    <SignAssembly>false</SignAssembly>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <IsPackable>false</IsPackable>
+    <NoWarn>CS0067;CS0169;CS0649;CS0414</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+  </ItemGroup>
+
+</Project>
