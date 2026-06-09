@@ -86,11 +86,19 @@ namespace Vcad.Plugin.UI
                 Multiline = true,
                 Dock = DockStyle.Fill,
                 Font = new Font("Microsoft YaHei", 9F),
-                PlaceholderText = "Optional: describe what you want (sent to Agent Lite). Leave empty to paste raw VCAD DSL JSON below.",
+            };
+            var nlHint = new Label
+            {
+                Text = "Optional: describe what you want (sent to Agent Lite). Leave empty to paste raw VCAD DSL JSON below.",
+                Dock = DockStyle.Top,
+                ForeColor = Color.DimGray,
+                AutoSize = false,
+                Height = 28,
             };
             _btnUseAgent = new Button { Text = "Parse via Agent", Dock = DockStyle.Right, Width = 130 };
             _btnUseAgent.Click += async (s, e) => await OnUseAgentAsync();
             nlPanel.Controls.Add(_txtNaturalLanguage);
+            nlPanel.Controls.Add(nlHint);
             nlPanel.Controls.Add(_btnUseAgent);
             layout.Controls.Add(nlPanel, 0, 0);
 

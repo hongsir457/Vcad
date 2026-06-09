@@ -59,7 +59,9 @@ allowlist=(
   "src/Vcad.Plugin.Shared/Net/SecretRedactor.cs"
   "docs/vcad_open_blueprint_v0_5.html"
   "docs/troubleshooting.md"
+  "docs/windows-verify.md"
   "README.md"
+  "tests/Vcad.AgentLite.Tests/SecretRedactorTests.cs"
 )
 is_allowed() {
   local p="$1"
