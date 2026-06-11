@@ -44,27 +44,112 @@ namespace Vcad.Plugin.UI
         private Button _btnDeleteProfile;
         private Label _lblStatus;
 
+        private static readonly Color CadBg = Color.FromArgb(0x13, 0x13, 0x13);
+        private static readonly Color CadPanel = Color.FromArgb(0x1B, 0x1B, 0x1C);
+        private static readonly Color CadPanelHigh = Color.FromArgb(0x2A, 0x2A, 0x2A);
+        private static readonly Color CadInput = Color.FromArgb(0x20, 0x20, 0x20);
+        private static readonly Color CadBorder = Color.FromArgb(0x3A, 0x4A, 0x49);
+        private static readonly Color CadText = Color.FromArgb(0xE5, 0xE2, 0xE1);
+        private static readonly Color CadMuted = Color.FromArgb(0xB9, 0xCA, 0xC9);
+        private static readonly Color CadCyan = Color.FromArgb(0x00, 0xDD, 0xDD);
+        private static readonly Color CadGreen = Color.FromArgb(0x4C, 0xE3, 0x46);
+        private static readonly Color CadOrange = Color.FromArgb(0xFE, 0x94, 0x00);
+        private static readonly Font UiFont = new Font("Microsoft YaHei UI", 9F);
+        private static readonly Font UiFontSmall = new Font("Microsoft YaHei UI", 8F);
+        private static readonly Font UiFontBold = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
+        private static readonly Font MonoFont = new Font("Consolas", 9F);
+
         public SidebarControl()
         {
             Dock = DockStyle.Fill;
-            BackColor = Color.White;
+            BackColor = CadBg;
+            ForeColor = CadText;
+            Font = UiFont;
             BuildLayout();
             LoadProfilesIntoUi();
         }
 
         private void BuildLayout()
         {
-            _tabs = new TabControl { Dock = DockStyle.Fill };
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = CadBg,
+                ColumnCount = 1,
+                RowCount = 2,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty,
+            };
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.Controls.Add(BuildHeader(), 0, 0);
+
+            _tabs = new TabControl
+            {
+                Dock = DockStyle.Fill,
+                DrawMode = TabDrawMode.OwnerDrawFixed,
+                Alignment = TabAlignment.Bottom,
+                ItemSize = new Size(140, 42),
+                SizeMode = TabSizeMode.Fixed,
+            };
+            _tabs.DrawItem += OnDrawTab;
+            _tabs.Resize += (s, e) => ResizeTabItems();
 
             var dslTab = new TabPage(Strings.TabDslInput);
+            dslTab.BackColor = CadBg;
             BuildDslTab(dslTab);
             _tabs.TabPages.Add(dslTab);
 
             var settingsTab = new TabPage(Strings.TabModelSettings);
+            settingsTab.BackColor = CadBg;
             BuildSettingsTab(settingsTab);
             _tabs.TabPages.Add(settingsTab);
 
-            Controls.Add(_tabs);
+            root.Controls.Add(_tabs, 0, 1);
+            Controls.Add(root);
+            ResizeTabItems();
+        }
+
+        private Control BuildHeader()
+        {
+            var header = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = CadBg,
+                Padding = new Padding(10, 8, 10, 8),
+            };
+
+            var title = new Label
+            {
+                Text = "CAD AI 助手",
+                AutoSize = true,
+                ForeColor = CadCyan,
+                Font = UiFontBold,
+                Location = new Point(12, 13),
+            };
+            var mark = new Label
+            {
+                Text = "▧",
+                AutoSize = true,
+                ForeColor = CadCyan,
+                Font = new Font("Consolas", 13F, FontStyle.Bold),
+                Location = new Point(2, 9),
+            };
+            var online = new Label
+            {
+                Text = "● ONLINE",
+                AutoSize = true,
+                ForeColor = CadGreen,
+                Font = UiFontSmall,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                Location = new Point(230, 15),
+            };
+            header.Resize += (s, e) => online.Left = Math.Max(160, header.Width - online.Width - 12);
+            header.Controls.Add(mark);
+            header.Controls.Add(title);
+            header.Controls.Add(online);
+            return header;
         }
 
         private void BuildDslTab(TabPage tab)
@@ -176,6 +261,13 @@ namespace Vcad.Plugin.UI
             layout.Controls.Add(_lblStatus, 0, 4);
 
             tab.Controls.Add(layout);
+            ApplyIndustrialStyle(tab);
+            StylePrimaryButton(_btnUseAgent);
+            StylePrimaryButton(_btnRun);
+            StyleGhostButton(_btnSample);
+            _txtLog.BackColor = Color.FromArgb(0x0E, 0x0E, 0x0E);
+            _txtDsl.BackColor = Color.FromArgb(0x0E, 0x0E, 0x0E);
+            _lblStatus.ForeColor = CadGreen;
         }
 
         private void BuildSettingsTab(TabPage tab)
@@ -211,7 +303,7 @@ namespace Vcad.Plugin.UI
 
             panel.Controls.Add(new Label { Text = Strings.LblProvider, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
             _cmbProvider = new ComboBox { Width = 220, DropDownStyle = ComboBoxStyle.DropDownList };
-            _cmbProvider.Items.AddRange(new object[] { "openai", "anthropic", "gemini", "ollama", "custom" });
+            _cmbProvider.Items.AddRange(new object[] { "openai", "deepseek", "anthropic", "gemini", "ollama", "custom" });
             _cmbProvider.SelectedIndexChanged += (s, e) => OnProviderChanged();
             panel.Controls.Add(_cmbProvider, 1, row++);
 
@@ -269,6 +361,124 @@ namespace Vcad.Plugin.UI
             panel.Controls.Add(notice, 0, row++);
 
             tab.Controls.Add(panel);
+            ApplyIndustrialStyle(tab);
+            StyleGhostButton(_btnNewProfile);
+            StyleGhostButton(_btnDeleteProfile);
+            StyleGhostButton(_btnTestConnection);
+            StylePrimaryButton(_btnSaveSettings);
+            notice.ForeColor = CadMuted;
+        }
+
+        private void OnDrawTab(object sender, DrawItemEventArgs e)
+        {
+            var selected = e.Index == _tabs.SelectedIndex;
+            var rect = e.Bounds;
+            using (var bg = new SolidBrush(selected ? CadPanelHigh : CadBg))
+            using (var border = new Pen(selected ? CadCyan : CadBorder))
+            {
+                e.Graphics.FillRectangle(bg, rect);
+                e.Graphics.DrawRectangle(border, rect.X, rect.Y, rect.Width - 1, rect.Height - 1);
+                var caption = _tabs.TabPages[e.Index].Text;
+                TextRenderer.DrawText(
+                    e.Graphics,
+                    caption,
+                    UiFontBold,
+                    rect,
+                    selected ? CadCyan : CadMuted,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            }
+        }
+
+        private void ResizeTabItems()
+        {
+            if (_tabs == null || _tabs.TabCount == 0 || _tabs.Width <= 0) return;
+            var width = Math.Max(120, (_tabs.Width - 6) / _tabs.TabCount);
+            if (_tabs.ItemSize.Width != width)
+            {
+                _tabs.ItemSize = new Size(width, 42);
+            }
+        }
+
+        private static void ApplyIndustrialStyle(Control root)
+        {
+            foreach (Control c in root.Controls)
+            {
+                c.Font = UiFont;
+                c.ForeColor = CadText;
+
+                if (c is TabPage || c is TableLayoutPanel || c is FlowLayoutPanel || c is Panel)
+                {
+                    c.BackColor = CadBg;
+                }
+                else if (c is GroupBox)
+                {
+                    c.BackColor = CadBg;
+                    c.ForeColor = CadCyan;
+                    c.Font = UiFontBold;
+                    c.Padding = new Padding(8, 6, 8, 8);
+                }
+                else if (c is TextBox tb)
+                {
+                    tb.BackColor = CadInput;
+                    tb.ForeColor = CadText;
+                    tb.BorderStyle = BorderStyle.FixedSingle;
+                    tb.Font = tb.Multiline ? MonoFont : UiFont;
+                }
+                else if (c is ComboBox cb)
+                {
+                    cb.BackColor = CadInput;
+                    cb.ForeColor = CadText;
+                    cb.FlatStyle = FlatStyle.Flat;
+                    cb.Font = UiFont;
+                }
+                else if (c is NumericUpDown nud)
+                {
+                    nud.BackColor = CadInput;
+                    nud.ForeColor = CadText;
+                    nud.BorderStyle = BorderStyle.FixedSingle;
+                    nud.Font = UiFont;
+                }
+                else if (c is CheckBox chk)
+                {
+                    chk.BackColor = CadBg;
+                    chk.ForeColor = CadMuted;
+                    chk.FlatStyle = FlatStyle.Flat;
+                }
+                else if (c is Label lbl)
+                {
+                    lbl.BackColor = Color.Transparent;
+                    lbl.ForeColor = CadMuted;
+                    lbl.Font = UiFontSmall;
+                }
+
+                ApplyIndustrialStyle(c);
+            }
+        }
+
+        private static void StylePrimaryButton(Button button)
+        {
+            if (button == null) return;
+            button.FlatStyle = FlatStyle.Flat;
+            button.BackColor = CadCyan;
+            button.ForeColor = Color.Black;
+            button.Font = UiFontBold;
+            button.FlatAppearance.BorderColor = CadCyan;
+            button.FlatAppearance.BorderSize = 1;
+            button.FlatAppearance.MouseOverBackColor = Color.FromArgb(0x00, 0xFB, 0xFB);
+            button.FlatAppearance.MouseDownBackColor = Color.FromArgb(0x00, 0xB8, 0xB8);
+        }
+
+        private static void StyleGhostButton(Button button)
+        {
+            if (button == null) return;
+            button.FlatStyle = FlatStyle.Flat;
+            button.BackColor = CadBg;
+            button.ForeColor = CadCyan;
+            button.Font = UiFontBold;
+            button.FlatAppearance.BorderColor = CadBorder;
+            button.FlatAppearance.BorderSize = 1;
+            button.FlatAppearance.MouseOverBackColor = CadPanelHigh;
+            button.FlatAppearance.MouseDownBackColor = CadInput;
         }
 
         // --- DSL tab actions ---
@@ -380,6 +590,7 @@ namespace Vcad.Plugin.UI
             new Dictionary<string, (string, string)>(StringComparer.OrdinalIgnoreCase)
             {
                 { "openai",    ("https://api.openai.com", "gpt-4o-mini") },
+                { "deepseek",  ("https://api.deepseek.com", "deepseek-v4-flash") },
                 { "anthropic", ("https://api.anthropic.com", "claude-3-5-haiku-latest") },
                 { "gemini",    ("https://generativelanguage.googleapis.com", "gemini-1.5-flash") },
                 { "ollama",    ("http://localhost:11434", "llama3.2") },

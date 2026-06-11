@@ -50,6 +50,7 @@ namespace Vcad.Plugin.Net
                 ["text"] = naturalLanguage,
                 ["context"] = new JObject { ["unit"] = "mm", ["coordinate_system"] = "WCS" },
                 ["options"] = new JObject { ["max_commands"] = 50 },
+                ["provider"] = BuildProviderPayload(),
             };
 
             using (var client = NewClient())
@@ -74,6 +75,30 @@ namespace Vcad.Plugin.Net
         {
             var port = _settings.AgentPort == 0 ? 8765 : _settings.AgentPort;
             return "http://127.0.0.1:" + port + path;
+        }
+
+        private JObject BuildProviderPayload()
+        {
+            var provider = new JObject
+            {
+                ["name"] = string.IsNullOrWhiteSpace(_settings.Provider) ? "echo" : _settings.Provider,
+                ["strict_json"] = _settings.StrictJson,
+            };
+
+            if (!string.IsNullOrWhiteSpace(_settings.ApiBaseUrl))
+            {
+                provider["base_url"] = _settings.ApiBaseUrl;
+            }
+            if (!string.IsNullOrWhiteSpace(_settings.Model))
+            {
+                provider["model"] = _settings.Model;
+            }
+            if (!string.IsNullOrWhiteSpace(_settings.ApiKeyPlain))
+            {
+                provider["api_key"] = _settings.ApiKeyPlain;
+            }
+
+            return provider;
         }
 
         private HttpClient NewClient()

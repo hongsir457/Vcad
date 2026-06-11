@@ -1,0 +1,91 @@
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+
+namespace Vcad.AgentLite.Providers;
+
+public class GeminiProvider : IProvider
+{
+    private static readonly HttpClient _client = new() { Timeout = TimeSpan.FromSeconds(60) };
+
+    public async Task<JsonNode> ParseAsync(ParseRequest req)
+    {
+        var options = ProviderRequestOptions.From(req);
+        var apiKey = options.ApiKey;
+        if (string.IsNullOrEmpty(apiKey))
+        {
+            throw new InvalidOperationException("VCAD_AGENT_API_KEY is not set.");
+        }
+
+        var baseUrl = string.IsNullOrEmpty(options.BaseUrl)
+            ? "https://generativelanguage.googleapis.com"
+            : options.BaseUrl;
+        var model = string.IsNullOrEmpty(options.Model) ? "gemini-1.5-flash" : options.Model;
+
+        var prompt = PromptLibrary.SystemPrompt() + "\n\nUser request:\n" + req.text;
+        object payload = options.StrictJson
+            ? new
+            {
+                contents = new object[]
+                {
+                    new
+                    {
+                        role = "user",
+                        parts = new object[] { new { text = prompt } },
+                    },
+                },
+                generationConfig = new { responseMimeType = "application/json" },
+            }
+            : new
+            {
+                contents = new object[]
+                {
+                    new
+                    {
+                        role = "user",
+                        parts = new object[] { new { text = prompt } },
+                    },
+                },
+            };
+
+        var url = baseUrl.TrimEnd('/') + "/v1beta/models/" +
+            Uri.EscapeDataString(model) + ":generateContent?key=" +
+            Uri.EscapeDataString(apiKey);
+        using var http = new HttpRequestMessage(HttpMethod.Post, url);
+        http.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+
+        using var resp = await _client.SendAsync(http);
+        var body = await resp.Content.ReadAsStringAsync();
+        if (!resp.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException("Gemini error " + (int)resp.StatusCode + ": " + SecretRedactor.Redact(body));
+        }
+
+        var parsed = JsonNode.Parse(body);
+        var content = parsed?["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.GetValue<string>();
+        if (string.IsNullOrEmpty(content))
+        {
+            throw new InvalidOperationException("Gemini returned empty content.");
+        }
+
+        var dsl = JsonNode.Parse(StripCodeFence(content));
+        if (dsl == null)
+        {
+            throw new InvalidOperationException("Gemini returned non-JSON content.");
+        }
+        return dsl;
+    }
+
+    private static string StripCodeFence(string text)
+    {
+        var stripped = text.Trim();
+        if (!stripped.StartsWith("```", StringComparison.Ordinal)) return stripped;
+        var nl = stripped.IndexOf('\n');
+        if (nl > 0) stripped = stripped.Substring(nl + 1);
+        if (stripped.EndsWith("```", StringComparison.Ordinal))
+        {
+            stripped = stripped.Substring(0, stripped.Length - 3);
+        }
+        return stripped.Trim();
+    }
+}

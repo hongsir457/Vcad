@@ -155,6 +155,17 @@ dotnet run --project src\Vcad.AgentLite\Vcad.AgentLite.csproj -c Release
 Or save the same settings in the **Model Settings** tab (the key is
 encrypted with Windows DPAPI under `%APPDATA%\VCAD\agent.config.json`).
 
+For DeepSeek, choose `Provider = deepseek` in **Model Settings** or start
+Agent Lite with:
+
+```powershell
+$env:VCAD_AGENT_PROVIDER = "deepseek"
+$env:VCAD_AGENT_BASE_URL = "https://api.deepseek.com"
+$env:VCAD_AGENT_MODEL    = "deepseek-v4-flash"
+$env:VCAD_AGENT_API_KEY  = "sk-..."   # your DeepSeek key
+dotnet run --project src\Vcad.AgentLite\Vcad.AgentLite.csproj -c Release
+```
+
 ## Common failures and fixes
 
 | Symptom | Cause | Fix |

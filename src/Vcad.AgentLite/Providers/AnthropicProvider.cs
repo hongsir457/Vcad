@@ -10,14 +10,15 @@ public class AnthropicProvider : IProvider
 
     public async Task<JsonNode> ParseAsync(ParseRequest req)
     {
-        var apiKey = AgentEnv.ApiKey;
+        var options = ProviderRequestOptions.From(req);
+        var apiKey = options.ApiKey;
         if (string.IsNullOrEmpty(apiKey))
         {
             throw new InvalidOperationException("VCAD_AGENT_API_KEY is not set.");
         }
 
-        var baseUrl = string.IsNullOrEmpty(AgentEnv.BaseUrl) ? "https://api.anthropic.com" : AgentEnv.BaseUrl;
-        var model = string.IsNullOrEmpty(AgentEnv.Model) ? "claude-3-5-haiku-latest" : AgentEnv.Model;
+        var baseUrl = string.IsNullOrEmpty(options.BaseUrl) ? "https://api.anthropic.com" : options.BaseUrl;
+        var model = string.IsNullOrEmpty(options.Model) ? "claude-3-5-haiku-latest" : options.Model;
 
         var systemPrompt = PromptLibrary.SystemPrompt();
         var userPrompt = req.text;

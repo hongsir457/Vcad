@@ -11,31 +11,51 @@ public class OpenAiProvider : IProvider
 
     public async Task<JsonNode> ParseAsync(ParseRequest req)
     {
-        var apiKey = AgentEnv.ApiKey;
-        if (string.IsNullOrEmpty(apiKey))
+        var options = ProviderRequestOptions.From(req);
+        var apiKey = options.ApiKey;
+        var isDeepSeek = string.Equals(options.Name, "deepseek", StringComparison.OrdinalIgnoreCase);
+        var requiresKey = isDeepSeek || string.Equals(options.Name, "openai", StringComparison.OrdinalIgnoreCase);
+        if (requiresKey && string.IsNullOrEmpty(apiKey))
         {
             throw new InvalidOperationException("VCAD_AGENT_API_KEY is not set.");
         }
 
-        var baseUrl = string.IsNullOrEmpty(AgentEnv.BaseUrl) ? "https://api.openai.com" : AgentEnv.BaseUrl;
-        var model = string.IsNullOrEmpty(AgentEnv.Model) ? "gpt-4o-mini" : AgentEnv.Model;
+        var baseUrl = string.IsNullOrEmpty(options.BaseUrl)
+            ? (isDeepSeek ? "https://api.deepseek.com" : "https://api.openai.com")
+            : options.BaseUrl;
+        var model = string.IsNullOrEmpty(options.Model)
+            ? (isDeepSeek ? "deepseek-v4-flash" : "gpt-4o-mini")
+            : options.Model;
 
         var systemPrompt = PromptLibrary.SystemPrompt();
         var userPrompt = req.text;
 
-        var payload = new
-        {
-            model = model,
-            messages = new object[]
+        object payload = options.StrictJson
+            ? new
             {
-                new { role = "system", content = systemPrompt },
-                new { role = "user", content = userPrompt },
-            },
-            response_format = new { type = "json_object" },
-        };
+                model = model,
+                messages = new object[]
+                {
+                    new { role = "system", content = systemPrompt },
+                    new { role = "user", content = userPrompt },
+                },
+                response_format = new { type = "json_object" },
+            }
+            : new
+            {
+                model = model,
+                messages = new object[]
+                {
+                    new { role = "system", content = systemPrompt },
+                    new { role = "user", content = userPrompt },
+                },
+            };
 
-        using var http = new HttpRequestMessage(HttpMethod.Post, baseUrl.TrimEnd('/') + "/v1/chat/completions");
-        http.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        using var http = new HttpRequestMessage(HttpMethod.Post, BuildChatCompletionsUrl(baseUrl, isDeepSeek));
+        if (!string.IsNullOrEmpty(apiKey))
+        {
+            http.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        }
         http.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
 
         using var resp = await _client.SendAsync(http);
@@ -58,5 +78,19 @@ public class OpenAiProvider : IProvider
             throw new InvalidOperationException("OpenAI returned non-JSON content.");
         }
         return dsl;
+    }
+
+    private static string BuildChatCompletionsUrl(string baseUrl, bool isDeepSeek)
+    {
+        var trimmed = baseUrl.TrimEnd('/');
+        if (trimmed.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase))
+        {
+            return trimmed;
+        }
+        if (trimmed.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
+        {
+            return trimmed + "/chat/completions";
+        }
+        return trimmed + (isDeepSeek ? "/chat/completions" : "/v1/chat/completions");
     }
 }
