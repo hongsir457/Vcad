@@ -21,6 +21,7 @@ public class ProviderConfigForwardingTests
 
         using var server = new OneShotHttpServer();
         var provider = new OpenAiProvider();
+        var fakeKey = "unit-test-token";
 
         var dsl = await provider.ParseAsync(new ParseRequest
         {
@@ -30,14 +31,14 @@ public class ProviderConfigForwardingTests
                 name = "deepseek",
                 base_url = server.BaseUrl,
                 model = "deepseek-v4-flash",
-                api_key = "sk-test12345678901234567890",
+                api_key = fakeKey,
                 strict_json = true,
             },
         });
 
         Assert.Equal("vcad_dsl_v1", dsl["version"]!.GetValue<string>());
         Assert.StartsWith("POST /chat/completions ", server.RequestLine);
-        Assert.Contains("Authorization: Bearer sk-test12345678901234567890", server.Headers);
+        Assert.Contains("Authorization: Bearer " + fakeKey, server.Headers);
         Assert.Contains("\"model\":\"deepseek-v4-flash\"", server.Body);
         Assert.Contains("\"response_format\":{\"type\":\"json_object\"}", server.Body);
     }
