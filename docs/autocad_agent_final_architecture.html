@@ -3,405 +3,139 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AutoCAD 自然语言插件最终架构执行口径 v1.1</title>
+  <title>AutoCAD 自然语言插件最终架构执行口径 v1.2</title>
   <style>
-    :root {
-      --bg: #0f172a;
-      --panel: #111827;
-      --card: #ffffff;
-      --text: #111827;
-      --muted: #6b7280;
-      --line: #e5e7eb;
-      --accent: #0891b2;
-      --accent-dark: #0e7490;
-      --danger: #dc2626;
-      --warn: #d97706;
-      --ok: #059669;
-      --code-bg: #0b1020;
-      --code-text: #e5e7eb;
+    :root{
+      --bg:#f3f4f6;--ink:#111827;--muted:#6b7280;--card:#fff;--line:#e5e7eb;
+      --blue:#0e7490;--dark:#0f172a;--red:#dc2626;--amber:#d97706;--green:#059669;
+      --code:#0b1020;--codeText:#e5e7eb;
     }
-
-    * { box-sizing: border-box; }
-
-    body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
-      line-height: 1.65;
-      background: #f3f4f6;
-      color: var(--text);
-    }
-
-    .hero {
-      background: linear-gradient(135deg, #0f172a 0%, #164e63 100%);
-      color: #fff;
-      padding: 48px 28px;
-    }
-
-    .hero-inner, .container {
-      max-width: 1160px;
-      margin: 0 auto;
-    }
-
-    .eyebrow {
-      display: inline-block;
-      padding: 4px 10px;
-      border: 1px solid rgba(255,255,255,0.28);
-      border-radius: 999px;
-      color: #cffafe;
-      font-size: 13px;
-      letter-spacing: .04em;
-      margin-bottom: 16px;
-    }
-
-    h1 {
-      margin: 0 0 14px;
-      font-size: 34px;
-      line-height: 1.22;
-      letter-spacing: -0.02em;
-    }
-
-    .subtitle {
-      max-width: 880px;
-      margin: 0;
-      color: #d1d5db;
-      font-size: 17px;
-    }
-
-    .container {
-      padding: 28px;
-    }
-
-    .toc {
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 20px 24px;
-      margin-bottom: 24px;
-      box-shadow: 0 1px 2px rgba(0,0,0,.04);
-    }
-
-    .toc h2 {
-      margin-top: 0;
-      font-size: 20px;
-    }
-
-    .toc-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 8px 20px;
-    }
-
-    .toc a {
-      color: var(--accent-dark);
-      text-decoration: none;
-    }
-
-    .section {
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 26px;
-      margin: 22px 0;
-      box-shadow: 0 1px 2px rgba(0,0,0,.04);
-    }
-
-    h2 {
-      margin: 0 0 16px;
-      padding-bottom: 10px;
-      border-bottom: 1px solid var(--line);
-      color: #0f172a;
-      font-size: 24px;
-    }
-
-    h3 {
-      margin: 22px 0 10px;
-      color: #1f2937;
-      font-size: 18px;
-    }
-
-    p { margin: 10px 0; }
-
-    ul, ol { padding-left: 22px; }
-
-    li { margin: 6px 0; }
-
-    .callout {
-      border-left: 4px solid var(--accent);
-      background: #ecfeff;
-      padding: 14px 16px;
-      border-radius: 10px;
-      margin: 16px 0;
-    }
-
-    .danger {
-      border-left-color: var(--danger);
-      background: #fef2f2;
-    }
-
-    .warn {
-      border-left-color: var(--warn);
-      background: #fffbeb;
-    }
-
-    .ok {
-      border-left-color: var(--ok);
-      background: #ecfdf5;
-    }
-
-    code {
-      background: #eef2ff;
-      color: #1e1b4b;
-      padding: 2px 5px;
-      border-radius: 5px;
-      font-family: Consolas, Monaco, "Courier New", monospace;
-      font-size: 90%;
-    }
-
-    pre {
-      margin: 14px 0;
-      padding: 16px;
-      overflow-x: auto;
-      background: var(--code-bg);
-      color: var(--code-text);
-      border-radius: 12px;
-      border: 1px solid #1f2937;
-      font-size: 13px;
-      line-height: 1.55;
-    }
-
-    pre code {
-      background: transparent;
-      color: inherit;
-      padding: 0;
-    }
-
-    .flow {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin: 14px 0;
-    }
-
-    .node {
-      display: inline-flex;
-      align-items: center;
-      padding: 9px 12px;
-      background: #f8fafc;
-      border: 1px solid #cbd5e1;
-      border-radius: 10px;
-      font-weight: 600;
-      color: #0f172a;
-    }
-
-    .arrow {
-      display: inline-flex;
-      align-items: center;
-      color: #64748b;
-      font-weight: 700;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin: 16px 0;
-      font-size: 14px;
-    }
-
-    th, td {
-      border: 1px solid var(--line);
-      padding: 10px 12px;
-      vertical-align: top;
-      text-align: left;
-    }
-
-    th {
-      background: #f8fafc;
-      color: #111827;
-    }
-
-    .tag {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 700;
-    }
-
-    .tag-low { background: #dcfce7; color: #166534; }
-    .tag-medium { background: #fef3c7; color: #92400e; }
-    .tag-high { background: #fee2e2; color: #991b1b; }
-    .tag-blocked { background: #e5e7eb; color: #374151; }
-    .tag-new { background: #cffafe; color: #155e75; }
-
-    .footer {
-      color: var(--muted);
-      text-align: center;
-      font-size: 13px;
-      padding: 24px;
-    }
-
-    @media print {
-      .hero { padding: 24px; }
-      .section, .toc { break-inside: avoid; box-shadow: none; }
-      body { background: #fff; }
-      a { color: inherit; }
-    }
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","PingFang SC",Arial,sans-serif;line-height:1.65}
+    .hero{background:linear-gradient(135deg,#0f172a,#164e63);color:#fff;padding:46px 28px}.wrap{max-width:1180px;margin:0 auto}.eyebrow{display:inline-block;border:1px solid rgba(255,255,255,.28);border-radius:999px;padding:4px 10px;color:#cffafe;font-size:13px;margin-bottom:14px}h1{margin:0 0 12px;font-size:34px;line-height:1.22} .sub{max-width:940px;margin:0;color:#d1d5db;font-size:17px}
+    main{max-width:1180px;margin:0 auto;padding:28px}.card,section{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin:0 0 22px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+    h2{font-size:24px;margin:0 0 14px;border-left:5px solid var(--blue);padding-left:12px}h3{font-size:18px;margin:22px 0 10px}.muted{color:var(--muted)}
+    code{background:#eef2f7;border-radius:4px;padding:1px 5px}pre{background:var(--code);color:var(--codeText);padding:16px;border-radius:10px;overflow:auto;font-size:13px;line-height:1.55}pre code{background:transparent;color:inherit;padding:0}
+    table{width:100%;border-collapse:collapse;margin:12px 0}th,td{border:1px solid var(--line);padding:10px 12px;vertical-align:top}th{background:#f9fafb;text-align:left}.danger{color:var(--red);font-weight:700}.warn{color:var(--amber);font-weight:700}.ok{color:var(--green);font-weight:700}.badge{display:inline-block;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:700}.b-red{background:#fee2e2;color:#991b1b}.b-amber{background:#fef3c7;color:#92400e}.b-green{background:#dcfce7;color:#166534}.b-blue{background:#cffafe;color:#155e75}.b-gray{background:#e5e7eb;color:#374151}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}@media(max-width:820px){.grid{grid-template-columns:1fr}h1{font-size:28px}main{padding:18px}}
+    ul{margin:8px 0 8px 22px;padding:0}.toc a{display:block;color:#0e7490;text-decoration:none;margin:4px 0}.toc a:hover{text-decoration:underline}.callout{border-left:5px solid var(--amber);background:#fffbeb;border-radius:10px;padding:12px 14px;margin:12px 0}.blocker{border-left:5px solid var(--red);background:#fef2f2;border-radius:10px;padding:12px 14px;margin:12px 0}.good{border-left:5px solid var(--green);background:#ecfdf5;border-radius:10px;padding:12px 14px;margin:12px 0}
   </style>
 </head>
 <body>
-  <header class="hero">
-    <div class="hero-inner">
-      <div class="eyebrow">Agent Implementation Brief · v1.1</div>
-      <h1>AutoCAD 自然语言插件最终架构执行口径</h1>
-      <p class="subtitle">本文件用于指导开发 Agent 直接将 AutoCAD 自然语言插件实现到最终架构。不做过渡版，不保留自然语言直连执行链路。v1.1 修复了 v1.0 的白名单不一致、风险字段信任 LLM、确认链路无防篡改/防重放、Preview 与执行间的 TOCTOU 等问题。</p>
-    </div>
-  </header>
+  <header class="hero"><div class="wrap">
+    <span class="eyebrow">Agent 执行口径 · v1.2 修正版</span>
+    <h1>AutoCAD 自然语言插件最终架构执行口径</h1>
+    <p class="sub">v1.1 修正了白名单矛盾、LLM 安全字段、防篡改防重放、TOCTOU 等问题。v1.2 在其基础上继续修正：IR 不可变与 dry_run 字段的冲突、缺失的 Result Schema、低风险任务在 API 层走不通、Risk Policy 时序矛盾（两段式裁决）、AutoLISP 兜底只关组不回滚、状态机缺 rejected 终态、Preview 响应缺展示字段、document_id 来源。</p>
+  </div></header>
 
-  <main class="container">
-    <nav class="toc">
+  <main>
+    <div class="card toc">
       <h2>目录</h2>
-      <div class="toc-grid">
-        <a href="#revisions">0. v1.1 修订说明</a>
-        <a href="#mode">1. 执行模式</a>
-        <a href="#principles">2. 总体原则</a>
-        <a href="#modules">3. 目标模块</a>
-        <a href="#legacy">4. 废弃旧入口</a>
-        <a href="#flow">5. 正式执行链路</a>
-        <a href="#validator">6. CAD-IR Validator</a>
-        <a href="#safety">7. Safety Checker</a>
-        <a href="#preview">8. Preview / Dry Run</a>
-        <a href="#confirm">9. Confirm 机制</a>
-        <a href="#lifecycle">10. 任务状态机</a>
-        <a href="#adapter">11. Execution Adapter</a>
-        <a href="#executor">12. AutoCAD Executor</a>
-        <a href="#reporter">13. Result Reporter</a>
-        <a href="#frontend">14. 前端交互</a>
-        <a href="#scope">15. 本轮范围</a>
-        <a href="#acceptance">16. 验收标准</a>
-      </div>
-    </nav>
+      <a href="#mode">0. Implementation Mode</a>
+      <a href="#fixes">1. v1.1 / v1.2 修正清单</a>
+      <a href="#flow">2. 最终主流程</a>
+      <a href="#modules">3. 模块边界</a>
+      <a href="#schemas">4. Schema 与核心数据结构</a>
+      <a href="#actions">5. Action 白名单与禁用项</a>
+      <a href="#risk">6. 服务端 Risk Policy（两段式）</a>
+      <a href="#taskstore">7. Task Store、Confirm Token 与幂等</a>
+      <a href="#preview">8. Preview / Dry Run / TOCTOU</a>
+      <a href="#state">9. 任务状态机与失败语义</a>
+      <a href="#adapters">10. Adapter / Executor / AutoLISP 兜底</a>
+      <a href="#ui">11. 前端卡片</a>
+      <a href="#audit">12. Audit Log</a>
+      <a href="#scope">13. 本轮范围</a>
+      <a href="#acceptance">14. 验收标准</a>
+    </div>
 
-    <section id="revisions" class="section">
-      <h2>0. v1.1 修订说明（架构审查结论）</h2>
-      <p>v1.0 的总体方向正确：LLM 与执行层之间用 CAD-IR 隔离、强制 Validator / Safety / Preview / Confirm。但审查发现以下问题，v1.1 已在对应章节修正，开发时以本版为准：</p>
+    <section id="mode">
+      <h2>0. Implementation Mode</h2>
+      <p>进入 Implementation Mode。不要做过渡版，不保留旧的正式执行入口。</p>
+      <div class="blocker"><strong>禁止继续作为正式路径：</strong><br><code>自然语言 → AgentLite → DSL / AutoLISP → 立即执行 → 结果卡片</code></div>
+      <div class="good"><strong>正式路径：</strong><br><code>NL → Intent → Task Plan → CAD-IR → Validator → Risk Policy（静态）→ Task Store → Preview / Dry Run → Risk Policy（动态复评）→ Confirm Token → Execute → Result → Audit Log</code></div>
+      <ul>
+        <li>LLM 只负责理解、规划、生成结构化草案。</li>
+        <li>所有安全裁决必须由服务端确定性策略完成。</li>
+        <li>执行器只能消费已经落库、已确认（或低风险快速通道）、未过期、哈希一致的 CAD-IR。</li>
+      </ul>
+    </section>
+
+    <section id="fixes">
+      <h2>1. v1.1 / v1.2 修正清单</h2>
+      <h3>1.1 v1.1 已修正（保留）</h3>
       <table>
-        <thead>
-          <tr>
-            <th style="width:42%">v1.0 问题</th>
-            <th>v1.1 修正</th>
-          </tr>
-        </thead>
+        <thead><tr><th>问题</th><th>处理方式</th></tr></thead>
         <tbody>
-          <tr>
-            <td><strong>白名单自相矛盾。</strong>Safety Checker 表中出现了 Action 白名单之外的动作（<code>modify_text_height</code>、<code>global_replace</code>、<code>scale_objects</code>、<code>modify_xref</code> 等），按 Validator 规则这些动作会被直接拒绝。</td>
-            <td>统一白名单（见第 6 节）：文本高度、标注样式、图层属性等修改统一归入 <code>set_property</code> 表达；<code>scale_objects</code> 正式纳入白名单（高风险）；<code>global_replace</code>、<code>modify_xref</code> 在 v1 明确禁用，Validator 直接拒绝。Safety 表只引用白名单内动作。</td>
-          </tr>
-          <tr>
-            <td><strong>安全字段信任了 LLM。</strong><code>risk_level</code>、<code>requires_confirmation</code>、<code>max_affected_objects</code> 由 LLM 写入 Task Plan / CAD-IR 并被下游采信，LLM 可将删除标为低风险或将上限写成极大值，绕过整套安全机制。</td>
-            <td>新增"服务端裁决"原则（第 2、7 节）：风险等级与确认要求由 Risk Policy 按 <code>action</code> + <code>selection_scope</code> 在服务端确定性计算并<strong>覆盖</strong> IR 中的声明；<code>max_affected_objects</code> 受策略硬上限钳制。LLM 声明的安全字段仅作展示参考。</td>
-          </tr>
-          <tr>
-            <td><strong>确认链路无防篡改 / 防重放。</strong>"execute 只接受已确认的 CAD-IR"无法落地：客户端可确认温和 IR 后提交篡改过的 IR；双击确认会重复执行。</td>
-            <td>引入 <code>task_id</code> + <code>ir_hash</code>（第 9 节）：IR 在 interpret 后由服务端持久化并不可变，preview / confirm / execute 全部按 <code>task_id</code> 引用，confirm 产生有有效期的确认令牌，execute 幂等。</td>
-          </tr>
-          <tr>
-            <td><strong>Preview 与执行之间存在 TOCTOU。</strong>用户可随时在 AutoCAD 中手动改图，Preview 命中 128 个对象不代表执行时仍是 128 个。</td>
-            <td>execute 前强制重新 Dry Run 并与 Preview 结果比对（第 9、12 节），命中数量偏差超过阈值则中止并要求重新 Preview。</td>
-          </tr>
-          <tr>
-            <td><strong>主流程图缺少 Validator 节点</strong>，与验收标准中的最终链路不一致。</td>
-            <td>第 1 节流程图补全 CAD-IR Validator。</td>
-          </tr>
-          <tr>
-            <td><strong>缺少澄清流程。</strong>模糊输入（如"把圆改大一点"）只能走 Error Card 或被硬猜。</td>
-            <td>Intent Parser 支持 <code>needs_clarification</code>，前端新增 Clarification Card（第 5.2、14 节）。</td>
-          </tr>
-          <tr>
-            <td><strong>缺少任务状态机与部分失败语义。</strong>preview / confirm / execute 分接口但无任务生命周期定义；执行中途失败时回滚策略未规定。</td>
-            <td>新增第 10 节任务状态机；第 12 节规定部分失败语义（默认整组回滚，<code>on_partial_failure</code> 可配）。</td>
-          </tr>
-          <tr>
-            <td><strong>Audit Log 被放进"预留"。</strong>强调安全的执行系统不应没有执行日志。</td>
-            <td>最小审计日志（IR + 裁决 + 结果落盘）纳入本轮必须完成范围（第 15 节）。</td>
-          </tr>
-          <tr>
-            <td><strong>细节缺口：</strong>selector 无文档标识（AutoCAD 多文档环境下目标不明确）；<code>selection_scope</code> 枚举未定义；AutoLISP undo group 在脚本出错时可能不关闭。</td>
-            <td>selector 增加 <code>document</code> 字段并定义 <code>selection_scope</code> 枚举（第 5.3 节）；AutoLISP Adapter 要求 <code>*error*</code> 处理器兜底关闭 undo group（第 11 节）。</td>
-          </tr>
+          <tr><td>Action 白名单与 Safety 表自相矛盾</td><td>统一 Action 白名单。属性类修改全部归入 <code>set_property</code>；<code>scale_objects</code> 正式入白名单并列为高风险；<code>global_replace</code>、<code>modify_xref</code> 标记 v1 禁用。</td></tr>
+          <tr><td>安全字段信任 LLM</td><td><code>risk_level</code>、<code>requires_confirmation</code>、<code>max_affected_objects</code> 由服务端 Risk Policy 覆盖。IR 中只保留 <code>advisory_safety</code> 作为展示参考。</td></tr>
+          <tr><td>Confirm 链路可篡改、可重放</td><td>引入 Task Store。IR 落库后不可变，preview/confirm/execute 全部按 <code>task_id</code> 引用；confirm 签发限时 token；execute 幂等。</td></tr>
+          <tr><td>Preview 与 Execute 之间存在 TOCTOU</td><td>execute 前重新 Dry Run，对比 preview 快照。命中数、目标集合摘要或图纸版本不一致则中止并标记 <code>stale</code>。</td></tr>
+          <tr><td>缺 Validator、澄清流程、状态机、部分失败语义</td><td>主流程加入 Validator；模糊输入进入 Clarification；定义任务状态机；明确 all_or_nothing 与 partial_allowed 策略。</td></tr>
+          <tr><td>Audit Log 被放入预留</td><td>Audit Log 升为 P0，所有关键状态变更必须落审计。</td></tr>
+          <tr><td>selector 缺多文档标识</td><td>selector 必须包含 <code>document_id</code>、<code>space</code>、范围信息。</td></tr>
+          <tr><td>AutoLISP undo group 出错无兜底</td><td>生成的 LISP 必须包含 <code>*error*</code> 处理。</td></tr>
+        </tbody>
+      </table>
+
+      <h3>1.2 v1.2 进一步修正（本版）</h3>
+      <table>
+        <thead><tr><th>v1.1 遗留问题</th><th>v1.2 处理方式</th></tr></thead>
+        <tbody>
+          <tr><td><strong>IR 内含 <code>dry_run</code> 字段，与"IR 落库后不可变"矛盾。</strong>preview 与 execute 共用同一份不可变 IR，该 flag 无法翻转。</td><td>从 CAD-IR 移除 <code>dry_run</code>。执行模式属于 AdapterCommand 层：<code>mode: "dry_run" | "execute"</code>（见第 10 节）。</td></tr>
+          <tr><td><strong><code>cad_result_v1</code> 从未定义</strong>，但验收要求返回它。</td><td>补充 4.4 节 Result Schema。</td></tr>
+          <tr><td><strong>低风险任务在 API 层走不通：</strong>Risk 表说 Low 不需要确认，但 <code>execute</code> 强制要求 <code>confirm_token</code>。</td><td>定义低风险快速通道：Low Risk 任务以 <code>task_id + idempotency_key</code> 直接 execute，免 confirm_token，但仍必须通过 Validator、静态/动态 Policy 与 Audit（见第 7 节）。</td></tr>
+          <tr><td><strong>Risk Policy 时序矛盾：</strong><code>evaluateRisk</code> 的入参 <code>matched_count</code>、<code>layer_state</code>、<code>block_reference_count</code> 在 Dry Run 之前并不存在。</td><td>拆为两段式裁决：静态裁决（Dry Run 前，定确认等级与硬上限）+ 动态复评（Dry Run 后，只能维持或升级，不能降级）（见第 6 节）。</td></tr>
+          <tr><td><strong>AutoLISP <code>*error*</code> 兜底只关闭 undo 组、不回滚</strong>，与高风险 <code>all_or_nothing</code> 语义冲突——出错时半成品修改会保留。</td><td><code>all_or_nothing</code> 模式下，兜底必须在 <code>UNDO _END</code> 之后立即整组回退（见第 10 节修正后的模板）。</td></tr>
+          <tr><td><strong>状态机缺 <code>rejected</code> 终态</strong>，Validator/Policy 的"拒绝"无处可去；<code>needs_clarification</code> 被画成主链直线。</td><td>状态机改为分支图，补充 <code>rejected</code> 终态（见第 9 节）。</td></tr>
+          <tr><td><strong>Preview 响应缺前端展示字段</strong>（风险等级、二次确认、新值、可撤销、过期时间）。</td><td><code>cad_preview_v1</code> 补齐展示字段，且全部来自服务端裁决结果（见第 8 节）。</td></tr>
+          <tr><td><strong><code>document_id</code> 出现在 LLM 生成的 Intent 中</strong>，LLM 无法得知真实文档身份。</td><td><code>document_id</code> 由插件端会话上下文注入，LLM 输出中不含该字段，服务端拼装（见 4.1 节）。</td></tr>
+          <tr><td>次要：状态机有 <code>cancelled</code> 但无取消接口；<code>export_objects</code> 未限制导出目录。</td><td>新增 <code>POST /cad-agent/cancel</code>；<code>export_objects</code> 仅允许写入受控导出目录。</td></tr>
         </tbody>
       </table>
     </section>
 
-    <section id="mode" class="section">
-      <h2>1. 执行模式</h2>
-      <div class="callout danger">
-        <strong>进入 Implementation Mode。</strong><br />
-        本轮不要做临时 MVP，不要保留旧的直连执行链路。旧链路只能作为代码迁移参考，不能继续作为正式执行入口。
-      </div>
-
-      <h3>必须废弃的现有路径</h3>
-      <pre><code>自然语言 → AgentLite → DSL / AutoLISP → 立即执行 → 结果卡片</code></pre>
-
-      <h3>必须实现的最终路径</h3>
-      <div class="flow">
-        <span class="node">自然语言</span><span class="arrow">→</span>
-        <span class="node">Intent Parser</span><span class="arrow">→</span>
-        <span class="node">Task Planner</span><span class="arrow">→</span>
-        <span class="node">CAD-IR Generator</span><span class="arrow">→</span>
-        <span class="node">CAD-IR Validator</span><span class="arrow">→</span>
-        <span class="node">Safety Checker</span><span class="arrow">→</span>
-        <span class="node">Preview / Confirm</span><span class="arrow">→</span>
-        <span class="node">Execution Adapter</span><span class="arrow">→</span>
-        <span class="node">AutoCAD Executor</span><span class="arrow">→</span>
-        <span class="node">Result Reporter</span>
-      </div>
-      <p>其中 Intent Parser 在输入模糊时可分支到澄清流程（见 5.2），不允许硬猜后继续。</p>
+    <section id="flow">
+      <h2>2. 最终主流程</h2>
+      <pre><code>用户自然语言
+  ↓
+Intent Parser
+  ↓
+Clarification Gate（缺范围/缺对象/歧义时进入澄清，补充后重回 Intent Parser）
+  ↓
+Task Planner
+  ↓
+CAD-IR Generator（服务端注入 document_id 等会话上下文）
+  ↓
+CAD-IR Validator ──不通过──→ rejected（终态，落审计）
+  ↓
+Risk Policy 静态裁决（定风险下限、确认等级、对象数硬上限）
+  ↓
+Task Store（task_id + immutable IR + ir_hash + server_safety）
+  ↓
+├─ Low Risk：动态复评通过后直接 Execute（快速通道，仍走 Adapter/Executor/Audit）
+└─ Medium / High：
+     Preview / Dry Run
+       ↓
+     Risk Policy 动态复评（matched_count / layer_state / 引用数；只升不降）──超限──→ rejected
+       ↓
+     Confirm / Second Confirm（签发限时 confirm_token）
+       ↓
+     Execute 前复核 Dry Run（TOCTOU 检查，不一致 → stale）
+       ↓
+     Execution Adapter（AutoLISP / .NET，mode=execute）
+       ↓
+     AutoCAD Executor（幂等执行 + Undo Group + 兜底回滚）
+       ↓
+     Result Reporter
+       ↓
+     Audit Log</code></pre>
     </section>
 
-    <section id="principles" class="section">
-      <h2>2. 总体原则</h2>
-      <ol>
-        <li>LLM 不直接控制 AutoCAD。</li>
-        <li>LLM 不直接生成并执行 AutoLISP。</li>
-        <li>自然语言不能直接进入执行器。</li>
-        <li>所有执行请求必须先转换为 CAD-IR。</li>
-        <li>CAD-IR 是执行层唯一输入，且自 interpret 落库后<strong>不可变</strong>，下游一律按 <code>task_id</code> 引用。</li>
-        <li>Adapter 只能消费 CAD-IR。</li>
-        <li><strong>安全裁决只信服务端：</strong>风险等级、是否需要确认、影响对象上限，由 Risk Policy 确定性计算，不采信 LLM 在 IR 中的声明。</li>
-        <li>中高风险操作必须 Preview / Confirm。</li>
-        <li>所有修改类操作必须支持 undo group。</li>
-        <li>执行结果必须结构化返回。</li>
-        <li>每次裁决与执行必须写入审计日志。</li>
-      </ol>
-
-      <h3>系统边界</h3>
-      <table>
-        <thead>
-          <tr>
-            <th>层级</th>
-            <th>职责</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><strong>LLM 层</strong></td>
-            <td>理解自然语言、生成 Intent、生成 Task Plan、生成 CAD-IR、必要时发起澄清。其输出一律视为<strong>不可信输入</strong>。</td>
-          </tr>
-          <tr>
-            <td><strong>确定性执行层</strong></td>
-            <td>校验 CAD-IR、裁决风险、Dry Run、Preview、Confirm、生成 AutoLISP / .NET 命令、执行 CAD 操作、返回结构化结果、记录审计日志。该层不调用 LLM。</td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section id="modules" class="section">
-      <h2>3. 目标模块</h2>
-      <p>直接实现以下模块。若当前项目不是 TypeScript，可按现有语言改名，但模块边界必须保持。</p>
+    <section id="modules">
+      <h2>3. 模块边界</h2>
       <pre><code>cad_agent/
   intent/
     intent_schema.ts
-    intent_parser.ts          // 含 needs_clarification 分支
+    intent_parser.ts
+    clarification_gate.ts
 
   planner/
     task_plan_schema.ts
@@ -409,36 +143,44 @@
 
   ir/
     cad_ir_schema.ts
-    cad_ir_generator.ts
+    cad_ir_generator.ts        // 注入会话上下文（document_id 等）
     cad_ir_validator.ts
+    action_whitelist.ts
 
   safety/
+    risk_policy.ts             // 静态裁决 + 动态复评，两段式
     safety_checker.ts
-    risk_policy.ts            // 服务端唯一风险真相源
+    policy_limits.ts
 
   tasks/
-    task_store.ts             // task_id、IR 快照、状态机、确认令牌
-    task_state.ts
+    task_store.ts
+    task_state_machine.ts
+    confirm_token.ts
+    idempotency.ts
 
   preview/
+    preview_schema.ts
+    dry_run_executor.ts
     preview_service.ts
-    dry_run_executor.ts       // 经只读 Adapter 路径取影响范围
+    stale_checker.ts
 
   adapters/
-    adapter_command_schema.ts
+    adapter_command_schema.ts  // 含 mode: dry_run | execute
     autocad_lisp_adapter.ts
-    autocad_dotnet_adapter.ts // 本轮仅预留接口
+    autocad_dotnet_adapter.ts
 
   executor/
     autocad_executor.ts
     undo_manager.ts
+    execution_result_parser.ts
 
   reporter/
-    result_schema.ts
+    result_schema.ts           // cad_result_v1（4.4 节）
     result_reporter.ts
 
   audit/
-    audit_log.ts              // 最小实现：IR + 裁决 + 结果落盘
+    audit_log_schema.ts
+    audit_logger.ts
 
   ui/
     intent_card.tsx
@@ -450,38 +192,12 @@
     error_card.tsx</code></pre>
     </section>
 
-    <section id="legacy" class="section">
-      <h2>4. 废弃旧入口</h2>
-      <p>必须废弃或隔离以下旧路径：</p>
-      <pre><code>NL → AgentLite → DSL → execute_immediately
-NL → AgentLite → AutoLISP → execute_immediately
-NL → free_text_command → AutoCAD</code></pre>
-
-      <h3>硬性要求</h3>
-      <ol>
-        <li>不允许自然语言直接进入执行器。</li>
-        <li>不允许 LLM 输出自由 AutoLISP 后立即执行。</li>
-        <li>不允许前端点击后直接调用 <code>run_lisp</code>。</li>
-        <li>不允许 DSL 绕过 CAD-IR。</li>
-        <li>所有旧 DSL 必须迁移为 CAD-IR 或 Adapter 内部实现细节。</li>
-      </ol>
-
-      <div class="callout warn">
-        如果需要保留旧代码，统一放到 <code>legacy/</code>，默认不可调用，不接入正式 UI，不接入正式执行 API。
-      </div>
-    </section>
-
-    <section id="flow" class="section">
-      <h2>5. 正式执行链路</h2>
-
-      <h3>5.1 Natural Language → Intent</h3>
-      <p>用户输入示例：</p>
-      <pre><code>把 C-ANNO 图层上的所有圆半径改成 5.0</code></pre>
-      <p>必须先生成 Intent：</p>
+    <section id="schemas">
+      <h2>4. Schema 与核心数据结构</h2>
+      <h3>4.1 Intent</h3>
       <pre><code>{
   "schema": "cad_intent_v1",
   "intent": "modify_objects",
-  "confidence": 0.94,
   "target": {
     "space": "model",
     "layer": "C-ANNO",
@@ -494,397 +210,65 @@ NL → free_text_command → AutoCAD</code></pre>
     "value": 5.0,
     "unit": "drawing_unit"
   },
-  "constraints": {
-    "allow_global_scope": false,
-    "requires_existing_layer": true
-  }
+  "ambiguities": []
 }</code></pre>
-      <ul>
-        <li>Intent 必须结构化。</li>
-        <li>Intent 不得包含可执行脚本。</li>
-        <li>Intent 不得包含 AutoLISP 字符串。</li>
-        <li>Intent 不得直接传入 AutoCAD。</li>
-        <li>用户使用物理单位（如 mm / m）时，Intent Parser 负责按当前图纸单位换算，并在 Intent 中保留原始表述供前端展示核对。</li>
-      </ul>
-
-      <h3>5.2 澄清分支（Clarification）</h3>
-      <p>输入模糊（缺少范围、缺少数值、指代不明，或 <code>confidence</code> 低于阈值）时，Intent Parser 必须返回澄清请求，<strong>不允许硬猜后继续</strong>：</p>
-      <pre><code>{
-  "schema": "cad_intent_v1",
-  "status": "needs_clarification",
-  "questions": [
-    {
-      "field": "operation.value",
-      "question": "把圆半径改成多少？请提供数值和单位。"
-    }
-  ]
-}</code></pre>
-      <p>前端以 Clarification Card 展示，用户补充后重新进入 Intent Parser。澄清不是错误，不走 Error Card。</p>
-
-      <h3>5.3 Intent → Task Plan</h3>
-      <pre><code>{
-  "schema": "cad_task_plan_v1",
-  "task_type": "modify_circle_radius",
-  "advisory_risk_level": "medium",
-  "steps": [
-    {
-      "id": "select",
-      "name": "select_entities",
-      "description": "选择模型空间中 C-ANNO 图层上的圆形实体"
-    },
-    {
-      "id": "count",
-      "name": "count_entities",
-      "description": "统计命中对象数量"
-    },
-    {
-      "id": "validate",
-      "name": "validate_entities",
-      "description": "检查图层锁定、冻结、关闭状态"
-    },
-    {
-      "id": "modify",
-      "name": "set_radius",
-      "description": "将圆半径设置为 5.0"
-    },
-    {
-      "id": "report",
-      "name": "report_result",
-      "description": "返回执行结果"
-    }
-  ]
-}</code></pre>
-      <ul>
-        <li>Task Plan 必须可展示给用户。</li>
-        <li>Task Plan 不能直接执行。</li>
-        <li>Task Plan 必须进入 CAD-IR Generator。</li>
-        <li><code>advisory_risk_level</code> 仅供展示，真实风险由 Risk Policy 裁决（第 7 节）。</li>
-      </ul>
-
-      <h3>5.4 Task Plan → CAD-IR</h3>
+      <div class="callout"><strong>document_id 来源：</strong>LLM 无法得知真实文档身份，Intent 中<strong>不包含</strong> <code>document_id</code>。文档绑定由插件端会话上下文提供，CAD-IR Generator 在服务端拼装时注入；执行时 Executor 校验活动文档与绑定一致，不一致则中止。</div>
+      <h3>4.2 CAD-IR</h3>
       <pre><code>{
   "schema": "cad_ir_v1",
   "action": "set_property",
   "selector": {
-    "document": "active",
+    "document_id": "doc_001",        // 服务端注入，非 LLM 输出
     "space": "model",
     "layer": "C-ANNO",
     "entity_type": "CIRCLE",
     "selection_scope": "layer"
   },
-  "property": {
-    "name": "radius",
-    "value": 5.0,
-    "unit": "drawing_unit"
+  "operation": {
+    "property": {
+      "name": "radius",
+      "value": 5.0,
+      "unit": "drawing_unit"
+    }
   },
-  "execution": {
-    "undo_group": true,
-    "max_affected_objects": 500,
-    "on_partial_failure": "rollback_all"
+  "execution_request": {
+    "undo_group": true
   },
   "advisory_safety": {
     "risk_level": "medium",
-    "requires_confirmation": true
+    "requires_confirmation": true,
+    "max_affected_objects": 500
   },
   "reporting": {
     "return_object_ids": true,
     "return_failed_objects": true
   }
 }</code></pre>
-      <ul>
-        <li>CAD-IR 是正式执行层唯一输入。</li>
-        <li>CAD-IR 必须通过 validator。</li>
-        <li>CAD-IR 不能包含自由脚本文本。</li>
-        <li>CAD-IR 不能包含未校验的 LISP 字符串。</li>
-        <li>CAD-IR 必须声明 <code>action</code>、<code>selector</code>、<code>execution</code>、<code>reporting</code>。</li>
-        <li><code>selector.document</code>：v1 仅支持 <code>active</code>（当前活动文档）。AutoCAD 为多文档环境，执行时必须校验活动文档未切换。</li>
-        <li><code>selector.selection_scope</code> 枚举：<code>current_selection</code> | <code>window</code> | <code>layer</code> | <code>layer_and_type</code> | <code>global</code>。修改类操作禁止缺省。</li>
-        <li><code>advisory_safety</code> 是 LLM 的声明，仅供展示；Safety Checker 会另行裁决并以服务端结果为准。</li>
-        <li><code>execution.max_affected_objects</code> 由 Risk Policy 按 action 钳制到硬上限，IR 声明值只能更小，不能更大。</li>
-        <li>interpret 完成后，CAD-IR 由 Task Store 持久化并生成 <code>task_id</code> 与 <code>ir_hash</code>，此后不可修改（见第 9 节）。</li>
-      </ul>
-    </section>
-
-    <section id="validator" class="section">
-      <h2>6. CAD-IR Validator</h2>
-      <p>执行前必须校验 CAD-IR。</p>
-      <h3>最小校验规则</h3>
-      <ol>
-        <li><code>schema</code> 必须是 <code>cad_ir_v1</code>。</li>
-        <li><code>action</code> 必须属于白名单，且未被标记为 v1 禁用。</li>
-        <li><code>selector</code> 必须明确 <code>space</code> / <code>layer</code> / <code>entity_type</code> 或 <code>selection_scope = current_selection</code>。</li>
-        <li>修改类操作必须有明确 selector，且 <code>selection_scope</code> 不得缺省。</li>
-        <li>禁止无范围全图修改。</li>
-        <li><code>property.name</code> 必须属于对应实体类型的允许属性（按实体类型维护属性白名单）。</li>
-        <li><code>property.value</code> 类型必须合法，数值必须在该属性的合理区间内（如半径 &gt; 0）。</li>
-        <li><code>max_affected_objects</code> 必须存在，且不超过 Risk Policy 对该 action 的硬上限。</li>
-        <li><code>undo_group</code> 对修改类操作必须为 <code>true</code>。</li>
-        <li>IR 中任何字段不得包含可执行脚本或 LISP 片段（字符串字段做模式拦截）。</li>
-        <li>校验失败必须返回结构化错误（字段路径 + 错误码），供 Error Card 展示。</li>
-      </ol>
-
-      <h3>Action 白名单（v1 统一版）</h3>
-      <p>所有属性类修改（文本高度、标注样式属性、图层属性等）统一通过 <code>set_property</code> + <code>selector.entity_type</code> + <code>property.name</code> 表达，不再设独立 action，避免白名单膨胀和不一致。</p>
-      <table>
-        <thead>
-          <tr>
-            <th>Action</th>
-            <th>说明</th>
-            <th>v1 状态</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr><td><code>query_objects</code></td><td>查询对象</td><td><span class="tag tag-low">启用</span></td></tr>
-          <tr><td><code>count_objects</code></td><td>统计数量</td><td><span class="tag tag-low">启用</span></td></tr>
-          <tr><td><code>highlight_objects</code></td><td>高亮对象（不改图）</td><td><span class="tag tag-low">启用</span></td></tr>
-          <tr><td><code>export_objects</code></td><td>导出对象信息（仅允许写入受控导出目录）</td><td><span class="tag tag-low">启用</span></td></tr>
-          <tr><td><code>set_property</code></td><td>设置实体/图层/样式属性（覆盖文本高度、标注样式、图层属性等）</td><td><span class="tag tag-medium">启用</span></td></tr>
-          <tr><td><code>move_objects</code></td><td>移动对象</td><td><span class="tag tag-medium">启用</span></td></tr>
-          <tr><td><code>copy_objects</code></td><td>复制对象</td><td><span class="tag tag-medium">启用</span></td></tr>
-          <tr><td><code>scale_objects</code></td><td>缩放对象</td><td><span class="tag tag-high">启用</span></td></tr>
-          <tr><td><code>delete_objects</code></td><td>删除对象</td><td><span class="tag tag-high">启用</span></td></tr>
-          <tr><td><code>explode_blocks</code></td><td>炸开块引用</td><td><span class="tag tag-high">启用</span></td></tr>
-          <tr><td><code>purge_layers</code></td><td>清理图层</td><td><span class="tag tag-high">启用</span></td></tr>
-          <tr><td><code>modify_block_definition</code></td><td>修改块定义</td><td><span class="tag tag-high">启用</span></td></tr>
-          <tr><td><code>global_replace</code></td><td>全图替换</td><td><span class="tag tag-blocked">v1 禁用，Validator 直接拒绝</span></td></tr>
-          <tr><td><code>modify_xref</code></td><td>修改外部参照</td><td><span class="tag tag-blocked">v1 禁用，Validator 直接拒绝</span></td></tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section id="safety" class="section">
-      <h2>7. Safety Checker</h2>
-      <p>必须实现最终安全策略，不做简化版。</p>
-
-      <div class="callout danger">
-        <strong>裁决归属：</strong>风险等级、是否需要确认/二次确认、<code>max_affected_objects</code> 硬上限，全部由 <code>risk_policy</code> 按 <code>action</code> + <code>selection_scope</code> 在服务端确定性计算。CAD-IR 中 <code>advisory_safety</code> 与裁决不符时，以裁决为准并在 Preview 中向用户提示差异。LLM 无法通过声明降低风险等级或抬高对象上限。
-      </div>
-
-      <table>
-        <thead>
-          <tr>
-            <th>风险等级</th>
-            <th>操作（均在第 6 节白名单内）</th>
-            <th>处理方式</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><span class="tag tag-low">Low Risk</span></td>
-            <td><code>query_objects</code>、<code>count_objects</code>、<code>highlight_objects</code>、<code>export_objects</code></td>
-            <td>可直接执行，但仍必须经过 CAD-IR + Validator。</td>
-          </tr>
-          <tr>
-            <td><span class="tag tag-medium">Medium Risk</span></td>
-            <td><code>set_property</code>、<code>move_objects</code>、<code>copy_objects</code></td>
-            <td>必须 Dry Run，必须 Preview，必须用户确认。</td>
-          </tr>
-          <tr>
-            <td><span class="tag tag-high">High Risk</span></td>
-            <td><code>scale_objects</code>、<code>delete_objects</code>、<code>explode_blocks</code>、<code>purge_layers</code>、<code>modify_block_definition</code></td>
-            <td>必须 Dry Run，必须 Preview，必须二次确认，必须显示影响范围和可撤销状态。</td>
-          </tr>
-        </tbody>
-      </table>
-      <p>升级规则：<code>selection_scope = global</code> 时，Medium 自动升级为 High。<code>set_property</code> 作用于图层/样式等共享对象（影响面跨实体）时，同样升级为 High。</p>
-
-      <h3>强制拦截规则</h3>
-      <ol>
-        <li>没有明确范围，禁止修改。</li>
-        <li><code>selection_scope = global</code> 时，必须二次确认。</li>
-        <li>命中对象数量超过 <code>max_affected_objects</code>（取 IR 声明值与策略硬上限的较小者），禁止直接执行。</li>
-        <li>删除、炸开、清理、修改块定义，禁止直接执行。</li>
-        <li>图层 locked / frozen / off 时，不得直接修改。</li>
-        <li>修改块定义必须显示所有引用实例数量。</li>
-        <li>外部参照修改一律阻断（v1 禁用）。</li>
-        <li>执行前必须创建 undo group。</li>
-        <li>执行失败必须可解释。</li>
-        <li>任何校验失败不得进入 Adapter。</li>
-        <li>每次裁决（含拦截）写入审计日志。</li>
-      </ol>
-    </section>
-
-    <section id="preview" class="section">
-      <h2>8. Preview / Dry Run</h2>
-      <p>中高风险操作必须先 Dry Run。Dry Run 不允许改图，只返回影响范围。</p>
-      <p><strong>实现路径：</strong>Dry Run 复用同一条 Adapter → Executor 链路，但 Adapter 只生成只读选择/统计命令（<code>ssget</code> 级别），Executor 以只读模式执行。不为 Dry Run 单独开第二条执行通道，保证 Preview 数字与真实执行使用同一选择逻辑。</p>
-
-      <h3>返回格式</h3>
+      <div class="callout"><strong>注意一：</strong><code>advisory_safety</code> 不是安全依据。最终风险等级、确认要求、对象数量上限由服务端 <code>risk_policy.ts</code> 确定性裁决并写入 Task Store。<br><strong>注意二：</strong>IR 中<strong>没有</strong> <code>dry_run</code> 字段。IR 落库后不可变，preview 与 execute 共用同一份 IR；执行模式由 AdapterCommand 的 <code>mode</code> 区分（第 10 节）。</div>
+      <h3>4.3 Task Record</h3>
       <pre><code>{
-  "schema": "cad_preview_v1",
-  "task_id": "task_20260611_0001",
-  "ir_hash": "sha256:9f2c…",
-  "status": "preview_ready",
-  "task_type": "modify_circle_radius",
-  "risk_level": "medium",
-  "requires_confirmation": true,
-  "requires_second_confirmation": false,
-  "expires_at": "2026-06-11T08:35:00Z",
-  "impact": {
-    "matched_count": 128,
-    "modifiable_count": 126,
-    "blocked_count": 2,
-    "space": "model",
-    "layer": "C-ANNO",
-    "entity_type": "CIRCLE"
+  "task_id": "cad_task_20260611_0001",
+  "document_id": "doc_001",
+  "ir_hash": "sha256:...",
+  "ir": { "schema": "cad_ir_v1" },
+  "server_safety": {
+    "risk_level": "medium",
+    "requires_confirmation": true,
+    "requires_second_confirmation": false,
+    "max_affected_objects": 200,
+    "failure_mode": "partial_allowed"
   },
-  "operation": {
-    "action": "set_property",
-    "property": "radius",
-    "new_value": 5.0
-  },
-  "warnings": [
-    {
-      "code": "LAYER_LOCKED_OBJECTS",
-      "message": "2 个对象所在图层不可修改"
-    }
-  ],
-  "undo": {
-    "available": true,
-    "will_create_group": true
-  }
+  "state": "preview_ready",
+  "created_at": "2026-06-11T00:00:00Z",
+  "expires_at": "2026-06-11T00:15:00Z",
+  "version": 1
 }</code></pre>
-      <ul>
-        <li><code>risk_level</code> / <code>requires_*</code> 为 Risk Policy 裁决结果，不是 IR 声明值。</li>
-        <li>Preview 结果带 <code>expires_at</code>，过期后必须重新 Preview 才能确认。</li>
-      </ul>
-
-      <h3>前端展示内容</h3>
-      <pre><code>即将执行：
-
-操作：修改圆半径
-图层：C-ANNO
-对象类型：CIRCLE
-命中对象：128
-可修改：126
-不可修改：2（图层锁定）
-新半径：5.0
-风险等级：中
-可撤销：是
-
-确认后才会修改图纸。若期间图纸被手动修改，将重新核对影响范围。</code></pre>
-    </section>
-
-    <section id="confirm" class="section">
-      <h2>9. Confirm 机制</h2>
-      <p>正式执行 API 必须区分 interpret、preview、confirm、execute。不允许一个接口既 preview 又 execute。</p>
-
-      <h3>接口</h3>
-      <pre><code>POST /cad-agent/interpret   // NL → Intent/Plan/IR，落库生成 task_id + ir_hash
-POST /cad-agent/preview     // 按 task_id Dry Run，返回 cad_preview_v1
-POST /cad-agent/confirm     // 按 task_id + ir_hash 记录确认，返回 confirm_token
-POST /cad-agent/execute     // 按 task_id + confirm_token 执行</code></pre>
-
-      <h3>接口要求</h3>
-      <ol>
-        <li><code>interpret</code> 只返回 Intent / Task Plan / CAD-IR（或澄清请求），并持久化 IR 快照。IR 自此<strong>不可变</strong>。</li>
-        <li><code>preview</code> 只 Dry Run，不改图。只接受 <code>task_id</code>，不接受 IR 本体。</li>
-        <li><code>confirm</code> 校验 <code>ir_hash</code> 与库中快照一致后记录确认状态，签发一次性 <code>confirm_token</code>（默认 5 分钟有效）。高风险操作的二次确认是第二次独立的 confirm 调用。</li>
-        <li><code>execute</code> 只接受 <code>task_id</code> + 有效 <code>confirm_token</code>（低风险任务免 token）。不接受自然语言，不接受裸 IR，不接受 LLM 输出。</li>
-        <li><code>execute</code> 必须幂等：同一 <code>task_id</code> 重复调用（如双击确认）返回首次执行结果，不重复执行。</li>
-        <li><code>execute</code> 在真正改图前重新 Dry Run 一次，命中数量与 Preview 偏差超过阈值（默认 ±0，即任何变化）则中止，状态置为 <code>stale</code>，要求用户重新 Preview。这是对"用户在确认期间手动改图"的防御。</li>
-      </ol>
-    </section>
-
-    <section id="lifecycle" class="section">
-      <h2>10. 任务状态机 <span class="tag tag-new">v1.1 新增</span></h2>
-      <p>每个任务在 Task Store 中维护以下状态，状态迁移只能由确定性执行层触发：</p>
-      <pre><code>created → interpreted → validated → previewed → confirmed → executing → succeeded
-                                  ↘ rejected（validator/safety 拦截）
-              ↘ needs_clarification → interpreted（用户补充后）
-previewed / confirmed → expired（确认超时）
-executing → failed / partially_failed
-confirmed → stale（执行前复核发现图纸已变化）</code></pre>
-      <ul>
-        <li>只有 <code>confirmed</code> 状态的任务可进入 Executor（低风险任务允许 <code>validated</code> 直达）。</li>
-        <li>终态任务（succeeded / failed / rejected / expired / stale）不可复用，需重新 interpret。</li>
-        <li>每次状态迁移写入审计日志。</li>
-      </ul>
-    </section>
-
-    <section id="adapter" class="section">
-      <h2>11. Execution Adapter</h2>
-      <h3>Adapter 总原则</h3>
-      <ol>
-        <li>Adapter 只能消费 CAD-IR。</li>
-        <li>Adapter 不接收自然语言。</li>
-        <li>Adapter 不接收 Task Plan。</li>
-        <li>Adapter 不接收 LLM 直接生成的脚本。</li>
-        <li>Adapter 负责把 CAD-IR 转成 AutoLISP / .NET 命令。</li>
-        <li>Adapter 生成的命令必须可追踪、可日志化（随 <code>task_id</code> 落审计日志）。</li>
-        <li>Adapter 对同一 IR 的输出必须确定（同样输入产生同样命令），便于审计与测试。</li>
-      </ol>
-
-      <h3>当前必须实现 AutoLISP Adapter</h3>
-      <p>AutoLISP Adapter 输入：</p>
-      <pre><code>{
-  "schema": "cad_ir_v1",
-  "action": "set_property",
-  "selector": {
-    "document": "active",
-    "space": "model",
-    "layer": "C-ANNO",
-    "entity_type": "CIRCLE",
-    "selection_scope": "layer"
-  },
-  "property": {
-    "name": "radius",
-    "value": 5.0
-  }
-}</code></pre>
-      <p>AutoLISP Adapter 输出（AdapterCommand）：</p>
-      <pre><code>{
-  "schema": "adapter_command_v1",
-  "adapter": "autocad_lisp",
-  "task_id": "task_20260611_0001",
-  "command_type": "lisp",
-  "mode": "execute",            // 或 "dry_run"
-  "command": "&lt;generated_lisp&gt;",
-  "safe_to_execute": true
-}</code></pre>
-      <ul>
-        <li><code>generated_lisp</code> 只能由 Adapter 从 CAD-IR 模板化生成，不能来自 LLM。</li>
-        <li>IR 中的字符串值（图层名等）写入 LISP 前必须转义/参数化，防止注入。</li>
-        <li><code>generated_lisp</code> 必须包裹 undo group，且必须安装 <code>*error*</code> 处理器：脚本中途出错时兜底结束 undo group 并回滚，防止留下半开的 undo 组。</li>
-        <li><code>generated_lisp</code> 必须返回结构化执行结果（成功/失败对象句柄、计数），供 Result Reporter 解析。</li>
-        <li><code>mode = dry_run</code> 时只允许生成选择/统计命令，禁止出现任何修改实体的调用。</li>
-      </ul>
-
-      <h3>必须预留 .NET Adapter</h3>
-      <p>本轮不要求完整实现 .NET 执行，但接口必须预留：</p>
-      <pre><code>autocad_dotnet_adapter.ts</code></pre>
-      <p>目标：</p>
-      <pre><code>CAD-IR → .NET Command Request → AutoCAD Transaction → Result</code></pre>
-      <p>.NET Adapter 后续负责：更可靠的事务控制、对象 ID 回传、图层状态检测、块定义修改、失败对象定位。块定义修改等高风险动作建议优先迁移到 .NET 事务实现。</p>
-    </section>
-
-    <section id="executor" class="section">
-      <h2>12. AutoCAD Executor</h2>
-      <p>Executor 只能执行 Adapter 输出。</p>
-      <ol>
-        <li>Executor 不接收自然语言。</li>
-        <li>Executor 不接收 Intent。</li>
-        <li>Executor 不接收 Task Plan。</li>
-        <li>Executor 只接收 AdapterCommand。</li>
-        <li>Executor 执行前向 Task Store 核对任务状态为 <code>confirmed</code>（或低风险 <code>validated</code>）。</li>
-        <li>Executor 执行前核对活动文档与 IR 的 <code>selector.document</code> 一致，已切换则中止。</li>
-        <li>Executor 执行前重新 Dry Run 比对影响范围（见第 9 节第 6 条），不一致则中止并置 <code>stale</code>。</li>
-        <li>Executor 执行前创建 undo group。</li>
-        <li><strong>部分失败语义：</strong>按 IR 的 <code>on_partial_failure</code> 处理，默认 <code>rollback_all</code>（整组回滚，结果状态 <code>failed</code>）；显式声明 <code>keep_successful</code> 时保留成功部分，结果状态 <code>partially_failed</code> 并逐对象列出失败原因。</li>
-        <li>Executor 串行执行任务，同一文档同一时间只允许一个修改类任务在执行。</li>
-        <li>Executor 执行后收集结构化结果。</li>
-        <li>Executor 失败时返回错误码和错误原因。</li>
-      </ol>
-    </section>
-
-    <section id="reporter" class="section">
-      <h2>13. Result Reporter</h2>
-      <p>执行完成后返回结构化结果。</p>
+      <h3>4.4 Result（cad_result_v1）<span class="badge b-blue">v1.2 补充</span></h3>
       <pre><code>{
   "schema": "cad_result_v1",
-  "task_id": "task_20260611_0001",
-  "status": "success",
-  "command": "modify_circle_radius",
+  "task_id": "cad_task_20260611_0001",
+  "status": "succeeded",            // succeeded | partial_succeeded | failed | stale | rejected
+  "action": "set_property",
   "summary": {
     "matched_count": 128,
     "modified_count": 126,
@@ -901,161 +285,344 @@ confirmed → stale（执行前复核发现图纸已变化）</code></pre>
     "group_id": "undo_20260611_001"
   },
   "errors": [
-    {
-      "object_id": "A23F",
-      "reason": "LAYER_LOCKED"
-    }
+    { "object_id": "A23F", "reason": "LAYER_LOCKED" }
   ]
 }</code></pre>
       <ul>
-        <li><code>status</code> 枚举：<code>success</code> | <code>partially_failed</code> | <code>failed</code> | <code>aborted_stale</code> | <code>rejected</code>。</li>
         <li><code>errors[].reason</code> 使用错误码而非自由文本，前端负责本地化展示。</li>
-        <li>结果连同 <code>task_id</code>、最终 IR、裁决记录一并写入审计日志。</li>
+        <li>结果连同最终 IR、裁决记录、<code>task_id</code> 一并写入 Audit Log。</li>
       </ul>
-
-      <h3>前端 Result Card 展示</h3>
-      <pre><code>执行完成
-
-命令：修改圆半径
-图层：C-ANNO
-对象类型：CIRCLE
-命中数量：128
-成功修改：126
-失败：2（图层锁定）
-新半径：5.0
-耗时：0.42 秒
-撤销：可用</code></pre>
     </section>
 
-    <section id="frontend" class="section">
-      <h2>14. 前端最终交互</h2>
-      <p>前端必须从单一结果卡片改为完整任务流卡片。</p>
-
-      <h3>必须支持的卡片</h3>
-      <ol>
-        <li>Intent Card</li>
-        <li>Plan Card</li>
-        <li>Clarification Card <span class="tag tag-new">v1.1 新增</span></li>
-        <li>Preview Card</li>
-        <li>Confirm Card（高风险时为两段式二次确认）</li>
-        <li>Result Card</li>
-        <li>Error Card</li>
-      </ol>
-
-      <h3>前端流程</h3>
-      <pre><code>用户输入
-→ 显示正在理解
-→ 模糊输入：显示 Clarification Card，补充后重新理解
-→ 显示 Intent / Plan
-→ 生成 CAD-IR（服务端落库，得到 task_id）
-→ Validator + Safety Checker（服务端裁决风险）
-→ 如果 low risk：允许直接执行
-→ 如果 medium risk：显示 Preview + 确认按钮
-→ 如果 high risk：显示 Preview + 二次确认
-→ 执行（带 confirm_token；按钮防重复点击，confirm 过期则提示重新 Preview）
-→ 显示 Result Card / Error Card</code></pre>
-
-      <div class="callout warn">
-        不要再只显示“正在初始化几何审计 / 正在识别圆形实体 / 执行成功”。结果必须结构化、可追踪、可解释。Preview 中展示的风险等级必须来自服务端裁决，而非 LLM 声明。
-      </div>
+    <section id="actions">
+      <h2>5. Action 白名单与禁用项</h2>
+      <table>
+        <thead><tr><th>Action</th><th>风险</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td><code>query_objects</code></td><td><span class="badge b-green">Low</span></td><td>查询对象，不改图。</td></tr>
+          <tr><td><code>count_objects</code></td><td><span class="badge b-green">Low</span></td><td>统计对象数量。</td></tr>
+          <tr><td><code>highlight_objects</code></td><td><span class="badge b-green">Low</span></td><td>高亮/选择，不改图。</td></tr>
+          <tr><td><code>export_objects</code></td><td><span class="badge b-green">Low</span></td><td>导出统计或对象信息，仅允许写入受控导出目录，路径不接受用户/LLM 自由输入。</td></tr>
+          <tr><td><code>set_property</code></td><td><span class="badge b-amber">Medium</span></td><td>统一表达文字高度、颜色、线型、半径、标注样式、图层属性等属性类修改。作用于图层/样式等共享对象时动态升级为 High。</td></tr>
+          <tr><td><code>move_objects</code></td><td><span class="badge b-amber">Medium</span></td><td>移动对象，必须 preview + confirm。</td></tr>
+          <tr><td><code>copy_objects</code></td><td><span class="badge b-amber">Medium</span></td><td>复制对象，必须 preview + confirm。</td></tr>
+          <tr><td><code>delete_objects</code></td><td><span class="badge b-red">High</span></td><td>删除对象，必须二次确认。</td></tr>
+          <tr><td><code>explode_blocks</code></td><td><span class="badge b-red">High</span></td><td>炸开块，必须二次确认。</td></tr>
+          <tr><td><code>purge_layers</code></td><td><span class="badge b-red">High</span></td><td>清理图层，必须二次确认。</td></tr>
+          <tr><td><code>modify_block_definition</code></td><td><span class="badge b-red">High</span></td><td>修改块定义，必须显示引用实例数并二次确认。</td></tr>
+          <tr><td><code>scale_objects</code></td><td><span class="badge b-red">High</span></td><td>缩放对象，正式入白名单，高风险。</td></tr>
+        </tbody>
+      </table>
+      <h3>v1 禁用项</h3>
+      <ul>
+        <li><code>global_replace</code>：v1 禁用。Validator 直接拒绝，不得进入 Adapter。</li>
+        <li><code>modify_xref</code>：v1 禁用。Validator 直接拒绝，不得进入 Adapter。</li>
+        <li>自由脚本执行：禁用。不得作为正式 API 暴露。</li>
+      </ul>
     </section>
 
-    <section id="scope" class="section">
-      <h2>15. 本轮必须完成的范围</h2>
-      <p>这次不是补丁，不是局部改造，直接落最终架构骨架。</p>
+    <section id="risk">
+      <h2>6. 服务端 Risk Policy（两段式）<span class="badge b-blue">v1.2 修正</span></h2>
+      <p>Risk Policy 是唯一安全裁决来源，不得相信 LLM 写入 IR 的风险字段。v1.1 的单次 <code>evaluateRisk</code> 依赖 <code>matched_count</code> 等运行时数据，但这些数据在 Dry Run 之前不存在——因此裁决拆为两段：</p>
+      <h3>第一段：静态裁决（policy_applied，Dry Run 前）</h3>
+      <pre><code>static_safety = evaluateStaticRisk({
+  action,                  // 白名单内动作 → 基础风险等级
+  selector.selection_scope,
+  property.name,           // 共享对象属性（图层/样式）→ 升级
+  document_binding         // 缺 document 绑定 → 拒绝
+})
+// 产出：risk_level 下限、requires_confirmation、
+//       requires_second_confirmation、max_affected_objects 硬上限、failure_mode
+// 写入 Task Record.server_safety</code></pre>
+      <h3>第二段：动态复评（Dry Run 完成后 / Execute 复核时）</h3>
+      <pre><code>dynamic_safety = reviewWithRuntime(static_safety, {
+  matched_count,           // 超硬上限 → rejected
+  layer_state,             // locked/frozen/off → 阻断对应对象
+  block_reference_count,   // 块引用数 → 展示并维持 High
+  document_revision
+})
+// 约束：动态复评只能维持或升级风险等级，不能降级；
+//       任何降级路径都视为实现错误。</code></pre>
+      <h3>硬规则</h3>
+      <ul>
+        <li>无 document 绑定：拒绝。</li>
+        <li>无明确 selector 且是修改类 action：拒绝。</li>
+        <li><code>selection_scope = global</code>：至少高风险并要求二次确认。</li>
+        <li>命中数超过策略硬上限：拒绝或要求缩小范围，不能使用 LLM 上报的上限绕过（取 IR 声明值与硬上限的较小者）。</li>
+        <li>删除、炸开、清理、修改块定义、缩放：高风险。</li>
+        <li>图层 locked/frozen/off：默认阻断对应对象修改，并返回 blocked_count。</li>
+      </ul>
+      <h3>策略上限示例</h3>
+      <table>
+        <thead><tr><th>风险</th><th>默认对象上限</th><th>确认要求</th></tr></thead>
+        <tbody>
+          <tr><td>Low</td><td>10000</td><td>免确认（快速通道，见第 7 节），但必须经过 CAD-IR + Validator + 两段裁决 + Audit。</td></tr>
+          <tr><td>Medium</td><td>200</td><td>Preview + Confirm。</td></tr>
+          <tr><td>High</td><td>50</td><td>Preview + Second Confirm。</td></tr>
+        </tbody>
+      </table>
+    </section>
 
+    <section id="taskstore">
+      <h2>7. Task Store、Confirm Token 与幂等</h2>
+      <p>所有 preview、confirm、execute 均按 <code>task_id</code> 引用不可变 Task Record，禁止客户端重新提交 IR 执行。</p>
+      <h3>接口</h3>
+      <pre><code>POST /cad-agent/interpret     → 返回 intent、plan、task_id（或澄清请求）
+POST /cad-agent/preview       → 入参 task_id，只 Dry Run
+POST /cad-agent/confirm       → 入参 task_id，签发 confirm_token
+POST /cad-agent/execute       → 入参 task_id + confirm_token + idempotency_key
+POST /cad-agent/cancel        → 入参 task_id，置 cancelled 终态
+GET  /cad-agent/tasks/:task_id</code></pre>
+      <h3>低风险快速通道 <span class="badge b-blue">v1.2 补充</span></h3>
+      <ul>
+        <li>Low Risk 任务（server_safety 裁决为 Low）允许 <code>execute</code> 仅携带 <code>task_id + idempotency_key</code>，免 confirm_token。</li>
+        <li>前提：状态为 <code>policy_applied</code>，且执行前的动态复评通过（命中数在 Low 上限内）。</li>
+        <li>快速通道仍然全程经过 CAD-IR → Validator → Adapter → Executor → Audit，只是跳过 Preview/Confirm 交互。</li>
+        <li>Medium / High 任务的 <code>execute</code> 缺 confirm_token 一律拒绝。</li>
+      </ul>
+      <h3>Confirm Token</h3>
+      <ul>
+        <li>绑定 <code>task_id</code>、<code>ir_hash</code>、<code>document_id</code>、<code>preview_hash</code>。</li>
+        <li>设置有效期，例如 2–5 分钟。</li>
+        <li>Medium 风险使用一级确认；High 风险使用二级确认（第二次独立 confirm 调用）。</li>
+        <li>过期、哈希不一致、状态不一致时拒绝执行。</li>
+      </ul>
+      <h3>幂等</h3>
+      <ul>
+        <li><code>execute</code> 必须要求 <code>idempotency_key</code>。</li>
+        <li>同一 <code>task_id + idempotency_key</code> 重复提交，只返回第一次执行结果。</li>
+        <li>任务进入 terminal state 后不得重复执行——即使更换 <code>idempotency_key</code> 也必须拒绝。</li>
+      </ul>
+    </section>
+
+    <section id="preview">
+      <h2>8. Preview / Dry Run / TOCTOU</h2>
+      <p>中高风险任务必须先 Dry Run。Dry Run 不改图，只返回影响范围、对象数量、图层状态、可修改对象数量和快照摘要。Dry Run 复用同一条 Adapter → Executor 链路（<code>mode = dry_run</code>，只生成选择/统计命令），保证 Preview 数字与真实执行使用同一选择逻辑。</p>
+      <pre><code>{
+  "schema": "cad_preview_v1",
+  "task_id": "cad_task_20260611_0001",
+  "status": "preview_ready",
+  "preview_hash": "sha256:...",
+  "document_revision": "rev_103",
+  "risk_level": "medium",
+  "requires_confirmation": true,
+  "requires_second_confirmation": false,
+  "expires_at": "2026-06-11T00:15:00Z",
+  "operation": {
+    "action": "set_property",
+    "property": "radius",
+    "new_value": 5.0
+  },
+  "impact": {
+    "matched_count": 128,
+    "modifiable_count": 126,
+    "blocked_count": 2,
+    "object_set_hash": "sha256:..."
+  },
+  "undo": {
+    "available": true,
+    "will_create_group": true
+  },
+  "warnings": [
+    { "code": "LAYER_LOCKED_OBJECTS", "message": "2 个对象所在图层不可修改" }
+  ]
+}</code></pre>
+      <div class="callout"><code>risk_level</code> / <code>requires_*</code> 来自 Task Record 的 <code>server_safety</code>（动态复评后），不是 IR 的 <code>advisory_safety</code>。Preview Card 展示所需的全部字段（风险、新值、可撤销、过期时间）必须由本响应携带，前端不得回读 IR。<span class="badge b-blue">v1.2 补充</span></div>
+      <h3>Execute 前复核</h3>
+      <ul>
+        <li>execute 前必须再次 Dry Run。</li>
+        <li>对比 <code>matched_count</code>、<code>object_set_hash</code>、<code>document_revision</code>。</li>
+        <li>不一致则中止，任务状态置为 <code>stale</code>，要求用户重新 preview。</li>
+      </ul>
+    </section>
+
+    <section id="state">
+      <h2>9. 任务状态机与失败语义</h2>
+      <h3>状态机 <span class="badge b-blue">v1.2 修正：分支化 + rejected 终态</span></h3>
+      <pre><code>created → interpreted ─┬─→ needs_clarification → interpreted（用户补充后）
+                       └─→ ir_validated ─┬─→ rejected      （Validator / 静态 Policy 拒绝，终态）
+                                         └─→ policy_applied
+
+policy_applied ─┬─→ executing                               （Low Risk 快速通道，动态复评通过）
+                └─→ preview_ready ─┬─→ rejected             （动态复评超限，终态）
+                                   └─→ confirmed → [second_confirmed] → executing
+
+executing → succeeded | partial_succeeded | failed
+
+preview_ready / confirmed / second_confirmed
+  → expired   （确认超时，终态）
+  → stale     （执行前复核发现图纸已变化，终态）
+  → cancelled （用户取消，终态）</code></pre>
+      <ul>
+        <li>终态：<code>succeeded</code> / <code>partial_succeeded</code> / <code>failed</code> / <code>rejected</code> / <code>expired</code> / <code>stale</code> / <code>cancelled</code>。终态任务不可复用，需重新 interpret。</li>
+        <li>每次状态迁移写入 Audit Log。</li>
+      </ul>
+      <h3>失败语义</h3>
+      <table>
+        <thead><tr><th>模式</th><th>适用</th><th>行为</th></tr></thead>
+        <tbody>
+          <tr><td><code>all_or_nothing</code></td><td>删除、缩放、块定义修改等高风险动作</td><td>任何对象失败则整组回滚，结果为 <code>failed</code>。</td></tr>
+          <tr><td><code>partial_allowed</code></td><td>属性类修改</td><td>允许修改可修改对象，失败对象进入 errors，结果为 <code>partial_succeeded</code>。</td></tr>
+        </tbody>
+      </table>
+      <p>默认策略：High Risk 使用 <code>all_or_nothing</code>，Medium Risk 可按 action 配置。<code>failure_mode</code> 由静态裁决写入 <code>server_safety</code>，不由 LLM 指定。</p>
+    </section>
+
+    <section id="adapters">
+      <h2>10. Adapter / Executor / AutoLISP 兜底</h2>
+      <h3>Adapter 规则</h3>
+      <ul>
+        <li>Adapter 只能消费 Task Store 中已校验的 CAD-IR。</li>
+        <li>Adapter 不接收自然语言、不接收 Task Plan、不接收 LLM 生成脚本。</li>
+        <li>Adapter 对同一 IR + 同一 mode 的输出必须确定（同输入同输出），便于审计与测试。</li>
+        <li>IR 中的字符串值（图层名等）写入 LISP 前必须转义/参数化，防止注入。</li>
+        <li>Adapter 输出 <code>AdapterCommand</code>，由 Executor 执行。</li>
+      </ul>
+      <pre><code>{
+  "schema": "adapter_command_v1",
+  "adapter": "autocad_lisp",
+  "task_id": "cad_task_20260611_0001",
+  "ir_hash": "sha256:...",
+  "command_type": "lisp",
+  "mode": "execute",                 // "dry_run" | "execute"  ← v1.2：模式在此层，不在 IR
+  "command": "&lt;generated_lisp&gt;",
+  "safe_to_execute": true
+}</code></pre>
+      <ul>
+        <li><code>mode = dry_run</code> 时只允许生成选择/统计命令（<code>ssget</code> 级别），禁止出现任何修改实体的调用，且不创建 undo group。</li>
+      </ul>
+      <h3>AutoLISP 错误兜底 <span class="badge b-blue">v1.2 修正：关组后必须回滚</span></h3>
+      <p>v1.1 模板的 <code>*error*</code> 只执行 <code>UNDO _END</code>，半成品修改会保留在图纸上，与 <code>all_or_nothing</code> 冲突。修正后：</p>
+      <pre><code>(defun c:CAD_AGENT_EXEC (/ olderr undo_open)
+  (setq olderr *error*)
+  (defun *error* (msg)
+    ;; 兜底顺序：先关闭未结束的 undo 组，再立即整组回退，
+    ;; 保证 all_or_nothing 语义下不留下半成品修改
+    (if undo_open
+      (progn
+        (command "_.UNDO" "_END")
+        (command "_.U")))
+    (setq *error* olderr)
+    ;; return structured error payload here
+    (princ)
+  )
+  (command "_.UNDO" "_BEGIN")
+  (setq undo_open T)
+  ;; generated deterministic operations from CAD-IR only
+  (command "_.UNDO" "_END")
+  (setq undo_open nil)
+  (setq *error* olderr)
+  ;; return structured success payload here
+  (princ)
+)</code></pre>
+      <ul>
+        <li><code>partial_allowed</code> 模式下，单对象失败在脚本内部逐对象捕获并计入 errors，不触发 <code>*error*</code>；<code>*error*</code> 只兜底不可恢复的脚本级异常，此时同样整组回退并返回 <code>failed</code>。</li>
+        <li>结构化结果（成功/失败对象句柄、计数）必须由脚本返回，供 <code>execution_result_parser</code> 解析。</li>
+      </ul>
+      <h3>Executor</h3>
+      <ul>
+        <li>Executor 只接收 <code>AdapterCommand</code>。</li>
+        <li>执行前检查 task state、confirm_token（Low Risk 快速通道除外）、ir_hash、idempotency_key。</li>
+        <li>执行前核对活动文档与 Task Record 的 <code>document_id</code> 一致，已切换则中止。</li>
+        <li>同一文档同一时间只允许一个修改类任务在执行（串行）。</li>
+        <li>执行后必须解析结构化结果并写入 Task Store 与 Audit Log。</li>
+      </ul>
+    </section>
+
+    <section id="ui">
+      <h2>11. 前端卡片</h2>
+      <p>前端必须从单一结果卡片升级为任务流卡片。</p>
+      <ul>
+        <li>Intent Card：展示理解结果和可能歧义。</li>
+        <li>Clarification Card：缺范围、缺对象、缺图层时要求用户补充。</li>
+        <li>Plan Card：展示任务步骤。</li>
+        <li>Preview Card：展示影响范围、风险等级、命中数、不可修改对象、新值、可撤销状态、确认截止时间（全部取自 <code>cad_preview_v1</code>）。</li>
+        <li>Confirm Card：一级确认或二级确认；按钮防重复点击；token 过期时提示重新 Preview。</li>
+        <li>Result Card：展示结构化执行结果（<code>cad_result_v1</code>）。</li>
+        <li>Error / Stale Card：展示拒绝、过期、图纸变化、确认失效、执行失败等原因（错误码 + 本地化文案）。</li>
+      </ul>
+    </section>
+
+    <section id="audit">
+      <h2>12. Audit Log</h2>
+      <p>Audit Log 是 P0，不是预留项。每个关键状态必须写日志。</p>
+      <pre><code>{
+  "schema": "cad_audit_log_v1",
+  "event_id": "evt_001",
+  "task_id": "cad_task_20260611_0001",
+  "event_type": "execute_succeeded",
+  "document_id": "doc_001",
+  "ir_hash": "sha256:...",
+  "actor": "user",
+  "timestamp": "2026-06-11T00:00:00Z",
+  "payload": {
+    "matched_count": 128,
+    "modified_count": 126,
+    "failed_count": 2
+  }
+}</code></pre>
+      <p>必须记录：interpret、validate、rejected、policy_applied、dynamic_review、preview、confirm、second_confirm、execute_start、execute_succeeded、execute_failed、stale、expired、cancelled。</p>
+    </section>
+
+    <section id="scope">
+      <h2>13. 本轮范围</h2>
       <h3>必须完成</h3>
-      <ol>
-        <li>Intent Schema（含澄清分支）</li>
-        <li>Intent Parser</li>
-        <li>Task Plan Schema</li>
-        <li>Task Planner</li>
-        <li>CAD-IR Schema</li>
-        <li>CAD-IR Generator</li>
-        <li>CAD-IR Validator（含统一白名单与禁用项）</li>
-        <li>Safety Checker</li>
-        <li>Risk Policy（服务端裁决 + 硬上限）</li>
-        <li>Task Store（task_id / ir_hash / 状态机 / confirm_token）</li>
-        <li>Dry Run / Preview Service（含过期机制）</li>
-        <li>Confirm Flow（防篡改、防重放、幂等）</li>
-        <li>AutoLISP Adapter（含注入防护与 <code>*error*</code> 兜底）</li>
-        <li>AdapterCommand Schema</li>
-        <li>AutoCAD Executor 改造（含执行前复核）</li>
-        <li>Undo Group 管理</li>
-        <li>Result Schema</li>
-        <li>Result Reporter</li>
-        <li>最小审计日志（IR + 裁决 + 结果落盘）</li>
-        <li>前端 Plan / Clarification / Preview / Confirm / Result 卡片</li>
-        <li>旧立即执行路径隔离</li>
-      </ol>
-
+      <ul>
+        <li>Intent / Task Plan / CAD-IR / Validator。</li>
+        <li>Action 白名单 v1.2。</li>
+        <li>服务端 Risk Policy 两段式裁决（静态 + 动态复评，只升不降）。</li>
+        <li>Task Store：task_id、ir_hash、不可变 IR、状态机（含 rejected 终态）。</li>
+        <li>Preview / Dry Run / TOCTOU stale check（Preview 响应含全部展示字段）。</li>
+        <li>Confirm Token、防篡改、防重放、幂等 execute、低风险快速通道、cancel 接口。</li>
+        <li>AutoLISP Adapter（含 mode 区分、注入防护）与 .NET Adapter 接口预留。</li>
+        <li>AutoLISP undo group + *error* 兜底（关组后整组回退）。</li>
+        <li>Result Schema（cad_result_v1）、Result Reporter、Audit Log。</li>
+        <li>前端 Intent / Plan / Clarification / Preview / Confirm / Result / Error 卡片。</li>
+        <li>旧 immediate execute 路径隔离或禁用。</li>
+      </ul>
       <h3>本轮不做</h3>
       <ul>
-        <li>云端 CAD</li>
-        <li>语音识别</li>
-        <li>多 CAD 平台完整适配</li>
-        <li>构件语义识别</li>
-        <li>工程量计算</li>
-        <li>复杂图纸理解</li>
-        <li>批处理队列</li>
-        <li>多 Agent 协同</li>
-        <li><code>global_replace</code> / <code>modify_xref</code>（白名单中标记禁用）</li>
-        <li>多文档并行（<code>selector.document</code> 仅支持 <code>active</code>）</li>
-      </ul>
-
-      <h3>必须预留</h3>
-      <ul>
-        <li>.NET Adapter</li>
-        <li>Future CAD Adapter</li>
-        <li>Task History（基于 Task Store 扩展）</li>
-        <li>完整 Audit Log 查询界面（本轮只做落盘）</li>
+        <li>云端 CAD。</li>
+        <li>语音识别。</li>
+        <li>多 CAD 平台完整适配。</li>
+        <li>构件语义识别。</li>
+        <li>工程量计算。</li>
+        <li>复杂图纸理解。</li>
+        <li>批处理队列。</li>
+        <li>多 Agent 协同。</li>
+        <li><code>global_replace</code> / <code>modify_xref</code>（Validator 直接拒绝）。</li>
       </ul>
     </section>
 
-    <section id="acceptance" class="section">
-      <h2>16. 验收标准</h2>
+    <section id="acceptance">
+      <h2>14. 验收标准</h2>
       <ol>
         <li>自然语言不能直接进入执行器。</li>
         <li>LLM 不能直接输出 AutoLISP 并立即执行。</li>
-        <li>所有执行必须经过 Intent → Task Plan → CAD-IR。</li>
-        <li>CAD-IR 是执行层唯一输入，interpret 后不可变，下游按 <code>task_id</code> 引用。</li>
-        <li>CAD-IR 必须 validator 通过后才能执行；Safety 表中所有动作均在白名单内。</li>
-        <li>Safety Checker 必须在执行前运行；风险等级由服务端 Risk Policy 裁决，篡改 IR 中 <code>advisory_safety</code> / <code>max_affected_objects</code> 无法降低安全要求（需有对应测试用例）。</li>
-        <li>中风险操作必须 Preview + Confirm。</li>
-        <li>高风险操作必须 Preview + 二次确认。</li>
-        <li>确认有有效期；<code>execute</code> 幂等，重复提交不会重复改图（需有对应测试用例）。</li>
-        <li>确认后 IR 被篡改（<code>ir_hash</code> 不匹配）时，执行必须被拒绝（需有对应测试用例）。</li>
-        <li>执行前复核影响范围，Preview 后图纸被手动修改时执行中止并置 <code>stale</code>。</li>
+        <li>所有执行必须经过 Intent → Task Plan → CAD-IR → Validator。</li>
+        <li>Action 白名单与 Risk Policy 一致，不存在 Safety 表可引用但 Validator 拒绝的 action。</li>
+        <li><code>modify_text_height</code> 等属性修改必须通过 <code>set_property</code> 表达。</li>
+        <li><code>scale_objects</code> 在白名单内且为高风险。</li>
+        <li><code>global_replace</code>、<code>modify_xref</code> 在 v1 禁用，进入系统时必须拒绝。</li>
+        <li>Risk Policy 由服务端两段式裁决：静态裁决在 Dry Run 前完成，动态复评只能维持或升级风险，篡改 IR 中 <code>advisory_safety</code> 无法降低安全要求（需有测试用例）。</li>
+        <li>CAD-IR 不包含执行模式字段；dry_run 与 execute 由 AdapterCommand 的 <code>mode</code> 区分，IR 落库后不可变（需有测试用例）。</li>
+        <li>Task Store 中 IR 落库后不可变，execute 只能按 <code>task_id</code> 引用。</li>
+        <li>Confirm Token 必须绑定 <code>task_id</code>、<code>ir_hash</code>、<code>preview_hash</code>、<code>document_id</code>，且有有效期。</li>
+        <li>Low Risk 任务可经快速通道免确认执行，但必须通过 Validator、两段裁决与 Audit；Medium/High 缺 confirm_token 一律拒绝（需有测试用例）。</li>
+        <li>Execute 必须幂等，重复点击不能重复修改图纸；终态任务更换 idempotency_key 也不得重新执行。</li>
+        <li>Execute 前必须重新 Dry Run，比对 preview 快照，不一致则 stale 中止。</li>
+        <li>模糊输入必须进入 Clarification，不允许硬猜后改图。</li>
+        <li>中风险操作必须 Preview + Confirm；高风险操作必须 Preview + Second Confirm。</li>
         <li>没有明确范围时，禁止修改图纸。</li>
-        <li>删除 / 炸开 / 清理 / 修改块定义禁止直接执行。</li>
-        <li>模糊输入走澄清流程，不报错、不硬猜。</li>
-        <li>执行前必须创建 undo group；AutoLISP 脚本出错时 undo group 必须被兜底关闭。</li>
-        <li>执行后必须返回 <code>cad_result_v1</code>，部分失败按 <code>on_partial_failure</code> 语义处理。</li>
-        <li>每次裁决与执行写入审计日志。</li>
-        <li>前端必须展示 Plan / Clarification / Preview / Confirm / Result。</li>
-        <li>旧的 immediate execute 路径必须隔离或禁用。</li>
-        <li>AutoLISP 只是 Adapter 输出，不是核心协议。</li>
+        <li>删除 / 炸开 / 清理 / 修改块定义 / 缩放禁止直接执行。</li>
+        <li>执行前必须创建 undo group；AutoLISP <code>*error*</code> 兜底必须在关闭 undo group 后整组回退，出错时图纸不得残留半成品修改（需有测试用例）。</li>
+        <li><code>document_id</code> 由插件端会话注入，LLM 输出不含该字段；执行前必须核对活动文档一致。</li>
+        <li>执行后必须返回 <code>cad_result_v1</code>（4.4 节定义），包含命中数、成功数、失败数、耗时、撤销状态。</li>
+        <li>状态机包含 <code>rejected</code> 终态，Validator / Policy 拒绝必须落审计。</li>
+        <li>Audit Log 必须记录关键状态，不得作为后续预留。</li>
+        <li>旧 immediate execute 路径必须隔离或禁用，不接入正式 UI/API。</li>
       </ol>
-
-      <div class="callout ok">
-        <strong>最终目标状态：</strong>
-        <pre><code>NL
-→ Intent（模糊时 → Clarification → 重新理解）
-→ Task Plan
-→ CAD-IR（落库，task_id + ir_hash，不可变）
-→ Validate
-→ Safety（服务端裁决）
-→ Preview（Dry Run，带有效期）
-→ Confirm（防篡改、防重放）
-→ Adapter（确定性生成命令）
-→ Executor（执行前复核 + undo group）
-→ Result（结构化 + 审计日志）</code></pre>
-      </div>
     </section>
   </main>
-
-  <footer class="footer">
-    AutoCAD Natural Language Agent · Final Architecture Brief · v1.1（2026-06-11 架构审查修订）
-  </footer>
 </body>
 </html>
