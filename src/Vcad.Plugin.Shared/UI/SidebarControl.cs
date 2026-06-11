@@ -12,6 +12,7 @@ using Vcad.Core.Results;
 using Vcad.Plugin.Config;
 using Vcad.Plugin.Execution;
 using Vcad.Plugin.Net;
+using Vcad.Plugin.Pipeline;
 
 namespace Vcad.Plugin.UI
 {
@@ -28,8 +29,11 @@ namespace Vcad.Plugin.UI
         // Chat Tab controls
         private FlowLayoutPanel _chatList;
         private Button _btnUseAgent;
+        private Button _btnAttachFile;
         private TextBox _txtNaturalLanguage;
         private Label _lblChatStatus;
+        private readonly List<string> _attachedFiles = new List<string>();
+        private ToolTip _toolTip;
 
         // Settings Tab controls
         private ComboBox _cmbProvider;
@@ -61,6 +65,7 @@ namespace Vcad.Plugin.UI
         private int _usageSuccess;
         private int _usageFailed;
         private long _usageTotalMs;
+        private CadPipelineCandidate _pendingCandidate;
 
         private static readonly Color CadBg = Color.FromArgb(0x13, 0x13, 0x13);
         private static readonly Color CadPanel = Color.FromArgb(0x1B, 0x1B, 0x1C);
@@ -288,7 +293,7 @@ namespace Vcad.Plugin.UI
                 Text = "询问 CAD 助手...",
                 Width = 250,
                 Height = 40,
-                Location = new Point(10, 12),
+                Location = new Point(54, 12),
             };
             _txtNaturalLanguage.GotFocus += (s, e) =>
             {
@@ -302,6 +307,18 @@ namespace Vcad.Plugin.UI
                     await OnUseAgentAsync();
                 }
             };
+            _btnAttachFile = new Button
+            {
+                Text = "",
+                Width = 36,
+                Height = 40,
+                Location = new Point(10, 12),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left,
+            };
+            _btnAttachFile.Click += (s, e) => OnAttachFile();
+            _btnAttachFile.Paint += (s, e) => DrawPaperclipIcon(e.Graphics, _btnAttachFile.ClientRectangle, _btnAttachFile.Enabled ? CadMuted : CadBorder);
+            _toolTip = new ToolTip();
+            _toolTip.SetToolTip(_btnAttachFile, "上传文件");
             _btnUseAgent = new Button
             {
                 Text = "▶",
@@ -313,8 +330,10 @@ namespace Vcad.Plugin.UI
             inputPanel.Resize += (s, e) =>
             {
                 _btnUseAgent.Left = inputPanel.Width - _btnUseAgent.Width - 10;
-                _txtNaturalLanguage.Width = Math.Max(120, _btnUseAgent.Left - 20);
+                _txtNaturalLanguage.Left = _btnAttachFile.Right + 8;
+                _txtNaturalLanguage.Width = Math.Max(96, _btnUseAgent.Left - _txtNaturalLanguage.Left - 10);
             };
+            inputPanel.Controls.Add(_btnAttachFile);
             inputPanel.Controls.Add(_txtNaturalLanguage);
             inputPanel.Controls.Add(_btnUseAgent);
             layout.Controls.Add(inputPanel, 0, 2);
@@ -332,6 +351,7 @@ namespace Vcad.Plugin.UI
             tab.Controls.Add(layout);
             ApplyIndustrialStyle(tab);
             StylePrimaryButton(_btnUseAgent);
+            StyleGhostButton(_btnAttachFile);
             AddAssistantCard("CAD 核心引擎", "描述你要画什么，我会生成并执行 CAD 命令。");
         }
 
@@ -392,7 +412,7 @@ namespace Vcad.Plugin.UI
         private void AddChatCard(string title, string text, bool assistant)
         {
             if (_chatList == null) return;
-            var width = Math.Max(220, _chatList.ClientSize.Width - 28);
+            var width = GetChatCardWidth();
             var label = new Label
             {
                 Text = (string.IsNullOrEmpty(title) ? "" : title + "\r\n") + text,
@@ -429,7 +449,7 @@ namespace Vcad.Plugin.UI
         private void ResizeChatCards()
         {
             if (_chatList == null) return;
-            var width = Math.Max(220, _chatList.ClientSize.Width - 28);
+            var width = GetChatCardWidth();
             foreach (Control card in _chatList.Controls)
             {
                 card.Width = width;
@@ -439,12 +459,22 @@ namespace Vcad.Plugin.UI
                     if (label != null)
                     {
                         label.Width = width - 20;
-                        var preferred = label.GetPreferredSize(new Size(width - 20, 0));
-                        label.Height = Math.Max(34, preferred.Height + 4);
-                        card.Height = label.Height + 16;
+                        var isConfirmCard = card.Tag is string tag && tag.StartsWith("confirm", StringComparison.Ordinal);
+                        if (!isConfirmCard)
+                        {
+                            var preferred = label.GetPreferredSize(new Size(width - 20, 0));
+                            label.Height = Math.Max(34, preferred.Height + 4);
+                            card.Height = label.Height + 16;
+                        }
                     }
                 }
             }
+        }
+
+        private int GetChatCardWidth()
+        {
+            if (_chatList == null) return 180;
+            return Math.Max(180, _chatList.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 24);
         }
 
         private void BuildSettingsTab(TabPage tab)
@@ -704,20 +734,88 @@ namespace Vcad.Plugin.UI
                 e.Graphics.FillRectangle(bg, rect);
                 e.Graphics.DrawRectangle(border, rect.X, rect.Y, rect.Width - 1, rect.Height - 1);
                 var caption = _tabs.TabPages[e.Index].Text;
+                var color = selected ? CadCyan : CadMuted;
+                var textSize = TextRenderer.MeasureText(
+                    e.Graphics,
+                    caption,
+                    UiFontBold,
+                    new Size(Math.Max(20, rect.Width - 24), rect.Height),
+                    TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+                var iconSize = 14;
+                var textWidth = Math.Min(textSize.Width, Math.Max(20, rect.Width - iconSize - 14));
+                var groupWidth = iconSize + 5 + textWidth;
+                var iconX = rect.X + Math.Max(6, (rect.Width - groupWidth) / 2);
+                var iconRect = new Rectangle(iconX, rect.Y + (rect.Height - iconSize) / 2, iconSize, iconSize);
+                var textRect = new Rectangle(iconRect.Right + 5, rect.Y, rect.Right - iconRect.Right - 7, rect.Height);
+                DrawTabIcon(e.Graphics, e.Index, iconRect, color);
                 TextRenderer.DrawText(
                     e.Graphics,
                     caption,
                     UiFontBold,
-                    rect,
-                    selected ? CadCyan : CadMuted,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                    textRect,
+                    color,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             }
+        }
+
+        private static void DrawTabIcon(Graphics g, int index, Rectangle rect, Color color)
+        {
+            var oldMode = g.SmoothingMode;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            using (var pen = new Pen(color, 1.7F))
+            using (var brush = new SolidBrush(color))
+            {
+                if (index == 0)
+                {
+                    var bubble = new Rectangle(rect.X + 1, rect.Y + 2, rect.Width - 3, rect.Height - 5);
+                    g.DrawRectangle(pen, bubble);
+                    g.DrawLine(pen, bubble.Left + 3, bubble.Bottom, bubble.Left + 6, bubble.Bottom + 3);
+                    g.DrawLine(pen, bubble.Left + 6, bubble.Bottom + 3, bubble.Left + 8, bubble.Bottom);
+                    g.DrawLine(pen, bubble.Left + 4, bubble.Top + 4, bubble.Right - 4, bubble.Top + 4);
+                }
+                else if (index == 1)
+                {
+                    var x1 = rect.X + 3;
+                    var x2 = rect.X + rect.Width / 2;
+                    var x3 = rect.Right - 3;
+                    g.DrawLine(pen, x1, rect.Top + 2, x1, rect.Bottom - 2);
+                    g.DrawLine(pen, x2, rect.Top + 2, x2, rect.Bottom - 2);
+                    g.DrawLine(pen, x3, rect.Top + 2, x3, rect.Bottom - 2);
+                    g.FillEllipse(brush, x1 - 2, rect.Top + 8, 4, 4);
+                    g.FillEllipse(brush, x2 - 2, rect.Top + 3, 4, 4);
+                    g.FillEllipse(brush, x3 - 2, rect.Top + 10, 4, 4);
+                }
+                else
+                {
+                    g.DrawLine(pen, rect.Left + 1, rect.Bottom - 2, rect.Right - 1, rect.Bottom - 2);
+                    g.DrawLine(pen, rect.Left + 1, rect.Top + 2, rect.Left + 1, rect.Bottom - 2);
+                    g.FillRectangle(brush, rect.Left + 4, rect.Bottom - 6, 2, 4);
+                    g.FillRectangle(brush, rect.Left + 8, rect.Bottom - 9, 2, 7);
+                    g.FillRectangle(brush, rect.Left + 12, rect.Bottom - 12, 2, 10);
+                }
+            }
+            g.SmoothingMode = oldMode;
+        }
+
+        private static void DrawPaperclipIcon(Graphics g, Rectangle rect, Color color)
+        {
+            var oldMode = g.SmoothingMode;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            using (var pen = new Pen(color, 1.8F))
+            {
+                var x = rect.Left + rect.Width / 2 - 5;
+                var y = rect.Top + 8;
+                g.DrawArc(pen, x + 1, y, 12, 18, 180, 270);
+                g.DrawArc(pen, x + 4, y + 4, 7, 11, 180, 270);
+                g.DrawLine(pen, x + 4, y + 15, x + 10, y + 6);
+            }
+            g.SmoothingMode = oldMode;
         }
 
         private void ResizeTabItems()
         {
             if (_tabs == null || _tabs.TabCount == 0 || _tabs.Width <= 0) return;
-            var width = Math.Max(120, (_tabs.Width - 6) / _tabs.TabCount);
+            var width = Math.Max(72, (_tabs.Width - 6) / _tabs.TabCount);
             if (_tabs.ItemSize.Width != width)
             {
                 _tabs.ItemSize = new Size(width, 42);
@@ -808,11 +906,119 @@ namespace Vcad.Plugin.UI
 
         // --- Chat tab actions ---
 
+        private void OnAttachFile()
+        {
+            using (var dialog = new OpenFileDialog())
+            {
+                dialog.Title = "选择附件";
+                dialog.Multiselect = true;
+                dialog.Filter = "CAD / 文本文件|*.dwg;*.dxf;*.lsp;*.scr;*.txt;*.md;*.json;*.csv;*.xml|所有文件|*.*";
+                if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+                foreach (var fileName in dialog.FileNames)
+                {
+                    if (File.Exists(fileName) && !_attachedFiles.Contains(fileName))
+                    {
+                        _attachedFiles.Add(fileName);
+                    }
+                }
+
+                if (_txtNaturalLanguage.Text == "询问 CAD 助手...")
+                {
+                    _txtNaturalLanguage.Text = "";
+                }
+                SetChatStatus("已添加附件：" + string.Join(", ", _attachedFiles.ConvertAll(Path.GetFileName)), CadCyan);
+            }
+        }
+
+        private string BuildPromptWithAttachments(string text)
+        {
+            if (_attachedFiles.Count == 0) return text;
+
+            var sb = new StringBuilder();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                sb.AppendLine("请根据附件内容生成 CAD 操作。");
+            }
+            else
+            {
+                sb.AppendLine(text.Trim());
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("附件上下文：");
+            foreach (var path in _attachedFiles)
+            {
+                var info = new FileInfo(path);
+                sb.Append("- ").Append(info.Name)
+                    .Append(" | path=").Append(info.FullName)
+                    .Append(" | bytes=").Append(info.Length)
+                    .AppendLine();
+
+                if (IsTextAttachment(info.Extension) && info.Length <= 65536)
+                {
+                    sb.AppendLine("内容片段：");
+                    sb.AppendLine(ReadAttachmentExcerpt(info.FullName));
+                }
+            }
+            return sb.ToString();
+        }
+
+        private string BuildDisplayTextWithAttachments(string text)
+        {
+            if (_attachedFiles.Count == 0) return text;
+            var sb = new StringBuilder();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                sb.AppendLine(text.Trim());
+            }
+            sb.AppendLine("附件：");
+            foreach (var path in _attachedFiles)
+            {
+                sb.Append("- ").Append(Path.GetFileName(path)).AppendLine();
+            }
+            return sb.ToString().TrimEnd();
+        }
+
+        private static bool IsTextAttachment(string extension)
+        {
+            switch ((extension ?? "").ToLowerInvariant())
+            {
+                case ".txt":
+                case ".md":
+                case ".json":
+                case ".csv":
+                case ".xml":
+                case ".dxf":
+                case ".lsp":
+                case ".scr":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static string ReadAttachmentExcerpt(string path)
+        {
+            try
+            {
+                var content = File.ReadAllText(path, Encoding.UTF8);
+                const int maxChars = 12000;
+                return content.Length <= maxChars
+                    ? content
+                    : content.Substring(0, maxChars) + "\r\n...[已截断]";
+            }
+            catch (System.Exception ex)
+            {
+                return "[无法读取附件内容：" + SecretRedactor.Redact(ex.Message) + "]";
+            }
+        }
+
         private async Task OnUseAgentAsync()
         {
             var text = _txtNaturalLanguage.Text;
             if (text == "询问 CAD 助手...") text = "";
-            if (string.IsNullOrWhiteSpace(text))
+            if (string.IsNullOrWhiteSpace(text) && _attachedFiles.Count == 0)
             {
                 SetChatStatus("请输入要绘制或修改的内容。", CadOrange);
                 return;
@@ -820,16 +1026,20 @@ namespace Vcad.Plugin.UI
 
             try
             {
+                var prompt = BuildPromptWithAttachments(text);
+                var displayText = BuildDisplayTextWithAttachments(text);
+                _attachedFiles.Clear();
+
                 _btnUseAgent.Enabled = false;
+                if (_btnAttachFile != null) _btnAttachFile.Enabled = false;
                 _txtNaturalLanguage.Text = "";
-                AddUserCard(text);
-                SetChatStatus("正在生成 CAD 命令...", CadCyan);
+                AddUserCard(displayText);
+                SetChatStatus("正在理解意图...", CadCyan);
                 System.Windows.Forms.Application.DoEvents();
 
-                var sw = Stopwatch.StartNew();
                 var settings = AgentConfigStore.LoadActive();
                 var client = new AgentLiteClient(settings);
-                var dsl = await client.ParseAsync(text);
+                var dsl = await client.ParseAsync(prompt);
 
                 if (dsl == null)
                 {
@@ -841,21 +1051,12 @@ namespace Vcad.Plugin.UI
                     return;
                 }
 
-                SetChatStatus("正在执行几何命令...", CadCyan);
-                System.Windows.Forms.Application.DoEvents();
-                var result = DslExecutor.Execute(dsl);
-                sw.Stop();
-
-                _usageRequests++;
-                _usageTotalMs += sw.ElapsedMilliseconds;
-                if (result.Success) _usageSuccess++; else _usageFailed++;
-                RefreshUsage();
-
-                var message = result.Success
-                    ? "已完成。执行 " + result.Summary.Succeeded + " 条命令，生成 " + CountEntities(result) + " 个对象。"
-                    : "执行失败。失败命令 " + result.Summary.Failed + " 条；" + FirstError(result);
-                AddAssistantCard("CAD 核心引擎", message);
-                SetChatStatus(result.Success ? "完成，用时 " + sw.ElapsedMilliseconds + " ms。" : "执行失败。", result.Success ? CadGreen : CadOrange);
+                SetChatStatus("正在生成 Intent / Task Plan / CAD-IR...", CadCyan);
+                _pendingCandidate = CadAgentPipeline.Interpret(prompt, dsl);
+                AddPipelineCards(_pendingCandidate);
+                SetChatStatus(_pendingCandidate.Safety.IsAllowed
+                    ? "Preview 已生成，等待确认后执行。"
+                    : "Safety Checker 已阻止执行。", _pendingCandidate.Safety.IsAllowed ? CadOrange : CadOrange);
             }
             catch (System.Exception ex)
             {
@@ -869,6 +1070,7 @@ namespace Vcad.Plugin.UI
             finally
             {
                 _btnUseAgent.Enabled = true;
+                if (_btnAttachFile != null) _btnAttachFile.Enabled = true;
             }
         }
 
@@ -901,6 +1103,159 @@ namespace Vcad.Plugin.UI
             if (_lblStatus != null)
             {
                 _lblStatus.Text = message;
+            }
+        }
+
+        private void AddPipelineCards(CadPipelineCandidate candidate)
+        {
+            AddAssistantCard("Intent Card", CadAgentPipeline.FormatIntent(candidate));
+            AddAssistantCard("Plan Card", CadAgentPipeline.FormatPlan(candidate));
+            AddAssistantCard("Preview Card", CadAgentPipeline.FormatPreview(candidate));
+            if (candidate.Safety.IsAllowed)
+            {
+                AddConfirmCard(candidate);
+            }
+            else
+            {
+                AddAssistantCard("Error Card", "Safety Checker 阻止执行。\r\n" + string.Join("\r\n", candidate.Safety.Blocks));
+            }
+        }
+
+        private void AddConfirmCard(CadPipelineCandidate candidate)
+        {
+            AddConfirmCard(candidate, false);
+        }
+
+        private void AddConfirmCard(CadPipelineCandidate candidate, bool secondStep)
+        {
+            if (_chatList == null) return;
+            var width = GetChatCardWidth();
+            var card = new Panel
+            {
+                Width = width,
+                Height = secondStep ? 132 : 116,
+                BackColor = CadPanel,
+                Margin = new Padding(0, 0, 0, 10),
+                Padding = new Padding(8),
+                Tag = secondStep ? "confirm-second" : "confirm",
+            };
+            card.Paint += (s, e) =>
+            {
+                using (var pen = new Pen(CadOrange))
+                {
+                    e.Graphics.DrawRectangle(pen, 0, 0, card.Width - 1, card.Height - 1);
+                }
+            };
+            var label = new Label
+            {
+                Text = secondStep
+                    ? "Second Confirm Card\r\n高风险 CAD-IR 需要二次确认。请再次确认 Preview 中的影响范围和可撤销状态。"
+                    : (candidate.RequiresSecondConfirmation
+                        ? "Confirm Card\r\n此任务被标记为 high risk。第一次确认后仍不会改图，还需要二次确认。"
+                        : "Confirm Card\r\n确认后才会修改图纸。执行前将由 Adapter 消费 CAD-IR，并创建 Undo Group。"),
+                Left = 10,
+                Top = 8,
+                Width = width - 20,
+                Height = secondStep ? 64 : 48,
+                ForeColor = CadText,
+                Font = UiFontBold,
+            };
+            var preferred = label.GetPreferredSize(new Size(width - 20, 0));
+            label.Height = Math.Max(secondStep ? 64 : 48, preferred.Height + 4);
+            var buttonTop = label.Top + label.Height + 10;
+            card.Height = buttonTop + 38;
+            var cancelWidth = 72;
+            var confirmWidth = Math.Max(96, Math.Min(secondStep ? 124 : 110, width - cancelWidth - 30));
+            var confirm = new Button
+            {
+                Text = secondStep ? "二次确认执行" : (candidate.RequiresSecondConfirmation ? "第一次确认" : "确认执行"),
+                Left = 10,
+                Top = buttonTop,
+                Width = confirmWidth,
+                Height = 30,
+            };
+            var cancel = new Button
+            {
+                Text = "取消",
+                Left = confirm.Left + confirm.Width + 10,
+                Top = buttonTop,
+                Width = cancelWidth,
+                Height = 30,
+            };
+            StylePrimaryButton(confirm);
+            StyleGhostButton(cancel);
+            confirm.Click += (s, e) =>
+            {
+                confirm.Enabled = false;
+                cancel.Enabled = false;
+                if (candidate.RequiresSecondConfirmation && !secondStep)
+                {
+                    candidate.Confirmed = true;
+                    AddConfirmCard(candidate, true);
+                    SetChatStatus("已完成第一次确认，等待二次确认。", CadOrange);
+                }
+                else
+                {
+                    candidate.Confirmed = true;
+                    candidate.SecondConfirmed = secondStep || !candidate.RequiresSecondConfirmation;
+                    ExecuteConfirmedCandidate(candidate);
+                }
+            };
+            cancel.Click += (s, e) =>
+            {
+                candidate.Confirmed = false;
+                candidate.SecondConfirmed = false;
+                confirm.Enabled = false;
+                cancel.Enabled = false;
+                AddAssistantCard("Result Card", "任务已取消，没有修改图纸。");
+                SetChatStatus("任务已取消。", CadMuted);
+            };
+            card.Controls.Add(label);
+            card.Controls.Add(confirm);
+            card.Controls.Add(cancel);
+            _chatList.Controls.Add(card);
+            _chatList.ScrollControlIntoView(card);
+        }
+
+        private void ExecuteConfirmedCandidate(CadPipelineCandidate candidate)
+        {
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                candidate.Confirmed = true;
+                SetChatStatus("Adapter 正在转换 CAD-IR...", CadCyan);
+                System.Windows.Forms.Application.DoEvents();
+
+                var adapterCommand = CadAgentPipeline.AdaptToAdapterCommand(candidate);
+                var dsl = adapterCommand.Value<string>("command");
+                SetChatStatus("Executor 正在执行 Adapter 输出...", CadCyan);
+                System.Windows.Forms.Application.DoEvents();
+                var result = DslExecutor.Execute(dsl);
+                sw.Stop();
+
+                _usageRequests++;
+                _usageTotalMs += sw.ElapsedMilliseconds;
+                if (result.Success) _usageSuccess++; else _usageFailed++;
+                RefreshUsage();
+
+                var message = result.Success
+                    ? "执行完成。\r\n命令: " + result.Summary.Succeeded +
+                      "\r\n对象: " + CountEntities(result) +
+                      "\r\nResult: vcad_result_v1"
+                    : "执行失败。\r\n失败命令: " + result.Summary.Failed + "\r\n" + FirstError(result);
+                AddAssistantCard("Result Card", message);
+                SetChatStatus(result.Success ? "完成，用时 " + sw.ElapsedMilliseconds + " ms。" : "执行失败。", result.Success ? CadGreen : CadOrange);
+            }
+            catch (System.Exception ex)
+            {
+                sw.Stop();
+                _usageRequests++;
+                _usageFailed++;
+                _usageTotalMs += sw.ElapsedMilliseconds;
+                RefreshUsage();
+                var msg = SecretRedactor.Redact(ex.Message);
+                AddAssistantCard("Error Card", "执行被阻止或失败：\r\n" + msg);
+                SetChatStatus("执行失败：" + msg, CadOrange);
             }
         }
 

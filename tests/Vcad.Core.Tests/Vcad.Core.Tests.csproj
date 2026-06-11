@@ -17,4 +17,8 @@
     <ProjectReference Include="..\..\src\Vcad.Core\Vcad.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\..\src\Vcad.Plugin.Shared\Pipeline\CadAgentPipeline.cs" Link="PluginPipeline\CadAgentPipeline.cs" />
+  </ItemGroup>
+
 </Project>
