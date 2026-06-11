@@ -1113,12 +1113,26 @@ namespace Vcad.Plugin.UI
             AddAssistantCard("Preview Card", CadAgentPipeline.FormatPreview(candidate));
             if (candidate.Safety.IsAllowed)
             {
-                AddConfirmCard(candidate);
+                if (candidate.RequiresConfirmation)
+                {
+                    AddConfirmCard(candidate);
+                }
+                else
+                {
+                    AddLowRiskExecuteCard(candidate);
+                }
             }
             else
             {
                 AddAssistantCard("Error Card", "Safety Checker 阻止执行。\r\n" + string.Join("\r\n", candidate.Safety.Blocks));
             }
+        }
+
+        private void AddLowRiskExecuteCard(CadPipelineCandidate candidate)
+        {
+            if (_chatList == null) return;
+            AddAssistantCard("Execute Card", "Low Risk 任务不需要 confirm_token。\r\n将使用 task_id + idempotency_key 直接执行。");
+            ExecuteConfirmedCandidate(candidate);
         }
 
         private void AddConfirmCard(CadPipelineCandidate candidate)
@@ -1149,10 +1163,10 @@ namespace Vcad.Plugin.UI
             var label = new Label
             {
                 Text = secondStep
-                    ? "Second Confirm Card\r\n高风险 CAD-IR 需要二次确认。请再次确认 Preview 中的影响范围和可撤销状态。"
+                    ? "Second Confirm Card\r\n高风险 CAD-IR 需要二次确认。确认 token 绑定 task_id、ir_hash 和过期时间。"
                     : (candidate.RequiresSecondConfirmation
-                        ? "Confirm Card\r\n此任务被标记为 high risk。第一次确认后仍不会改图，还需要二次确认。"
-                        : "Confirm Card\r\n确认后才会修改图纸。执行前将由 Adapter 消费 CAD-IR，并创建 Undo Group。"),
+                        ? "Confirm Card\r\n此任务被标记为 high risk。第一次确认只签发 confirm_token，不会改图。"
+                        : "Confirm Card\r\n确认后签发 confirm_token，再由 AdapterCommand(mode=execute) 执行。"),
                 Left = 10,
                 Top = 8,
                 Width = width - 20,
@@ -1190,24 +1204,29 @@ namespace Vcad.Plugin.UI
                 cancel.Enabled = false;
                 if (candidate.RequiresSecondConfirmation && !secondStep)
                 {
-                    candidate.Confirmed = true;
+                    CadAgentPipeline.Confirm(candidate);
                     AddConfirmCard(candidate, true);
                     SetChatStatus("已完成第一次确认，等待二次确认。", CadOrange);
                 }
                 else
                 {
-                    candidate.Confirmed = true;
-                    candidate.SecondConfirmed = secondStep || !candidate.RequiresSecondConfirmation;
+                    if (secondStep)
+                    {
+                        CadAgentPipeline.SecondConfirm(candidate);
+                    }
+                    else
+                    {
+                        CadAgentPipeline.Confirm(candidate);
+                    }
                     ExecuteConfirmedCandidate(candidate);
                 }
             };
             cancel.Click += (s, e) =>
             {
-                candidate.Confirmed = false;
-                candidate.SecondConfirmed = false;
+                CadAgentPipeline.Cancel(candidate);
                 confirm.Enabled = false;
                 cancel.Enabled = false;
-                AddAssistantCard("Result Card", "任务已取消，没有修改图纸。");
+                AddAssistantCard("Error Card", "任务已取消，没有修改图纸。\r\n状态: cancelled");
                 SetChatStatus("任务已取消。", CadMuted);
             };
             card.Controls.Add(label);
@@ -1226,7 +1245,8 @@ namespace Vcad.Plugin.UI
                 SetChatStatus("Adapter 正在转换 CAD-IR...", CadCyan);
                 System.Windows.Forms.Application.DoEvents();
 
-                var adapterCommand = CadAgentPipeline.AdaptToAdapterCommand(candidate);
+                var idempotencyKey = CadAgentPipeline.GetDefaultIdempotencyKey(candidate);
+                var adapterCommand = CadAgentPipeline.AdaptToAdapterCommand(candidate, "execute", idempotencyKey);
                 var dsl = adapterCommand.Value<string>("command");
                 SetChatStatus("Executor 正在执行 Adapter 输出...", CadCyan);
                 System.Windows.Forms.Application.DoEvents();
@@ -1238,11 +1258,15 @@ namespace Vcad.Plugin.UI
                 if (result.Success) _usageSuccess++; else _usageFailed++;
                 RefreshUsage();
 
+                var cadResult = CadAgentPipeline.RecordExecutionResult(candidate, result, sw.ElapsedMilliseconds, idempotencyKey);
                 var message = result.Success
-                    ? "执行完成。\r\n命令: " + result.Summary.Succeeded +
+                    ? "执行完成。\r\nTask: " + cadResult.Value<string>("task_id") +
+                      "\r\n命令: " + result.Summary.Succeeded +
                       "\r\n对象: " + CountEntities(result) +
-                      "\r\nResult: vcad_result_v1"
-                    : "执行失败。\r\n失败命令: " + result.Summary.Failed + "\r\n" + FirstError(result);
+                      "\r\nResult: " + cadResult.Value<string>("schema")
+                    : "执行失败。\r\nTask: " + cadResult.Value<string>("task_id") +
+                      "\r\n失败命令: " + result.Summary.Failed +
+                      "\r\n" + FirstError(result);
                 AddAssistantCard("Result Card", message);
                 SetChatStatus(result.Success ? "完成，用时 " + sw.ElapsedMilliseconds + " ms。" : "执行失败。", result.Success ? CadGreen : CadOrange);
             }
