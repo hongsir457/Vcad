@@ -451,7 +451,7 @@
   <p><code>preview_snapshot_hash</code> 必须确定性可复算：命中对象句柄按字典序排序后拼接计数与图层状态，再做 SHA-256。禁止依赖选择集返回顺序，否则两次 Dry Run 顺序不同会误判 stale。</p>
 
   <h2>14. Preview/Execute TOCTOU 防护</h2>
-  <p>execute 前必须重新 Dry Run（preflight），并与 preview_snapshot 比对：</p>
+  <p>execute 前必须重新 Dry Run（preflight）。Medium / High 任务与 preview_snapshot 比对（下列各条）；Low 风险任务没有 preview 快照，preflight 只做动态复评（第 10.2 节），不做快照比对。</p>
   <ol>
     <li><code>drawing_fingerprint</code> 或 <code>drawing_version</code> 变更：中止，任务置为 <code>stale</code>。</li>
     <li><code>matched_count</code>、<code>modifiable_count</code>、<code>blocked_count</code> 变更：中止，任务置为 <code>stale</code>。</li>
