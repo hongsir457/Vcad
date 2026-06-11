@@ -77,6 +77,58 @@ namespace Vcad.Plugin.Net
             return "http://127.0.0.1:" + port + path;
         }
 
+        public async Task<ConnectionCheckResult> TestModelAsync()
+        {
+            using (var client = NewClient())
+            {
+                try
+                {
+                    var health = await client.GetAsync(BuildUrl("/health")).ConfigureAwait(false);
+                    if (!health.IsSuccessStatusCode)
+                    {
+                        return ConnectionCheckResult.Fail("Agent Lite 已启动，但 /health 返回 " + (int)health.StatusCode + "。");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    return ConnectionCheckResult.Fail(
+                        "Agent Lite 未连接。请先运行: dotnet run --project src\\Vcad.AgentLite\\Vcad.AgentLite.csproj -c Release。详情: " +
+                        SecretRedactor.Redact(ex.Message));
+                }
+
+                try
+                {
+                    var payload = new JObject
+                    {
+                        ["request_id"] = "test-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff"),
+                        ["text"] = "draw a small text label VCAD TEST",
+                        ["context"] = new JObject { ["unit"] = "mm", ["coordinate_system"] = "WCS" },
+                        ["options"] = new JObject { ["max_commands"] = 10 },
+                        ["provider"] = BuildProviderPayload(),
+                    };
+                    using (var content = new StringContent(payload.ToString(), Encoding.UTF8, "application/json"))
+                    {
+                        var resp = await client.PostAsync(BuildUrl("/parse"), content).ConfigureAwait(false);
+                        var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                        if (!resp.IsSuccessStatusCode)
+                        {
+                            return ConnectionCheckResult.Fail("模型连接失败: " + (int)resp.StatusCode + " " + SecretRedactor.Redact(body));
+                        }
+                        var jo = JObject.Parse(body);
+                        if (jo["dsl"] == null)
+                        {
+                            return ConnectionCheckResult.Fail("模型返回成功，但没有 DSL 字段。");
+                        }
+                        return ConnectionCheckResult.Ok("模型连接成功。");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    return ConnectionCheckResult.Fail("模型连接失败: " + SecretRedactor.Redact(ex.Message));
+                }
+            }
+        }
+
         private JObject BuildProviderPayload()
         {
             var provider = new JObject
@@ -109,6 +161,22 @@ namespace Vcad.Plugin.Net
             };
             client.DefaultRequestHeaders.Add("X-VCAD-Agent-Token", AgentTokenStore.GetOrCreate());
             return client;
+        }
+    }
+
+    internal class ConnectionCheckResult
+    {
+        public bool Success { get; set; }
+        public string Message { get; set; }
+
+        public static ConnectionCheckResult Ok(string message)
+        {
+            return new ConnectionCheckResult { Success = true, Message = message };
+        }
+
+        public static ConnectionCheckResult Fail(string message)
+        {
+            return new ConnectionCheckResult { Success = false, Message = message };
         }
     }
 }

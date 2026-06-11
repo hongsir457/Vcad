@@ -17,20 +17,24 @@ namespace Vcad.Plugin.UI
 {
     internal class SidebarControl : UserControl
     {
-        private TabControl _tabs;
+        public event EventHandler<bool> CollapsedChanged;
 
-        // DSL Tab controls
-        private TextBox _txtDsl;
-        private Button _btnRun;
-        private Button _btnSample;
+        private TabControl _tabs;
+        private Button _btnCollapse;
+        private Panel _collapsedStrip;
+        private TableLayoutPanel _rootLayout;
+        private bool _collapsed;
+
+        // Chat Tab controls
+        private FlowLayoutPanel _chatList;
         private Button _btnUseAgent;
         private TextBox _txtNaturalLanguage;
-        private TextBox _txtLog;
+        private Label _lblChatStatus;
 
         // Settings Tab controls
         private ComboBox _cmbProvider;
         private TextBox _txtBaseUrl;
-        private TextBox _txtModel;
+        private ComboBox _cmbModel;
         private TextBox _txtApiKey;
         private CheckBox _chkShowKey;
         private NumericUpDown _numPort;
@@ -42,7 +46,21 @@ namespace Vcad.Plugin.UI
         private ComboBox _cmbProfile;
         private Button _btnNewProfile;
         private Button _btnDeleteProfile;
+        private Label _lblSettingsStatus;
+
+        // Usage Tab controls
+        private Label _lblUsageRequests;
+        private Label _lblUsageSuccess;
+        private Label _lblUsageFailed;
+        private Label _lblUsageAvg;
+        private Label _lblUsageProvider;
+        private Label _lblUsageModel;
         private Label _lblStatus;
+
+        private int _usageRequests;
+        private int _usageSuccess;
+        private int _usageFailed;
+        private long _usageTotalMs;
 
         private static readonly Color CadBg = Color.FromArgb(0x13, 0x13, 0x13);
         private static readonly Color CadPanel = Color.FromArgb(0x1B, 0x1B, 0x1C);
@@ -71,7 +89,7 @@ namespace Vcad.Plugin.UI
 
         private void BuildLayout()
         {
-            var root = new TableLayoutPanel
+            _rootLayout = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 BackColor = CadBg,
@@ -80,10 +98,10 @@ namespace Vcad.Plugin.UI
                 Margin = Padding.Empty,
                 Padding = Padding.Empty,
             };
-            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            root.Controls.Add(BuildHeader(), 0, 0);
+            _rootLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            _rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+            _rootLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            _rootLayout.Controls.Add(BuildHeader(), 0, 0);
 
             _tabs = new TabControl
             {
@@ -96,18 +114,27 @@ namespace Vcad.Plugin.UI
             _tabs.DrawItem += OnDrawTab;
             _tabs.Resize += (s, e) => ResizeTabItems();
 
-            var dslTab = new TabPage(Strings.TabDslInput);
-            dslTab.BackColor = CadBg;
-            BuildDslTab(dslTab);
-            _tabs.TabPages.Add(dslTab);
+            var chatTab = new TabPage("对话");
+            chatTab.BackColor = CadBg;
+            BuildChatTab(chatTab);
+            _tabs.TabPages.Add(chatTab);
 
-            var settingsTab = new TabPage(Strings.TabModelSettings);
+            var settingsTab = new TabPage("配置");
             settingsTab.BackColor = CadBg;
             BuildSettingsTab(settingsTab);
             _tabs.TabPages.Add(settingsTab);
 
-            root.Controls.Add(_tabs, 0, 1);
-            Controls.Add(root);
+            var usageTab = new TabPage("用量");
+            usageTab.BackColor = CadBg;
+            BuildUsageTab(usageTab);
+            _tabs.TabPages.Add(usageTab);
+
+            _rootLayout.Controls.Add(_tabs, 0, 1);
+            Controls.Add(_rootLayout);
+
+            _collapsedStrip = BuildCollapsedStrip();
+            _collapsedStrip.Visible = false;
+            Controls.Add(_collapsedStrip);
             ResizeTabItems();
         }
 
@@ -145,129 +172,279 @@ namespace Vcad.Plugin.UI
                 Anchor = AnchorStyles.Top | AnchorStyles.Right,
                 Location = new Point(230, 15),
             };
+            _btnCollapse = new Button
+            {
+                Text = "‹",
+                Width = 24,
+                Height = 24,
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = CadCyan,
+                BackColor = CadBg,
+                Font = UiFontBold,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            };
+            _btnCollapse.FlatAppearance.BorderColor = CadBorder;
+            _btnCollapse.FlatAppearance.BorderSize = 1;
+            _btnCollapse.Click += (s, e) => SetCollapsed(!_collapsed);
             header.Resize += (s, e) => online.Left = Math.Max(160, header.Width - online.Width - 12);
+            header.Resize += (s, e) => _btnCollapse.Left = Math.Max(120, online.Left - _btnCollapse.Width - 8);
             header.Controls.Add(mark);
             header.Controls.Add(title);
             header.Controls.Add(online);
+            header.Controls.Add(_btnCollapse);
             return header;
         }
 
-        private void BuildDslTab(TabPage tab)
+        private Panel BuildCollapsedStrip()
+        {
+            var strip = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = CadBg,
+                Padding = new Padding(6),
+            };
+            var expand = new Button
+            {
+                Text = "›",
+                Width = 36,
+                Height = 32,
+                Left = 6,
+                Top = 8,
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = CadCyan,
+                BackColor = CadBg,
+                Font = UiFontBold,
+            };
+            expand.FlatAppearance.BorderColor = CadBorder;
+            expand.FlatAppearance.BorderSize = 1;
+            expand.Click += (s, e) => SetCollapsed(false);
+            var label = new Label
+            {
+                Text = "V\r\nC\r\nA\r\nD",
+                AutoSize = false,
+                Width = 36,
+                Height = 120,
+                Left = 7,
+                Top = 52,
+                ForeColor = CadCyan,
+                Font = UiFontBold,
+                TextAlign = ContentAlignment.TopCenter,
+            };
+            strip.Controls.Add(expand);
+            strip.Controls.Add(label);
+            return strip;
+        }
+
+        private void SetCollapsed(bool collapsed)
+        {
+            _collapsed = collapsed;
+            if (_rootLayout != null) _rootLayout.Visible = !collapsed;
+            if (_collapsedStrip != null) _collapsedStrip.Visible = collapsed;
+            CollapsedChanged?.Invoke(this, collapsed);
+        }
+
+        private void BuildChatTab(TabPage tab)
         {
             var layout = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 5,
-                Padding = new Padding(8),
+                RowCount = 4,
+                Padding = new Padding(10, 8, 10, 8),
             };
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 120));
-            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
-            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 62));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
 
-            // Top: natural-language box with a clear title and a Parse button.
-            var nlGroup = new GroupBox
-            {
-                Text = Strings.GroupNaturalLanguage,
-                Dock = DockStyle.Fill,
-                Padding = new Padding(6, 4, 6, 4),
-            };
-            var nlInner = new TableLayoutPanel
+            layout.Controls.Add(BuildChatMetrics(), 0, 0);
+
+            _chatList = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 2,
-                RowCount = 1,
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                AutoScroll = true,
+                BackColor = CadBg,
+                Padding = new Padding(0, 6, 0, 6),
             };
-            nlInner.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            nlInner.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
-            nlInner.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            _chatList.Resize += (s, e) => ResizeChatCards();
+            layout.Controls.Add(_chatList, 0, 1);
 
+            var inputPanel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = CadPanel,
+                Padding = new Padding(8),
+            };
             _txtNaturalLanguage = new TextBox
             {
                 Multiline = true,
-                Dock = DockStyle.Fill,
-                ScrollBars = ScrollBars.Vertical,
-                Font = new Font("Microsoft YaHei", 9F),
+                BorderStyle = BorderStyle.None,
+                BackColor = CadPanel,
+                ForeColor = CadText,
+                Font = UiFont,
+                Text = "询问 CAD 助手...",
+                Width = 250,
+                Height = 40,
+                Location = new Point(10, 12),
+            };
+            _txtNaturalLanguage.GotFocus += (s, e) =>
+            {
+                if (_txtNaturalLanguage.Text == "询问 CAD 助手...") _txtNaturalLanguage.Text = "";
+            };
+            _txtNaturalLanguage.KeyDown += async (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter && !e.Shift)
+                {
+                    e.SuppressKeyPress = true;
+                    await OnUseAgentAsync();
+                }
             };
             _btnUseAgent = new Button
             {
-                Text = Strings.BtnParseViaAgent,
-                Dock = DockStyle.Fill,
-                Margin = new Padding(6, 0, 0, 0),
+                Text = "▶",
+                Width = 44,
+                Height = 40,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
             };
             _btnUseAgent.Click += async (s, e) => await OnUseAgentAsync();
-            nlInner.Controls.Add(_txtNaturalLanguage, 0, 0);
-            nlInner.Controls.Add(_btnUseAgent, 1, 0);
-            nlGroup.Controls.Add(nlInner);
-            layout.Controls.Add(nlGroup, 0, 0);
+            inputPanel.Resize += (s, e) =>
+            {
+                _btnUseAgent.Left = inputPanel.Width - _btnUseAgent.Width - 10;
+                _txtNaturalLanguage.Width = Math.Max(120, _btnUseAgent.Left - 20);
+            };
+            inputPanel.Controls.Add(_txtNaturalLanguage);
+            inputPanel.Controls.Add(_btnUseAgent);
+            layout.Controls.Add(inputPanel, 0, 2);
 
-            // Middle: DSL JSON box.
-            var dslGroup = new GroupBox
+            _lblChatStatus = new Label
             {
-                Text = Strings.GroupDslJson,
+                Text = "就绪。",
                 Dock = DockStyle.Fill,
-                Padding = new Padding(6, 4, 6, 4),
+                ForeColor = CadGreen,
+                Font = UiFontSmall,
             };
-            _txtDsl = new TextBox
-            {
-                Multiline = true,
-                ScrollBars = ScrollBars.Both,
-                WordWrap = false,
-                Dock = DockStyle.Fill,
-                AcceptsReturn = true,
-                AcceptsTab = true,
-                Font = new Font("Consolas", 10F),
-            };
-            dslGroup.Controls.Add(_txtDsl);
-            layout.Controls.Add(dslGroup, 0, 1);
-
-            var btnPanel = new FlowLayoutPanel
-            {
-                FlowDirection = FlowDirection.LeftToRight,
-                Dock = DockStyle.Fill,
-                AutoSize = false,
-                Padding = new Padding(0, 4, 0, 4),
-            };
-            _btnRun = new Button { Text = Strings.BtnRunDsl, Width = 110, Height = 28 };
-            _btnSample = new Button { Text = Strings.BtnLoadSample, Width = 110, Height = 28 };
-            _btnRun.Click += (s, e) => OnRunDsl();
-            _btnSample.Click += (s, e) => OnLoadSample();
-            btnPanel.Controls.Add(_btnRun);
-            btnPanel.Controls.Add(_btnSample);
-            layout.Controls.Add(btnPanel, 0, 2);
-
-            var logGroup = new GroupBox
-            {
-                Text = Strings.GroupResultLog,
-                Dock = DockStyle.Fill,
-                Padding = new Padding(6, 4, 6, 4),
-            };
-            _txtLog = new TextBox
-            {
-                Multiline = true,
-                ScrollBars = ScrollBars.Both,
-                ReadOnly = true,
-                Dock = DockStyle.Fill,
-                Font = new Font("Consolas", 9F),
-                BackColor = Color.FromArgb(0xF8, 0xFA, 0xFC),
-            };
-            logGroup.Controls.Add(_txtLog);
-            layout.Controls.Add(logGroup, 0, 3);
-
-            _lblStatus = new Label { Text = Strings.StatusReady, Dock = DockStyle.Fill, ForeColor = Color.DimGray };
-            layout.Controls.Add(_lblStatus, 0, 4);
+            _lblStatus = _lblChatStatus;
+            layout.Controls.Add(_lblChatStatus, 0, 3);
 
             tab.Controls.Add(layout);
             ApplyIndustrialStyle(tab);
             StylePrimaryButton(_btnUseAgent);
-            StylePrimaryButton(_btnRun);
-            StyleGhostButton(_btnSample);
-            _txtLog.BackColor = Color.FromArgb(0x0E, 0x0E, 0x0E);
-            _txtDsl.BackColor = Color.FromArgb(0x0E, 0x0E, 0x0E);
-            _lblStatus.ForeColor = CadGreen;
+            AddAssistantCard("CAD 核心引擎", "描述你要画什么，我会生成并执行 CAD 命令。");
+        }
+
+        private Control BuildChatMetrics()
+        {
+            var panel = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = CadBg,
+                ColumnCount = 3,
+                RowCount = 1,
+            };
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33));
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33));
+            panel.Controls.Add(MetricLabel("今日费用", "$0.00"), 0, 0);
+            panel.Controls.Add(MetricLabel("会话请求", "0"), 1, 0);
+            panel.Controls.Add(MetricLabel("状态", "接口已连接"), 2, 0);
+            return panel;
+        }
+
+        private Control MetricLabel(string title, string value)
+        {
+            var panel = new Panel { Dock = DockStyle.Fill, BackColor = CadBg };
+            panel.Controls.Add(new Label
+            {
+                Text = title,
+                Left = 0,
+                Top = 0,
+                Width = 100,
+                Height = 16,
+                ForeColor = CadMuted,
+                Font = UiFontSmall,
+            });
+            panel.Controls.Add(new Label
+            {
+                Text = value,
+                Left = 0,
+                Top = 17,
+                Width = 110,
+                Height = 20,
+                ForeColor = CadCyan,
+                Font = UiFontBold,
+            });
+            return panel;
+        }
+
+        private void AddUserCard(string text)
+        {
+            AddChatCard(null, text, false);
+        }
+
+        private void AddAssistantCard(string title, string text)
+        {
+            AddChatCard(title, text, true);
+        }
+
+        private void AddChatCard(string title, string text, bool assistant)
+        {
+            if (_chatList == null) return;
+            var width = Math.Max(220, _chatList.ClientSize.Width - 28);
+            var label = new Label
+            {
+                Text = (string.IsNullOrEmpty(title) ? "" : title + "\r\n") + text,
+                ForeColor = assistant ? CadText : Color.White,
+                Font = assistant ? UiFontBold : UiFont,
+                AutoSize = false,
+                Width = width - 20,
+                Left = 10,
+                Top = 8,
+            };
+            var preferred = label.GetPreferredSize(new Size(width - 20, 0));
+            label.Height = Math.Max(34, preferred.Height + 4);
+
+            var card = new Panel
+            {
+                Width = width,
+                Height = label.Height + 16,
+                BackColor = assistant ? CadPanel : CadPanelHigh,
+                Margin = new Padding(0, 0, 0, 10),
+                Padding = new Padding(8),
+            };
+            card.Paint += (s, e) =>
+            {
+                using (var pen = new Pen(assistant ? CadBorder : CadCyan))
+                {
+                    e.Graphics.DrawRectangle(pen, 0, 0, card.Width - 1, card.Height - 1);
+                }
+            };
+            card.Controls.Add(label);
+            _chatList.Controls.Add(card);
+            _chatList.ScrollControlIntoView(card);
+        }
+
+        private void ResizeChatCards()
+        {
+            if (_chatList == null) return;
+            var width = Math.Max(220, _chatList.ClientSize.Width - 28);
+            foreach (Control card in _chatList.Controls)
+            {
+                card.Width = width;
+                if (card.Controls.Count > 0)
+                {
+                    var label = card.Controls[0] as Label;
+                    if (label != null)
+                    {
+                        label.Width = width - 20;
+                        var preferred = label.GetPreferredSize(new Size(width - 20, 0));
+                        label.Height = Math.Max(34, preferred.Height + 4);
+                        card.Height = label.Height + 16;
+                    }
+                }
+            }
         }
 
         private void BuildSettingsTab(TabPage tab)
@@ -276,18 +453,51 @@ namespace Vcad.Plugin.UI
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 2,
-                RowCount = 12,
+                RowCount = 14,
                 Padding = new Padding(10),
                 AutoSize = false,
             };
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            for (int i = 0; i < 12; i++)
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+            for (int i = 1; i < 14; i++)
             {
                 panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
             }
 
             int row = 0;
+            var settingsHeader = new Panel { Dock = DockStyle.Fill, BackColor = CadBg };
+            settingsHeader.Controls.Add(new Label
+            {
+                Text = "模型配置",
+                Left = 0,
+                Top = 8,
+                Width = 160,
+                Height = 28,
+                ForeColor = CadText,
+                Font = new Font("Microsoft YaHei UI", 14F, FontStyle.Bold),
+            });
+            settingsHeader.Controls.Add(new Label
+            {
+                Text = "v0.1.0",
+                Width = 78,
+                Height = 26,
+                Top = 8,
+                Left = 260,
+                TextAlign = ContentAlignment.MiddleCenter,
+                ForeColor = CadMuted,
+                BackColor = CadPanelHigh,
+                Font = MonoFont,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            });
+            settingsHeader.Resize += (s, e) =>
+            {
+                var badge = settingsHeader.Controls[1];
+                badge.Left = Math.Max(160, settingsHeader.Width - badge.Width - 4);
+            };
+            panel.SetColumnSpan(settingsHeader, 2);
+            panel.Controls.Add(settingsHeader, 0, row++);
+
             panel.Controls.Add(new Label { Text = Strings.LblProfile, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
             var profileRow = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight };
             _cmbProfile = new ComboBox { Width = 180, DropDownStyle = ComboBoxStyle.DropDownList };
@@ -301,7 +511,7 @@ namespace Vcad.Plugin.UI
             profileRow.Controls.Add(_btnDeleteProfile);
             panel.Controls.Add(profileRow, 1, row++);
 
-            panel.Controls.Add(new Label { Text = Strings.LblProvider, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
+            panel.Controls.Add(new Label { Text = "模型厂家", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
             _cmbProvider = new ComboBox { Width = 220, DropDownStyle = ComboBoxStyle.DropDownList };
             _cmbProvider.Items.AddRange(new object[] { "openai", "deepseek", "anthropic", "gemini", "ollama", "custom" });
             _cmbProvider.SelectedIndexChanged += (s, e) => OnProviderChanged();
@@ -311,9 +521,9 @@ namespace Vcad.Plugin.UI
             _txtBaseUrl = new TextBox { Width = 320 };
             panel.Controls.Add(_txtBaseUrl, 1, row++);
 
-            panel.Controls.Add(new Label { Text = Strings.LblModel, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
-            _txtModel = new TextBox { Width = 220 };
-            panel.Controls.Add(_txtModel, 1, row++);
+            panel.Controls.Add(new Label { Text = "模型型号", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
+            _cmbModel = new ComboBox { Width = 260, DropDownStyle = ComboBoxStyle.DropDown };
+            panel.Controls.Add(_cmbModel, 1, row++);
 
             panel.Controls.Add(new Label { Text = Strings.LblApiKey, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
             var keyRow = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight };
@@ -349,6 +559,17 @@ namespace Vcad.Plugin.UI
             actionRow.Controls.Add(_btnSaveSettings);
             panel.Controls.Add(actionRow, 1, row++);
 
+            _lblSettingsStatus = new Label
+            {
+                Text = "系统完整性：等待测试",
+                AutoSize = false,
+                Dock = DockStyle.Fill,
+                ForeColor = CadMuted,
+                Font = UiFontSmall,
+            };
+            panel.SetColumnSpan(_lblSettingsStatus, 2);
+            panel.Controls.Add(_lblSettingsStatus, 0, row++);
+
             var notice = new Label
             {
                 Text = Strings.PrivacyNotice,
@@ -367,6 +588,110 @@ namespace Vcad.Plugin.UI
             StyleGhostButton(_btnTestConnection);
             StylePrimaryButton(_btnSaveSettings);
             notice.ForeColor = CadMuted;
+        }
+
+        private void BuildUsageTab(TabPage tab)
+        {
+            var panel = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = CadBg,
+                ColumnCount = 1,
+                RowCount = 6,
+                Padding = new Padding(12),
+            };
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
+            panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            var title = new Label
+            {
+                Text = "本次会话用量",
+                Dock = DockStyle.Fill,
+                ForeColor = CadText,
+                Font = new Font("Microsoft YaHei UI", 15F, FontStyle.Bold),
+            };
+            panel.Controls.Add(title, 0, 0);
+
+            panel.Controls.Add(UsageCard("请求统计", out _lblUsageRequests, out _lblUsageSuccess), 0, 1);
+            panel.Controls.Add(UsageCard("失败与耗时", out _lblUsageFailed, out _lblUsageAvg), 0, 2);
+            panel.Controls.Add(UsageCard("当前模型", out _lblUsageProvider, out _lblUsageModel), 0, 3);
+
+            var barCard = new Panel { Dock = DockStyle.Fill, BackColor = CadPanel, Padding = new Padding(10) };
+            barCard.Paint += (s, e) =>
+            {
+                var y = barCard.Height / 2;
+                using (var bg = new Pen(CadPanelHigh, 3))
+                using (var fg = new Pen(CadGreen, 3))
+                {
+                    e.Graphics.DrawLine(bg, 12, y, barCard.Width - 12, y);
+                    var ratio = _usageRequests == 0 ? 0 : Math.Min(1.0, _usageSuccess / (double)Math.Max(1, _usageRequests));
+                    e.Graphics.DrawLine(fg, 12, y, 12 + (int)((barCard.Width - 24) * ratio), y);
+                }
+            };
+            panel.Controls.Add(barCard, 0, 4);
+
+            tab.Controls.Add(panel);
+            ApplyIndustrialStyle(tab);
+            RefreshUsage();
+        }
+
+        private Control UsageCard(string title, out Label left, out Label right)
+        {
+            var panel = new Panel { Dock = DockStyle.Fill, BackColor = CadPanel, Padding = new Padding(10) };
+            panel.Paint += (s, e) =>
+            {
+                using (var pen = new Pen(CadBorder))
+                {
+                    e.Graphics.DrawRectangle(pen, 0, 0, panel.Width - 1, panel.Height - 1);
+                }
+            };
+            panel.Controls.Add(new Label
+            {
+                Text = title,
+                Left = 10,
+                Top = 8,
+                Width = 220,
+                Height = 20,
+                ForeColor = CadMuted,
+                Font = UiFontBold,
+            });
+            left = new Label
+            {
+                Left = 10,
+                Top = 38,
+                Width = 150,
+                Height = 28,
+                ForeColor = CadCyan,
+                Font = new Font("Consolas", 14F, FontStyle.Bold),
+            };
+            right = new Label
+            {
+                Left = 170,
+                Top = 38,
+                Width = 180,
+                Height = 28,
+                ForeColor = CadText,
+                Font = new Font("Consolas", 12F, FontStyle.Bold),
+            };
+            panel.Controls.Add(left);
+            panel.Controls.Add(right);
+            return panel;
+        }
+
+        private void RefreshUsage()
+        {
+            if (_lblUsageRequests == null) return;
+            _lblUsageRequests.Text = _usageRequests.ToString();
+            _lblUsageSuccess.Text = "成功 " + _usageSuccess;
+            _lblUsageFailed.Text = _usageFailed.ToString();
+            _lblUsageAvg.Text = _usageRequests == 0 ? "平均 0 ms" : "平均 " + (_usageTotalMs / Math.Max(1, _usageRequests)) + " ms";
+            var active = AgentConfigStore.LoadActive();
+            _lblUsageProvider.Text = string.IsNullOrEmpty(active.Provider) ? "openai" : active.Provider;
+            _lblUsageModel.Text = string.IsNullOrEmpty(active.Model) ? "未设置" : active.Model;
         }
 
         private void OnDrawTab(object sender, DrawItemEventArgs e)
@@ -481,106 +806,101 @@ namespace Vcad.Plugin.UI
             button.FlatAppearance.MouseDownBackColor = CadInput;
         }
 
-        // --- DSL tab actions ---
-
-        private void OnLoadSample()
-        {
-            _txtDsl.Text = SampleDsl.RectangleAndText;
-            AppendLog(Strings.LogSampleLoaded);
-        }
-
-        private void OnRunDsl()
-        {
-            var json = _txtDsl.Text;
-            if (string.IsNullOrWhiteSpace(json))
-            {
-                AppendLog(Strings.LogPasteDslFirst);
-                return;
-            }
-            try
-            {
-                _btnRun.Enabled = false;
-                _lblStatus.Text = Strings.StatusValidating;
-                System.Windows.Forms.Application.DoEvents();
-
-                var sw = Stopwatch.StartNew();
-                _lblStatus.Text = Strings.StatusLocking;
-                System.Windows.Forms.Application.DoEvents();
-
-                var result = DslExecutor.Execute(json);
-                sw.Stop();
-
-                var pretty = JsonConvert.SerializeObject(result, Formatting.Indented);
-                AppendLog(pretty);
-                AppendLog(string.Format(Strings.LogExecTimingMs, sw.ElapsedMilliseconds));
-                _lblStatus.Text = result.Success
-                    ? string.Format(Strings.StatusDoneWithMs, sw.ElapsedMilliseconds)
-                    : Strings.StatusWithErrors;
-            }
-            catch (System.Exception ex)
-            {
-                AppendLog(Strings.LogUnexpectedError + ex.Message);
-                _lblStatus.Text = Strings.StatusError;
-            }
-            finally
-            {
-                _btnRun.Enabled = true;
-            }
-        }
+        // --- Chat tab actions ---
 
         private async Task OnUseAgentAsync()
         {
             var text = _txtNaturalLanguage.Text;
+            if (text == "询问 CAD 助手...") text = "";
             if (string.IsNullOrWhiteSpace(text))
             {
-                AppendLog(Strings.LogTypeNlFirst);
+                SetChatStatus("请输入要绘制或修改的内容。", CadOrange);
                 return;
             }
 
-            bool autoRun = false;
             try
             {
                 _btnUseAgent.Enabled = false;
-                _lblStatus.Text = Strings.StatusCallingAgent;
+                _txtNaturalLanguage.Text = "";
+                AddUserCard(text);
+                SetChatStatus("正在生成 CAD 命令...", CadCyan);
                 System.Windows.Forms.Application.DoEvents();
 
                 var sw = Stopwatch.StartNew();
                 var settings = AgentConfigStore.LoadActive();
-                autoRun = settings.AutoRunAfterParse;
                 var client = new AgentLiteClient(settings);
                 var dsl = await client.ParseAsync(text);
-                sw.Stop();
-                AppendLog(string.Format(Strings.LogAgentTimingMs, sw.ElapsedMilliseconds));
 
                 if (dsl == null)
                 {
-                    AppendLog(Strings.LogAgentReturnedNoDsl);
-                    _lblStatus.Text = Strings.StatusAgentError;
+                    _usageRequests++;
+                    _usageFailed++;
+                    AddAssistantCard("CAD 核心引擎", "模型没有返回可执行命令。");
+                    SetChatStatus("模型未返回 DSL。", CadOrange);
+                    RefreshUsage();
                     return;
                 }
-                _txtDsl.Text = dsl;
 
-                if (autoRun)
-                {
-                    AppendLog(Strings.LogAgentReturnedAutoRun);
-                    _lblStatus.Text = Strings.StatusAgentReturnedAutoRun;
-                    System.Windows.Forms.Application.DoEvents();
-                    OnRunDsl();
-                }
-                else
-                {
-                    AppendLog(Strings.LogAgentReturnedReview);
-                    _lblStatus.Text = Strings.StatusAgentReturned;
-                }
+                SetChatStatus("正在执行几何命令...", CadCyan);
+                System.Windows.Forms.Application.DoEvents();
+                var result = DslExecutor.Execute(dsl);
+                sw.Stop();
+
+                _usageRequests++;
+                _usageTotalMs += sw.ElapsedMilliseconds;
+                if (result.Success) _usageSuccess++; else _usageFailed++;
+                RefreshUsage();
+
+                var message = result.Success
+                    ? "已完成。执行 " + result.Summary.Succeeded + " 条命令，生成 " + CountEntities(result) + " 个对象。"
+                    : "执行失败。失败命令 " + result.Summary.Failed + " 条；" + FirstError(result);
+                AddAssistantCard("CAD 核心引擎", message);
+                SetChatStatus(result.Success ? "完成，用时 " + sw.ElapsedMilliseconds + " ms。" : "执行失败。", result.Success ? CadGreen : CadOrange);
             }
             catch (System.Exception ex)
             {
-                AppendLog(Strings.LogAgentCallFailed + SecretRedactor.Redact(ex.Message));
-                _lblStatus.Text = Strings.StatusAgentError;
+                _usageRequests++;
+                _usageFailed++;
+                RefreshUsage();
+                var msg = SecretRedactor.Redact(ex.Message);
+                AddAssistantCard("CAD 核心引擎", "连接或执行失败：" + msg);
+                SetChatStatus("失败：" + msg, CadOrange);
             }
             finally
             {
                 _btnUseAgent.Enabled = true;
+            }
+        }
+
+        private static int CountEntities(VcadResult result)
+        {
+            var count = 0;
+            foreach (var r in result.Results)
+            {
+                if (r.Entities != null) count += r.Entities.Count;
+            }
+            return count;
+        }
+
+        private static string FirstError(VcadResult result)
+        {
+            if (result.Errors != null && result.Errors.Count > 0)
+            {
+                return result.Errors[0].Message;
+            }
+            return "请检查模型输出或图形环境。";
+        }
+
+        private void SetChatStatus(string message, Color color)
+        {
+            if (_lblChatStatus != null)
+            {
+                _lblChatStatus.Text = message;
+                _lblChatStatus.ForeColor = color;
+            }
+            if (_lblStatus != null)
+            {
+                _lblStatus.Text = message;
             }
         }
 
@@ -595,6 +915,17 @@ namespace Vcad.Plugin.UI
                 { "gemini",    ("https://generativelanguage.googleapis.com", "gemini-1.5-flash") },
                 { "ollama",    ("http://localhost:11434", "llama3.2") },
                 { "custom",    ("", "") },
+            };
+
+        private static readonly Dictionary<string, string[]> ProviderModels =
+            new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "openai", new[] { "gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1" } },
+                { "deepseek", new[] { "deepseek-v4-flash", "deepseek-v4-pro" } },
+                { "anthropic", new[] { "claude-3-5-haiku-latest", "claude-3-5-sonnet-latest", "claude-sonnet-4-5" } },
+                { "gemini", new[] { "gemini-1.5-flash", "gemini-1.5-pro" } },
+                { "ollama", new[] { "llama3.2", "qwen2.5", "deepseek-r1" } },
+                { "custom", new string[0] },
             };
 
         private bool _suppressProviderChange;
@@ -613,9 +944,10 @@ namespace Vcad.Plugin.UI
             {
                 _txtBaseUrl.Text = def.BaseUrl;
             }
-            if (string.IsNullOrWhiteSpace(_txtModel.Text) || IsAnyKnownDefaultModel(_txtModel.Text))
+            FillModelChoices(provider, def.Model);
+            if (string.IsNullOrWhiteSpace(_cmbModel.Text) || IsAnyKnownDefaultModel(_cmbModel.Text))
             {
-                _txtModel.Text = def.Model;
+                _cmbModel.Text = def.Model;
             }
         }
 
@@ -629,6 +961,24 @@ namespace Vcad.Plugin.UI
         {
             foreach (var kv in ProviderDefaults) if (kv.Value.Model == s) return true;
             return false;
+        }
+
+        private void FillModelChoices(string provider, string preferredModel)
+        {
+            if (_cmbModel == null) return;
+            var current = preferredModel ?? _cmbModel.Text;
+            _cmbModel.Items.Clear();
+            if (!string.IsNullOrEmpty(provider) && ProviderModels.TryGetValue(provider, out var models))
+            {
+                foreach (var model in models)
+                {
+                    _cmbModel.Items.Add(model);
+                }
+            }
+            if (!string.IsNullOrWhiteSpace(current))
+            {
+                _cmbModel.Text = current;
+            }
         }
 
         private void LoadProfilesIntoUi()
@@ -689,11 +1039,12 @@ namespace Vcad.Plugin.UI
                 var provider = string.IsNullOrEmpty(s.Provider) ? "openai" : s.Provider;
                 _cmbProvider.SelectedItem = provider;
                 var hasDefault = ProviderDefaults.TryGetValue(provider, out var def);
+                FillModelChoices(provider, null);
 
                 _txtBaseUrl.Text = !string.IsNullOrEmpty(s.ApiBaseUrl)
                     ? s.ApiBaseUrl
                     : (hasDefault ? def.BaseUrl : "");
-                _txtModel.Text = !string.IsNullOrEmpty(s.Model)
+                _cmbModel.Text = !string.IsNullOrEmpty(s.Model)
                     ? s.Model
                     : (hasDefault ? def.Model : "");
                 _txtApiKey.Text = s.ApiKeyPlain ?? "";
@@ -717,7 +1068,7 @@ namespace Vcad.Plugin.UI
                 var s = store.GetProfile(name) ?? new AgentSettings { Name = name };
                 s.Provider = _cmbProvider.SelectedItem as string ?? "openai";
                 s.ApiBaseUrl = _txtBaseUrl.Text.Trim();
-                s.Model = _txtModel.Text.Trim();
+                s.Model = _cmbModel.Text.Trim();
                 s.ApiKeyPlain = _txtApiKey.Text;
                 s.AgentPort = (int)_numPort.Value;
                 s.StrictJson = _chkStrictJson.Checked;
@@ -726,12 +1077,12 @@ namespace Vcad.Plugin.UI
                 store.UpsertProfile(s);
                 store.ActiveProfileName = name;
                 AgentConfigStore.SaveAll(store);
-                _lblStatus.Text = Strings.StatusSettingsSaved;
-                AppendLog(Strings.LogSettingsSavedTo + AgentConfigStore.ConfigPath);
+                SetSettingsStatus("配置已保存到 " + AgentConfigStore.ConfigPath, CadGreen);
+                RefreshUsage();
             }
             catch (System.Exception ex)
             {
-                AppendLog(Strings.LogFailedToSave + ex.Message);
+                SetSettingsStatus("保存配置失败: " + SecretRedactor.Redact(ex.Message), CadOrange);
             }
         }
 
@@ -740,19 +1091,17 @@ namespace Vcad.Plugin.UI
             try
             {
                 _btnTestConnection.Enabled = false;
-                _lblStatus.Text = Strings.StatusTesting;
+                SetSettingsStatus("正在测试 Agent Lite 和模型...", CadCyan);
                 System.Windows.Forms.Application.DoEvents();
                 OnSaveSettings();
                 var settings = AgentConfigStore.LoadActive();
                 var client = new AgentLiteClient(settings);
-                var ok = await client.HealthAsync();
-                _lblStatus.Text = ok ? Strings.StatusConnectionOk : Strings.StatusConnectionFailed;
-                AppendLog(ok ? Strings.LogHealthOk : Strings.LogHealthFailed);
+                var result = await client.TestModelAsync();
+                SetSettingsStatus(result.Message, result.Success ? CadGreen : CadOrange);
             }
             catch (System.Exception ex)
             {
-                AppendLog(Strings.LogTestFailed + SecretRedactor.Redact(ex.Message));
-                _lblStatus.Text = Strings.StatusConnectionFailed;
+                SetSettingsStatus("测试失败: " + SecretRedactor.Redact(ex.Message), CadOrange);
             }
             finally
             {
@@ -760,11 +1109,17 @@ namespace Vcad.Plugin.UI
             }
         }
 
-        private void AppendLog(string text)
+        private void SetSettingsStatus(string message, Color color)
         {
-            if (_txtLog == null) return;
-            _txtLog.AppendText(text);
-            _txtLog.AppendText(Environment.NewLine);
+            if (_lblSettingsStatus != null)
+            {
+                _lblSettingsStatus.Text = message;
+                _lblSettingsStatus.ForeColor = color;
+            }
+            if (_lblStatus != null)
+            {
+                _lblStatus.Text = message;
+            }
         }
 
         private static string Prompt(string title, string defaultValue)
