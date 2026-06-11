@@ -6,6 +6,10 @@ using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+#if NETFRAMEWORK
+using System.Globalization;
+using System.Speech.Recognition;
+#endif
 using Autodesk.AutoCAD.ApplicationServices;
 using Newtonsoft.Json;
 using Vcad.Core.Results;
@@ -30,10 +34,15 @@ namespace Vcad.Plugin.UI
         private FlowLayoutPanel _chatList;
         private Button _btnUseAgent;
         private Button _btnAttachFile;
+        private Button _btnVoiceInput;
         private TextBox _txtNaturalLanguage;
         private Label _lblChatStatus;
         private readonly List<string> _attachedFiles = new List<string>();
         private ToolTip _toolTip;
+#if NETFRAMEWORK
+        private SpeechRecognitionEngine _speechEngine;
+        private bool _voiceListening;
+#endif
 
         // Settings Tab controls
         private ComboBox _cmbProvider;
@@ -90,6 +99,27 @@ namespace Vcad.Plugin.UI
             Font = UiFont;
             BuildLayout();
             LoadProfilesIntoUi();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+#if NETFRAMEWORK
+                StopVoiceInputSilently();
+                if (_speechEngine != null)
+                {
+                    _speechEngine.Dispose();
+                    _speechEngine = null;
+                }
+#endif
+                if (_toolTip != null)
+                {
+                    _toolTip.Dispose();
+                    _toolTip = null;
+                }
+            }
+            base.Dispose(disposing);
         }
 
         private void BuildLayout()
@@ -154,7 +184,7 @@ namespace Vcad.Plugin.UI
 
             var title = new Label
             {
-                Text = "CAD AI 助手",
+                Text = "VoiceCAD 助手",
                 AutoSize = true,
                 ForeColor = CadCyan,
                 Font = UiFontBold,
@@ -293,7 +323,7 @@ namespace Vcad.Plugin.UI
                 Text = "询问 CAD 助手...",
                 Width = 250,
                 Height = 40,
-                Location = new Point(54, 12),
+                Location = new Point(94, 12),
             };
             _txtNaturalLanguage.GotFocus += (s, e) =>
             {
@@ -319,6 +349,25 @@ namespace Vcad.Plugin.UI
             _btnAttachFile.Paint += (s, e) => DrawPaperclipIcon(e.Graphics, _btnAttachFile.ClientRectangle, _btnAttachFile.Enabled ? CadMuted : CadBorder);
             _toolTip = new ToolTip();
             _toolTip.SetToolTip(_btnAttachFile, "上传文件");
+            _btnVoiceInput = new Button
+            {
+                Text = "",
+                Width = 36,
+                Height = 40,
+                Location = new Point(50, 12),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left,
+            };
+            _btnVoiceInput.Click += (s, e) => ToggleVoiceInput();
+            _btnVoiceInput.Paint += (s, e) =>
+            {
+#if NETFRAMEWORK
+                var color = _voiceListening ? CadOrange : (_btnVoiceInput.Enabled ? CadCyan : CadBorder);
+#else
+                var color = _btnVoiceInput.Enabled ? CadMuted : CadBorder;
+#endif
+                DrawMicrophoneIcon(e.Graphics, _btnVoiceInput.ClientRectangle, color);
+            };
+            _toolTip.SetToolTip(_btnVoiceInput, "语音输入");
             _btnUseAgent = new Button
             {
                 Text = "▶",
@@ -329,11 +378,14 @@ namespace Vcad.Plugin.UI
             _btnUseAgent.Click += async (s, e) => await OnUseAgentAsync();
             inputPanel.Resize += (s, e) =>
             {
+                _btnAttachFile.Left = 10;
+                _btnVoiceInput.Left = _btnAttachFile.Right + 4;
                 _btnUseAgent.Left = inputPanel.Width - _btnUseAgent.Width - 10;
-                _txtNaturalLanguage.Left = _btnAttachFile.Right + 8;
+                _txtNaturalLanguage.Left = _btnVoiceInput.Right + 8;
                 _txtNaturalLanguage.Width = Math.Max(96, _btnUseAgent.Left - _txtNaturalLanguage.Left - 10);
             };
             inputPanel.Controls.Add(_btnAttachFile);
+            inputPanel.Controls.Add(_btnVoiceInput);
             inputPanel.Controls.Add(_txtNaturalLanguage);
             inputPanel.Controls.Add(_btnUseAgent);
             layout.Controls.Add(inputPanel, 0, 2);
@@ -352,7 +404,8 @@ namespace Vcad.Plugin.UI
             ApplyIndustrialStyle(tab);
             StylePrimaryButton(_btnUseAgent);
             StyleGhostButton(_btnAttachFile);
-            AddAssistantCard("CAD 核心引擎", "描述你要画什么，我会生成并执行 CAD 命令。");
+            StyleGhostButton(_btnVoiceInput);
+            AddAssistantCard("VoiceCAD 核心引擎", "可以打字，也可以点麦克风说出你要画什么。");
         }
 
         private Control BuildChatMetrics()
@@ -812,6 +865,27 @@ namespace Vcad.Plugin.UI
             g.SmoothingMode = oldMode;
         }
 
+        private static void DrawMicrophoneIcon(Graphics g, Rectangle rect, Color color)
+        {
+            var oldMode = g.SmoothingMode;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            using (var pen = new Pen(color, 1.8F))
+            using (var brush = new SolidBrush(Color.FromArgb(48, color)))
+            {
+                var cx = rect.Left + rect.Width / 2;
+                var top = rect.Top + 8;
+                var mic = new Rectangle(cx - 5, top, 10, 17);
+                g.FillPie(brush, mic, 180, 360);
+                g.DrawArc(pen, mic, 180, 360);
+                g.DrawLine(pen, mic.Left, top + 5, mic.Left, top + 12);
+                g.DrawLine(pen, mic.Right, top + 5, mic.Right, top + 12);
+                g.DrawArc(pen, cx - 10, top + 8, 20, 16, 20, 140);
+                g.DrawLine(pen, cx, top + 24, cx, top + 29);
+                g.DrawLine(pen, cx - 6, top + 29, cx + 6, top + 29);
+            }
+            g.SmoothingMode = oldMode;
+        }
+
         private void ResizeTabItems()
         {
             if (_tabs == null || _tabs.TabCount == 0 || _tabs.Width <= 0) return;
@@ -905,6 +979,149 @@ namespace Vcad.Plugin.UI
         }
 
         // --- Chat tab actions ---
+
+        private void ToggleVoiceInput()
+        {
+#if NETFRAMEWORK
+            try
+            {
+                if (_voiceListening)
+                {
+                    StopVoiceInput("语音输入已停止。");
+                }
+                else
+                {
+                    StartVoiceInput();
+                }
+            }
+            catch (System.Exception ex)
+            {
+                StopVoiceInputSilently();
+                var msg = SecretRedactor.Redact(ex.Message);
+                SetChatStatus("语音输入不可用：" + msg, CadOrange);
+            }
+#else
+            SetChatStatus("当前构建暂不支持本地语音输入。", CadOrange);
+#endif
+        }
+
+#if NETFRAMEWORK
+        private void StartVoiceInput()
+        {
+            if (_speechEngine == null)
+            {
+                _speechEngine = CreateSpeechEngine();
+            }
+
+            _speechEngine.RecognizeAsync(RecognizeMode.Multiple);
+            _voiceListening = true;
+            if (_btnVoiceInput != null) _btnVoiceInput.Invalidate();
+            SetChatStatus("正在听写，说出要执行的 CAD 操作。", CadCyan);
+        }
+
+        private SpeechRecognitionEngine CreateSpeechEngine()
+        {
+            RecognizerInfo selected = null;
+            var current = CultureInfo.CurrentUICulture;
+            foreach (var info in SpeechRecognitionEngine.InstalledRecognizers())
+            {
+                if (selected == null)
+                {
+                    selected = info;
+                }
+                if (info.Culture.Name.Equals(current.Name, StringComparison.OrdinalIgnoreCase) ||
+                    info.Culture.TwoLetterISOLanguageName.Equals(current.TwoLetterISOLanguageName, StringComparison.OrdinalIgnoreCase))
+                {
+                    selected = info;
+                    break;
+                }
+                if (info.Culture.Name.Equals("zh-CN", StringComparison.OrdinalIgnoreCase))
+                {
+                    selected = info;
+                }
+            }
+
+            if (selected == null)
+            {
+                throw new InvalidOperationException("Windows 未安装可用的语音识别器。");
+            }
+
+            var engine = new SpeechRecognitionEngine(selected);
+            engine.LoadGrammar(new DictationGrammar());
+            engine.SetInputToDefaultAudioDevice();
+            engine.SpeechRecognized += OnSpeechRecognized;
+            engine.SpeechRecognitionRejected += OnSpeechRecognitionRejected;
+            engine.RecognizeCompleted += OnSpeechRecognizeCompleted;
+            return engine;
+        }
+
+        private void OnSpeechRecognized(object sender, SpeechRecognizedEventArgs e)
+        {
+            if (e.Result == null || string.IsNullOrWhiteSpace(e.Result.Text) || e.Result.Confidence < 0.22F)
+            {
+                return;
+            }
+            if (IsDisposed) return;
+            BeginInvoke((Action)(() => AppendRecognizedText(e.Result.Text, e.Result.Confidence)));
+        }
+
+        private void OnSpeechRecognitionRejected(object sender, SpeechRecognitionRejectedEventArgs e)
+        {
+            if (IsDisposed) return;
+            BeginInvoke((Action)(() => SetChatStatus("没有听清，请再说一遍。", CadOrange)));
+        }
+
+        private void OnSpeechRecognizeCompleted(object sender, RecognizeCompletedEventArgs e)
+        {
+            if (IsDisposed) return;
+            BeginInvoke((Action)(() =>
+            {
+                _voiceListening = false;
+                if (_btnVoiceInput != null) _btnVoiceInput.Invalidate();
+                if (e.Error != null)
+                {
+                    SetChatStatus("语音输入中断：" + SecretRedactor.Redact(e.Error.Message), CadOrange);
+                }
+            }));
+        }
+
+        private void AppendRecognizedText(string text, float confidence)
+        {
+            if (_txtNaturalLanguage.Text == "询问 CAD 助手...")
+            {
+                _txtNaturalLanguage.Text = "";
+            }
+            if (!string.IsNullOrWhiteSpace(_txtNaturalLanguage.Text))
+            {
+                _txtNaturalLanguage.AppendText(" ");
+            }
+            _txtNaturalLanguage.AppendText(text);
+            SetChatStatus("识别到语音：" + text + " (" + confidence.ToString("0.00") + ")", CadCyan);
+        }
+
+        private void StopVoiceInput(string message)
+        {
+            StopVoiceInputSilently();
+            SetChatStatus(message, CadMuted);
+        }
+
+        private void StopVoiceInputSilently()
+        {
+            try
+            {
+                if (_speechEngine != null && _voiceListening)
+                {
+                    _speechEngine.RecognizeAsyncCancel();
+                }
+            }
+            catch
+            {
+                // Best-effort shutdown; speech recognizer errors should not affect CAD.
+            }
+            _voiceListening = false;
+            if (_btnVoiceInput != null) _btnVoiceInput.Invalidate();
+        }
+#endif
 
         private void OnAttachFile()
         {
@@ -1030,8 +1247,12 @@ namespace Vcad.Plugin.UI
                 var displayText = BuildDisplayTextWithAttachments(text);
                 _attachedFiles.Clear();
 
+#if NETFRAMEWORK
+                StopVoiceInputSilently();
+#endif
                 _btnUseAgent.Enabled = false;
                 if (_btnAttachFile != null) _btnAttachFile.Enabled = false;
+                if (_btnVoiceInput != null) _btnVoiceInput.Enabled = false;
                 _txtNaturalLanguage.Text = "";
                 AddUserCard(displayText);
                 SetChatStatus("正在理解意图...", CadCyan);
@@ -1071,6 +1292,7 @@ namespace Vcad.Plugin.UI
             {
                 _btnUseAgent.Enabled = true;
                 if (_btnAttachFile != null) _btnAttachFile.Enabled = true;
+                if (_btnVoiceInput != null) _btnVoiceInput.Enabled = true;
             }
         }
 
