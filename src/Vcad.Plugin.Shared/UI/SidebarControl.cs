@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
@@ -60,7 +61,8 @@ namespace Vcad.Plugin.UI
         private NumericUpDown _numPort;
         private CheckBox _chkStrictJson;
         private NumericUpDown _numTimeout;
-        private CheckBox _chkAutoRun;
+        private ComboBox _cmbExecutionMode;
+        private CheckBox _chkMemoryEnabled;
         private Button _btnTestConnection;
         private Button _btnSaveSettings;
         private ComboBox _cmbProfile;
@@ -75,6 +77,9 @@ namespace Vcad.Plugin.UI
         private Label _lblUsageAvg;
         private Label _lblUsageProvider;
         private Label _lblUsageModel;
+        private Label _lblUsageTokens;
+        private Label _lblUsageCost;
+        private Label _lblUsageRecent;
         private Label _lblStatus;
 
         private int _chatRequests;
@@ -468,6 +473,11 @@ namespace Vcad.Plugin.UI
             StyleGhostButton(_btnAttachFile);
             StyleGhostButton(_btnVoiceInput);
             AddAssistantCard("VoiceCAD 核心引擎", "可以打字，也可以点麦克风说出你要画什么。");
+            AddAssistantCard("当前可调用工具",
+                "CAD 执行工具：create_layer、draw_line、draw_rectangle、draw_text。\r\n" +
+                "上下文工具：读取当前 DWG 图层/图元/块内展开图元；读取 PDF 可复制文字；图片可发给支持视觉的模型。\r\n" +
+                "扩展工具：AgentLite 已提供受限 web.search、web.fetch_url、workspace.read_file、workspace.write_file；写文件和执行 CAD 都会受授权模式约束。\r\n" +
+                "安全边界：对话回复、状态说明、PDF 读取失败提示只显示在面板里，不会再写入图纸。");
         }
 
         private Control BuildChatMetrics()
@@ -599,14 +609,14 @@ namespace Vcad.Plugin.UI
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 2,
-                RowCount = 14,
+                RowCount = 16,
                 Padding = new Padding(10),
                 AutoSize = false,
             };
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
-            for (int i = 1; i < 14; i++)
+            for (int i = 1; i < 16; i++)
             {
                 panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
             }
@@ -692,9 +702,15 @@ namespace Vcad.Plugin.UI
             _numTimeout = new NumericUpDown { Minimum = 5, Maximum = 1800, Value = 300, Width = 90 };
             panel.Controls.Add(_numTimeout, 1, row++);
 
-            panel.Controls.Add(new Label { Text = Strings.LblAutoRun, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
-            _chkAutoRun = new CheckBox { Checked = false, AutoSize = true };
-            panel.Controls.Add(_chkAutoRun, 1, row++);
+            panel.Controls.Add(new Label { Text = "执行模式", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
+            _cmbExecutionMode = new ComboBox { Width = 220, DropDownStyle = ComboBoxStyle.DropDownList };
+            _cmbExecutionMode.Items.AddRange(new object[] { "确认后执行", "完全授权自动执行" });
+            _cmbExecutionMode.SelectedIndex = 0;
+            panel.Controls.Add(_cmbExecutionMode, 1, row++);
+
+            panel.Controls.Add(new Label { Text = "学习记忆", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
+            _chkMemoryEnabled = new CheckBox { Text = "记录并遵循用户偏好规则", Checked = true, AutoSize = true };
+            panel.Controls.Add(_chkMemoryEnabled, 1, row++);
 
             var actionRow = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight };
             _btnTestConnection = new Button { Text = Strings.BtnTestConnection, Width = 140, Height = 28 };
@@ -743,14 +759,16 @@ namespace Vcad.Plugin.UI
                 Dock = DockStyle.Fill,
                 BackColor = CadBg,
                 ColumnCount = 1,
-                RowCount = 6,
+                RowCount = 8,
                 Padding = new Padding(12),
             };
             panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
             panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
             panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
             panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 150));
             panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
             var title = new Label
@@ -765,6 +783,10 @@ namespace Vcad.Plugin.UI
             panel.Controls.Add(UsageCard("请求统计", out _lblUsageRequests, out _lblUsageSuccess), 0, 1);
             panel.Controls.Add(UsageCard("失败与耗时", out _lblUsageFailed, out _lblUsageAvg), 0, 2);
             panel.Controls.Add(UsageCard("当前模型", out _lblUsageProvider, out _lblUsageModel), 0, 3);
+            panel.Controls.Add(UsageCard("Token 明细", out _lblUsageTokens, out _lblUsageCost), 0, 4);
+
+            var recentCard = UsageTextCard("最近模型请求", out _lblUsageRecent);
+            panel.Controls.Add(recentCard, 0, 6);
 
             var barCard = new Panel { Dock = DockStyle.Fill, BackColor = CadPanel, Padding = new Padding(10) };
             barCard.Paint += (s, e) =>
@@ -774,11 +796,12 @@ namespace Vcad.Plugin.UI
                 using (var fg = new Pen(CadGreen, 3))
                 {
                     e.Graphics.DrawLine(bg, 12, y, barCard.Width - 12, y);
-                    var ratio = _usageRequests == 0 ? 0 : Math.Min(1.0, _usageSuccess / (double)Math.Max(1, _usageRequests));
+                    var today = UsageLedgerStore.LoadTodaySummary();
+                    var ratio = today.Requests == 0 ? 0 : Math.Min(1.0, today.Success / (double)Math.Max(1, today.Requests));
                     e.Graphics.DrawLine(fg, 12, y, 12 + (int)((barCard.Width - 24) * ratio), y);
                 }
             };
-            panel.Controls.Add(barCard, 0, 4);
+            panel.Controls.Add(barCard, 0, 5);
 
             tab.Controls.Add(panel);
             ApplyIndustrialStyle(tab);
@@ -828,25 +851,102 @@ namespace Vcad.Plugin.UI
             return panel;
         }
 
+        private Control UsageTextCard(string title, out Label body)
+        {
+            var panel = new Panel { Dock = DockStyle.Fill, BackColor = CadPanel, Padding = new Padding(10) };
+            panel.Paint += (s, e) =>
+            {
+                using (var pen = new Pen(CadBorder))
+                {
+                    e.Graphics.DrawRectangle(pen, 0, 0, panel.Width - 1, panel.Height - 1);
+                }
+            };
+            panel.Controls.Add(new Label
+            {
+                Text = title,
+                Left = 10,
+                Top = 8,
+                Width = 220,
+                Height = 20,
+                ForeColor = CadMuted,
+                Font = UiFontBold,
+            });
+            var bodyLabel = new Label
+            {
+                Left = 10,
+                Top = 34,
+                Width = 360,
+                Height = 102,
+                ForeColor = CadText,
+                Font = MonoFont,
+                AutoSize = false,
+            };
+            panel.Resize += (s, e) =>
+            {
+                bodyLabel.Width = Math.Max(120, panel.Width - 20);
+                bodyLabel.Height = Math.Max(70, panel.Height - 42);
+            };
+            panel.Controls.Add(bodyLabel);
+            body = bodyLabel;
+            return panel;
+        }
+
         private void RefreshUsage()
         {
+            var today = UsageLedgerStore.LoadTodaySummary();
             if (_lblChatRequests != null)
             {
                 _lblChatRequests.Text = _chatRequests.ToString();
             }
             if (_lblChatCost != null)
             {
-                _lblChatCost.Text = "$0.00";
+                _lblChatCost.Text = FormatUsd(today.CostUsd);
             }
 
             if (_lblUsageRequests == null) return;
-            _lblUsageRequests.Text = _usageRequests.ToString();
-            _lblUsageSuccess.Text = "成功 " + _usageSuccess;
-            _lblUsageFailed.Text = _usageFailed.ToString();
-            _lblUsageAvg.Text = _usageRequests == 0 ? "平均 0 ms" : "平均 " + (_usageTotalMs / Math.Max(1, _usageRequests)) + " ms";
+            _lblUsageRequests.Text = today.Requests.ToString();
+            _lblUsageSuccess.Text = "成功 " + today.Success;
+            _lblUsageFailed.Text = today.Failed.ToString();
+            _lblUsageAvg.Text = today.Requests == 0 ? "平均 0 ms" : "平均 " + (today.TotalMs / Math.Max(1, today.Requests)) + " ms";
             var active = AgentConfigStore.LoadActive();
             _lblUsageProvider.Text = string.IsNullOrEmpty(active.Provider) ? "openai" : active.Provider;
             _lblUsageModel.Text = string.IsNullOrEmpty(active.Model) ? "未设置" : active.Model;
+            if (_lblUsageTokens != null)
+            {
+                _lblUsageTokens.Text = "in " + today.InputTokens + " / out " + today.OutputTokens;
+            }
+            if (_lblUsageCost != null)
+            {
+                _lblUsageCost.Text = "total " + today.TotalTokens + "\r\n" + FormatUsd(today.CostUsd);
+            }
+            if (_lblUsageRecent != null)
+            {
+                _lblUsageRecent.Text = FormatRecentUsage(today);
+            }
+        }
+
+        private static string FormatUsd(decimal value)
+        {
+            if (value <= 0m) return "$0.00";
+            return value < 0.01m ? "$" + value.ToString("0.000000") : "$" + value.ToString("0.00");
+        }
+
+        private static string FormatRecentUsage(UsageSummary summary)
+        {
+            if (summary == null || summary.Recent == null || summary.Recent.Count == 0)
+            {
+                return "暂无真实模型 token 记录";
+            }
+            var lines = new List<string>();
+            foreach (var r in summary.Recent.Take(5))
+            {
+                lines.Add(r.TimestampUtc.ToLocalTime().ToString("HH:mm:ss") + " " +
+                          r.Provider + "/" + r.Model + " " +
+                          r.InputTokens + "+" + r.OutputTokens + "=" + r.TotalTokens +
+                          " " + FormatUsd(r.CostUsd) +
+                          " " + r.UsageSource);
+            }
+            return string.Join("\r\n", lines);
         }
 
         private void OnDrawTab(object sender, DrawItemEventArgs e)
@@ -1232,7 +1332,13 @@ namespace Vcad.Plugin.UI
 
         private string BuildPromptWithAttachments(string text)
         {
-            if (_attachedFiles.Count == 0) return text;
+            var memoryContext = "";
+            var settings = AgentConfigStore.LoadActive();
+            if (settings.MemoryEnabled)
+            {
+                memoryContext = UserRuleMemoryStore.BuildPromptContext();
+            }
+            if (_attachedFiles.Count == 0 && string.IsNullOrWhiteSpace(memoryContext)) return text;
 
             var sb = new StringBuilder();
             if (string.IsNullOrWhiteSpace(text))
@@ -1244,16 +1350,25 @@ namespace Vcad.Plugin.UI
                 sb.AppendLine(text.Trim());
             }
 
-            sb.AppendLine();
-            sb.AppendLine("附件上下文（结构化内容会随请求发送）：");
-            foreach (var path in _attachedFiles)
+            if (!string.IsNullOrWhiteSpace(memoryContext))
             {
-                var info = new FileInfo(path);
-                if (!info.Exists) continue;
-                sb.Append("- ").Append(info.Name)
-                    .Append(" | kind=").Append(GetAttachmentKind(info.Extension))
-                    .Append(" | bytes=").Append(info.Length)
-                    .AppendLine();
+                sb.AppendLine();
+                sb.AppendLine(memoryContext);
+            }
+
+            if (_attachedFiles.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("附件上下文（结构化内容会随请求发送）：");
+                foreach (var path in _attachedFiles)
+                {
+                    var info = new FileInfo(path);
+                    if (!info.Exists) continue;
+                    sb.Append("- ").Append(info.Name)
+                        .Append(" | kind=").Append(GetAttachmentKind(info.Extension))
+                        .Append(" | bytes=").Append(info.Length)
+                        .AppendLine();
+                }
             }
             return sb.ToString();
         }
@@ -1539,6 +1654,41 @@ namespace Vcad.Plugin.UI
             }
         }
 
+        private bool TryHandleLocalConversation(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            var s = text.Trim();
+            if (!LooksLikeCapabilityQuestion(s)) return false;
+
+            _txtNaturalLanguage.Text = "";
+            AddUserCard(s);
+            _chatRequests++;
+            RefreshUsage();
+            AddAssistantCard("CAD 助手", BuildCapabilityReply(s));
+            SetChatStatus("已在对话框回复，未修改图纸。", CadGreen);
+            return true;
+        }
+
+        private static bool LooksLikeCapabilityQuestion(string text)
+        {
+            var s = text.ToLowerInvariant();
+            var asksTools = s.Contains("工具") || s.Contains("tool") || s.Contains("能调用") || s.Contains("可以调用");
+            var asksPdf = s.Contains("pdf") || s.Contains("附件") || s.Contains("文件");
+            var asksSafety = s.Contains("不要") && (s.Contains("画字") || s.Contains("图纸") || s.Contains("回复"));
+            var asksCapability = s.Contains("能做什么") || s.Contains("支持什么") || s.Contains("能看") || s.Contains("能读");
+            return asksTools || asksPdf || asksSafety || asksCapability;
+        }
+
+        private static string BuildCapabilityReply(string text)
+        {
+            return "当前已接入的工具分三类：\r\n\r\n" +
+                   "1. CAD 执行工具：create_layer、draw_line、draw_rectangle、draw_text。它们只能通过 CAD-IR、Safety、Preview/Confirm 后进入 AutoCAD。\r\n\r\n" +
+                   "2. CAD 上下文工具：读取当前打开 DWG 的图层、图元、块引用，并在内存里展开块内图元给 Agent 理解。\r\n\r\n" +
+                   "3. 附件上下文工具：PDF 会先抽取可复制文字；图片会内联给支持视觉的模型；文本、DXF、LSP、CSV、JSON 会抽取文本片段。扫描版 PDF 目前只能识别为“需要 OCR”，不会凭空读出内容。\r\n\r\n" +
+                   "AgentLite 工具层：web.search、web.fetch_url、workspace.read_file、workspace.write_file 已有受限端点。读工具默认只读；写文件和 CAD 执行都受“确认后执行/完全授权自动执行”模式控制。\r\n\r\n" +
+                   "对话回复、状态说明、PDF 读取失败提示只会显示在右侧对话框里，不会再作为 draw_text 写进图纸。";
+        }
+
         private async Task OnUseAgentAsync()
         {
             var text = _txtNaturalLanguage.Text;
@@ -1549,12 +1699,19 @@ namespace Vcad.Plugin.UI
                 return;
             }
 
+            if (_attachedFiles.Count == 0 && TryHandleLocalConversation(text))
+            {
+                return;
+            }
+
             try
             {
                 var attachmentWarnings = new List<string>();
                 var attachmentPayloads = BuildAttachmentPayloads(attachmentWarnings);
                 var prompt = BuildPromptWithAttachments(text);
                 var displayText = BuildDisplayTextWithAttachments(text);
+                var settings = AgentConfigStore.LoadActive();
+                NormalizeRuntimeSettings(settings);
 
 #if NETFRAMEWORK
                 StopVoiceInputSilently();
@@ -1571,6 +1728,10 @@ namespace Vcad.Plugin.UI
                 AddUserCard(displayText);
                 _chatRequests++;
                 RefreshUsage();
+                if (settings.MemoryEnabled && UserRuleMemoryStore.TryLearnFromUserText(text, out var learnedRule))
+                {
+                    AddAssistantCard("记忆", "已记住这条偏好规则：\r\n" + learnedRule);
+                }
                 if (attachmentWarnings.Count > 0)
                 {
                     AddAssistantCard("附件处理", string.Join("\r\n", attachmentWarnings));
@@ -1579,8 +1740,6 @@ namespace Vcad.Plugin.UI
                 SetChatStatus("正在理解意图...", CadCyan);
                 System.Windows.Forms.Application.DoEvents();
 
-                var settings = AgentConfigStore.LoadActive();
-                NormalizeRuntimeSettings(settings);
                 var startResult = await AgentLiteProcessManager.EnsureStartedAsync(settings).ConfigureAwait(true);
                 if (!startResult.Success)
                 {
@@ -1596,7 +1755,24 @@ namespace Vcad.Plugin.UI
 
                 var client = new AgentLiteClient(settings);
                 AddAssistantCard("Agent 进度", "正在调用模型生成结构化 CAD 草案。复杂图形会先被拆成基础线段、矩形和文字；当前图纸还不会被修改。");
-                var dsl = await WaitForModelDraftAsync(client.ParseAsync(prompt, attachmentPayloads, cadState));
+                var modelSw = Stopwatch.StartNew();
+                var parseResult = await WaitForModelDraftAsync(client.ParseFullAsync(prompt, attachmentPayloads, cadState));
+                modelSw.Stop();
+                RecordModelUsage(parseResult, settings, true, modelSw.ElapsedMilliseconds);
+
+                if (parseResult != null && parseResult.NeedsClarification)
+                {
+                    AddClarificationCard(parseResult.Clarification, text);
+                    SetChatStatus("需要补充信息，等待你选择。", CadOrange);
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(parseResult?.AssistantMessage))
+                {
+                    AddAssistantCard("CAD 助手", parseResult.AssistantMessage);
+                }
+
+                var dsl = parseResult?.DslJson;
 
                 if (dsl == null)
                 {
@@ -1614,9 +1790,19 @@ namespace Vcad.Plugin.UI
                 _pendingCandidate = CadAgentPipeline.Interpret(prompt, dsl, cadState);
                 AddAssistantCard("CAD 助手", BuildNaturalPreviewReply(_pendingCandidate));
                 AddPipelineCards(_pendingCandidate);
-                SetChatStatus(_pendingCandidate.Safety.IsAllowed
-                    ? "Preview 已生成，等待确认后执行。"
-                    : "没有生成可安全执行的计划。", _pendingCandidate.Safety.IsAllowed ? CadOrange : CadOrange);
+                var trustedMode = IsTrustedExecutionMode(settings);
+                if (!_pendingCandidate.Safety.IsAllowed)
+                {
+                    SetChatStatus("没有生成可安全执行的计划。", CadOrange);
+                }
+                else if (trustedMode)
+                {
+                    SetChatStatus("完全授权模式已处理。", CadGreen);
+                }
+                else
+                {
+                    SetChatStatus("Preview 已生成，等待确认后执行。", CadOrange);
+                }
             }
             catch (System.Exception ex)
             {
@@ -1645,7 +1831,7 @@ namespace Vcad.Plugin.UI
             return count;
         }
 
-        private async Task<string> WaitForModelDraftAsync(Task<string> parseTask)
+        private async Task<AgentParseResult> WaitForModelDraftAsync(Task<AgentParseResult> parseTask)
         {
             var checkpoints = new[]
             {
@@ -1668,6 +1854,102 @@ namespace Vcad.Plugin.UI
             }
 
             return await parseTask.ConfigureAwait(true);
+        }
+
+        private void RecordModelUsage(AgentParseResult result, AgentSettings settings, bool success, long elapsedMs)
+        {
+            try
+            {
+                if (result?.Usage == null) return;
+                var record = UsageLedgerStore.FromAgentUsage(result.Usage, result.RequestId, success, elapsedMs, settings);
+                UsageLedgerStore.Append(record);
+                RefreshUsage();
+            }
+            catch
+            {
+                // Usage accounting is informational and must not block the CAD flow.
+            }
+        }
+
+        private void AddClarificationCard(JObject clarification, string originalText)
+        {
+            if (_chatList == null || clarification == null)
+            {
+                AddAssistantCard("CAD 助手", "我需要你补充一个信息后再继续。");
+                return;
+            }
+
+            var question = clarification.Value<string>("question");
+            if (string.IsNullOrWhiteSpace(question)) question = "请补充缺失的信息后继续。";
+            var options = clarification["options"] as JArray;
+            if (options == null || options.Count == 0)
+            {
+                AddAssistantCard("CAD 助手", question);
+                return;
+            }
+
+            var width = GetChatCardWidth();
+            var card = new Panel
+            {
+                Width = width,
+                BackColor = CadPanel,
+                Margin = new Padding(0, 0, 0, 10),
+                Padding = new Padding(8),
+                Tag = "clarification",
+            };
+            card.Paint += (s, e) =>
+            {
+                using (var pen = new Pen(CadCyan))
+                {
+                    e.Graphics.DrawRectangle(pen, 0, 0, card.Width - 1, card.Height - 1);
+                }
+            };
+
+            var label = new Label
+            {
+                Text = "需要确认意图\r\n" + question,
+                Left = 10,
+                Top = 8,
+                Width = width - 20,
+                ForeColor = CadText,
+                Font = UiFontBold,
+                AutoSize = false,
+            };
+            var preferred = label.GetPreferredSize(new Size(width - 20, 0));
+            label.Height = Math.Max(48, preferred.Height + 4);
+            card.Controls.Add(label);
+
+            var top = label.Bottom + 8;
+            foreach (var optionToken in options.Take(4))
+            {
+                var answer = optionToken.Value<string>();
+                if (string.IsNullOrWhiteSpace(answer)) continue;
+                var button = new Button
+                {
+                    Text = answer,
+                    Left = 10,
+                    Top = top,
+                    Width = Math.Max(120, width - 20),
+                    Height = 30,
+                };
+                StyleGhostButton(button);
+                button.Click += async (s, e) =>
+                {
+                    foreach (Control child in card.Controls)
+                    {
+                        if (child is Button b) b.Enabled = false;
+                    }
+                    _txtNaturalLanguage.Text = (originalText ?? "").Trim() + "\r\n补充：" + answer;
+                    AddAssistantCard("CAD 助手", "已收到补充信息：" + answer + "\r\n我会基于这个选择继续规划。");
+                    await OnUseAgentAsync();
+                };
+                card.Controls.Add(button);
+                top += 36;
+            }
+
+            card.Height = top + 8;
+            _chatList.Controls.Add(card);
+            _chatList.ScrollControlIntoView(card);
         }
 
         private static string FirstError(VcadResult result)
@@ -1828,7 +2110,15 @@ namespace Vcad.Plugin.UI
             AddAssistantCard("执行预览", CadAgentPipeline.FormatPreview(candidate));
             if (candidate.Safety.IsAllowed)
             {
-                if (candidate.RequiresConfirmation)
+                var settings = AgentConfigStore.LoadActive();
+                NormalizeRuntimeSettings(settings);
+                if (IsTrustedExecutionMode(settings))
+                {
+                    AddAssistantCard("授权模式", "当前是完全授权自动执行模式。Safety 已放行，我会自动完成确认并执行；被 Safety 拦截的任务仍不会执行。");
+                    AuthorizeCandidateForTrustedMode(candidate);
+                    ExecuteConfirmedCandidate(candidate);
+                }
+                else if (candidate.RequiresConfirmation)
                 {
                     AddConfirmCard(candidate);
                 }
@@ -1840,6 +2130,19 @@ namespace Vcad.Plugin.UI
             else
             {
                 AddAssistantCard("安全检查", "已阻止执行。\r\n" + string.Join("\r\n", candidate.Safety.Blocks));
+            }
+        }
+
+        private static void AuthorizeCandidateForTrustedMode(CadPipelineCandidate candidate)
+        {
+            if (candidate == null || candidate.Safety == null || !candidate.Safety.IsAllowed) return;
+            if (candidate.RequiresConfirmation)
+            {
+                CadAgentPipeline.Confirm(candidate);
+            }
+            if (candidate.RequiresSecondConfirmation)
+            {
+                CadAgentPipeline.SecondConfirm(candidate);
             }
         }
 
@@ -2093,12 +2396,31 @@ namespace Vcad.Plugin.UI
             if (settings == null) return;
             var provider = string.IsNullOrWhiteSpace(settings.Provider) ? "openai" : settings.Provider;
             settings.Provider = provider;
+            if (string.IsNullOrWhiteSpace(settings.ExecutionMode))
+            {
+                settings.ExecutionMode = settings.AutoRunAfterParse ? "trusted" : "confirm";
+            }
             if (!ProviderDefaults.TryGetValue(provider, out var def)) return;
             if (string.IsNullOrWhiteSpace(settings.ApiBaseUrl))
             {
                 settings.ApiBaseUrl = def.BaseUrl;
             }
             settings.Model = NormalizeModelForProvider(provider, settings.Model);
+        }
+
+        private string SelectedExecutionMode()
+        {
+            var selected = _cmbExecutionMode == null ? null : _cmbExecutionMode.SelectedItem as string;
+            return string.Equals(selected, "完全授权自动执行", StringComparison.OrdinalIgnoreCase)
+                ? "trusted"
+                : "confirm";
+        }
+
+        private static bool IsTrustedExecutionMode(AgentSettings settings)
+        {
+            if (settings == null) return false;
+            return string.Equals(settings.ExecutionMode, "trusted", StringComparison.OrdinalIgnoreCase) ||
+                settings.AutoRunAfterParse;
         }
 
         private void FillModelChoices(string provider, string preferredModel)
@@ -2189,7 +2511,14 @@ namespace Vcad.Plugin.UI
                 _numPort.Value = s.AgentPort == 0 ? 8765 : s.AgentPort;
                 _chkStrictJson.Checked = s.StrictJson;
                 _numTimeout.Value = s.TimeoutSeconds <= 120 ? 300 : s.TimeoutSeconds;
-                _chkAutoRun.Checked = s.AutoRunAfterParse;
+                if (_cmbExecutionMode != null)
+                {
+                    _cmbExecutionMode.SelectedItem = IsTrustedExecutionMode(s) ? "完全授权自动执行" : "确认后执行";
+                }
+                if (_chkMemoryEnabled != null)
+                {
+                    _chkMemoryEnabled.Checked = s.MemoryEnabled;
+                }
             }
             finally
             {
@@ -2211,7 +2540,9 @@ namespace Vcad.Plugin.UI
                 s.AgentPort = (int)_numPort.Value;
                 s.StrictJson = _chkStrictJson.Checked;
                 s.TimeoutSeconds = (int)_numTimeout.Value;
-                s.AutoRunAfterParse = _chkAutoRun.Checked;
+                s.ExecutionMode = SelectedExecutionMode();
+                s.AutoRunAfterParse = string.Equals(s.ExecutionMode, "trusted", StringComparison.OrdinalIgnoreCase);
+                s.MemoryEnabled = _chkMemoryEnabled == null || _chkMemoryEnabled.Checked;
                 store.UpsertProfile(s);
                 store.ActiveProfileName = name;
                 AgentConfigStore.SaveAll(store);

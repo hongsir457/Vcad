@@ -52,6 +52,12 @@ namespace Vcad.Plugin.Net
 
         public async Task<string> ParseAsync(string naturalLanguage, JArray attachments, JObject cadState)
         {
+            var result = await ParseFullAsync(naturalLanguage, attachments, cadState).ConfigureAwait(false);
+            return result?.DslJson;
+        }
+
+        public async Task<AgentParseResult> ParseFullAsync(string naturalLanguage, JArray attachments, JObject cadState)
+        {
             if (string.IsNullOrWhiteSpace(naturalLanguage)) return null;
 
             var payload = new JObject
@@ -84,8 +90,14 @@ namespace Vcad.Plugin.Net
 
                 var jo = JObject.Parse(body);
                 var dsl = jo["dsl"];
-                if (dsl == null) return null;
-                return dsl.ToString(Formatting.Indented);
+                return new AgentParseResult
+                {
+                    RequestId = jo.Value<string>("request_id"),
+                    DslJson = dsl == null || dsl.Type == JTokenType.Null ? null : dsl.ToString(Formatting.Indented),
+                    AssistantMessage = jo.Value<string>("assistant_message"),
+                    Clarification = jo["clarification"] as JObject,
+                    Usage = AgentUsage.FromJson(jo["usage"] as JObject),
+                };
             }
         }
 
@@ -196,6 +208,62 @@ namespace Vcad.Plugin.Net
         public static ConnectionCheckResult Fail(string message)
         {
             return new ConnectionCheckResult { Success = false, Message = message };
+        }
+    }
+
+    internal class AgentParseResult
+    {
+        public string RequestId { get; set; }
+        public string DslJson { get; set; }
+        public string AssistantMessage { get; set; }
+        public JObject Clarification { get; set; }
+        public AgentUsage Usage { get; set; }
+
+        public bool NeedsClarification =>
+            Clarification != null && Clarification.Value<bool?>("required") == true;
+    }
+
+    internal class AgentUsage
+    {
+        public string Provider { get; set; }
+        public string Model { get; set; }
+        public int InputTokens { get; set; }
+        public int OutputTokens { get; set; }
+        public int TotalTokens { get; set; }
+        public string Source { get; set; }
+
+        public static AgentUsage FromJson(JObject obj)
+        {
+            if (obj == null) return null;
+            return new AgentUsage
+            {
+                Provider = Value(obj, "provider", "Provider"),
+                Model = Value(obj, "model", "Model"),
+                InputTokens = IntValue(obj, "inputTokens", "input_tokens", "InputTokens"),
+                OutputTokens = IntValue(obj, "outputTokens", "output_tokens", "OutputTokens"),
+                TotalTokens = IntValue(obj, "totalTokens", "total_tokens", "TotalTokens"),
+                Source = Value(obj, "source", "Source"),
+            };
+        }
+
+        private static string Value(JObject obj, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                var token = obj[name];
+                if (token != null && token.Type != JTokenType.Null) return token.Value<string>();
+            }
+            return "";
+        }
+
+        private static int IntValue(JObject obj, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                var token = obj[name];
+                if (token != null && token.Type != JTokenType.Null) return token.Value<int>();
+            }
+            return 0;
         }
     }
 }

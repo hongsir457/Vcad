@@ -35,6 +35,12 @@ namespace Vcad.Plugin.Config
         [JsonProperty("timeout_seconds")]
         public int TimeoutSeconds { get; set; } = 300;
 
+        [JsonProperty("execution_mode")]
+        public string ExecutionMode { get; set; } = "confirm";
+
+        [JsonProperty("memory_enabled")]
+        public bool MemoryEnabled { get; set; } = true;
+
         [JsonProperty("auto_run_after_parse")]
         public bool AutoRunAfterParse { get; set; } = false;
     }

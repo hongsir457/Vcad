@@ -11,8 +11,9 @@ public class EchoProviderTests
     public async Task Rectangle_keyword_emits_rectangle()
     {
         var p = new EchoProvider();
-        var dsl = await p.ParseAsync(new ParseRequest { text = "draw a rectangle 6m x 4m" });
+        var result = await p.ParseAsync(new ParseRequest { text = "draw a rectangle 6m x 4m" });
 
+        var dsl = result.Dsl!;
         Assert.NotNull(dsl);
         Assert.Equal("vcad_dsl_v1", dsl["version"]!.GetValue<string>());
         var cmds = dsl["commands"]!.AsArray();
@@ -24,7 +25,7 @@ public class EchoProviderTests
     public async Task Empty_text_falls_back_to_text_command()
     {
         var p = new EchoProvider();
-        var dsl = await p.ParseAsync(new ParseRequest { text = "" });
+        var dsl = (await p.ParseAsync(new ParseRequest { text = "" })).Dsl!;
         var cmds = dsl["commands"]!.AsArray();
         Assert.Contains(cmds, c => c!["type"]!.GetValue<string>() == "draw_text");
     }
@@ -37,7 +38,7 @@ public class EchoProviderTests
         foreach (var t in new[] { "rectangle", "矩形", "room", "draw text", "" })
         {
             var dsl = await p.ParseAsync(new ParseRequest { text = t });
-            foreach (var c in dsl["commands"]!.AsArray())
+            foreach (var c in dsl.Dsl!["commands"]!.AsArray())
             {
                 Assert.Contains(c!["type"]!.GetValue<string>(), allowed);
             }

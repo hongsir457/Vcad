@@ -8,7 +8,7 @@ public class OllamaProvider : IProvider
 {
     private static readonly HttpClient _client = new() { Timeout = TimeSpan.FromSeconds(300) };
 
-    public async Task<JsonNode> ParseAsync(ParseRequest req)
+    public async Task<ProviderParseResult> ParseAsync(ParseRequest req)
     {
         var options = ProviderRequestOptions.From(req);
         var baseUrl = string.IsNullOrEmpty(options.BaseUrl) ? "http://localhost:11434" : options.BaseUrl;
@@ -51,7 +51,28 @@ public class OllamaProvider : IProvider
         {
             throw new InvalidOperationException("Ollama returned non-JSON content.");
         }
-        return dsl;
+        return ProviderResultFactory.FromModelJson(
+            dsl,
+            options,
+            model,
+            ExtractUsage(parsed, options, model),
+            req);
+    }
+
+    private static ProviderUsage? ExtractUsage(JsonNode? parsed, ProviderRequestOptions options, string model)
+    {
+        var input = parsed?["prompt_eval_count"]?.GetValue<int>() ?? 0;
+        var output = parsed?["eval_count"]?.GetValue<int>() ?? 0;
+        if (input <= 0 && output <= 0) return null;
+        return new ProviderUsage
+        {
+            Provider = options.Name,
+            Model = model,
+            InputTokens = input,
+            OutputTokens = output,
+            TotalTokens = input + output,
+            Source = "provider",
+        };
     }
 
     private static object[] Messages(ParseRequest req)

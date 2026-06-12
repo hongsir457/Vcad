@@ -50,6 +50,21 @@ public class HttpEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.True(jo["success"]!.GetValue<bool>());
         Assert.NotNull(jo["dsl"]);
         Assert.Equal("vcad_dsl_v1", jo["dsl"]!["version"]!.GetValue<string>());
+        Assert.NotNull(jo["usage"]);
+        Assert.True(jo["usage"]!["totalTokens"]!.GetValue<int>() > 0);
+    }
+
+    [Fact]
+    public async Task Tools_returns_registered_tool_manifest()
+    {
+        var client = _factory.CreateClient();
+        var resp = await client.GetAsync("/tools");
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var body = await resp.Content.ReadAsStringAsync();
+        var jo = JsonNode.Parse(body)!.AsObject();
+        var tools = jo["tools"]!.AsArray();
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "web.fetch_url");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "workspace.read_file");
     }
 
     [Fact]

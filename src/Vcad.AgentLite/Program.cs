@@ -53,6 +53,41 @@ app.MapGet("/health", () => Results.Ok(new
     supported_dsl_versions = new[] { "vcad_dsl_v1" },
 }));
 
+app.MapGet("/tools", () => Results.Ok(new
+{
+    service = "vcad-agent-lite",
+    tools = AgentTools.List(),
+}));
+
+app.MapPost("/tool", async (HttpContext ctx) =>
+{
+    using var reader = new StreamReader(ctx.Request.Body);
+    var body = await reader.ReadToEndAsync();
+    if (string.IsNullOrWhiteSpace(body))
+    {
+        return Results.BadRequest(new { error = "Empty request body." });
+    }
+
+    System.Text.Json.Nodes.JsonObject? req;
+    try
+    {
+        req = System.Text.Json.Nodes.JsonNode.Parse(body)?.AsObject();
+    }
+    catch (System.Text.Json.JsonException ex)
+    {
+        return Results.BadRequest(new { error = "Invalid JSON: " + ex.Message });
+    }
+
+    var name = req?["name"]?.GetValue<string>();
+    if (string.IsNullOrWhiteSpace(name))
+    {
+        return Results.BadRequest(new { error = "'name' is required." });
+    }
+    var args = req?["args"] as System.Text.Json.Nodes.JsonObject;
+    var result = await AgentToolRunner.RunAsync(name, args);
+    return Results.Json(result);
+});
+
 app.MapPost("/parse", async (HttpContext ctx, ProviderRouter router) =>
 {
     using var reader = new StreamReader(ctx.Request.Body);
@@ -97,12 +132,15 @@ app.MapPost("/parse", async (HttpContext ctx, ProviderRouter router) =>
 
     try
     {
-        var dsl = await router.ParseAsync(req);
+        var result = await router.ParseAsync(req);
         return Results.Json(new
         {
             request_id = req.request_id ?? ("req-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff")),
             success = true,
-            dsl = dsl,
+            dsl = result.Dsl,
+            assistant_message = result.AssistantMessage,
+            clarification = result.Clarification,
+            usage = result.Usage,
             warnings = Array.Empty<string>(),
         });
     }

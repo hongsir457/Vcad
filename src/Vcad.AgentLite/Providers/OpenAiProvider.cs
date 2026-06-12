@@ -9,7 +9,7 @@ public class OpenAiProvider : IProvider
 {
     private static readonly HttpClient _client = new() { Timeout = TimeSpan.FromSeconds(300) };
 
-    public async Task<JsonNode> ParseAsync(ParseRequest req)
+    public async Task<ProviderParseResult> ParseAsync(ParseRequest req)
     {
         var options = ProviderRequestOptions.From(req);
         var apiKey = options.ApiKey;
@@ -77,7 +77,30 @@ public class OpenAiProvider : IProvider
         {
             throw new InvalidOperationException("OpenAI returned non-JSON content.");
         }
-        return dsl;
+        return ProviderResultFactory.FromModelJson(
+            dsl,
+            options,
+            parsed?["model"]?.GetValue<string>() ?? model,
+            ExtractUsage(parsed, options, parsed?["model"]?.GetValue<string>() ?? model),
+            req);
+    }
+
+    private static ProviderUsage? ExtractUsage(JsonNode? parsed, ProviderRequestOptions options, string model)
+    {
+        var usage = parsed?["usage"];
+        if (usage == null) return null;
+        var input = usage["prompt_tokens"]?.GetValue<int>() ?? 0;
+        var output = usage["completion_tokens"]?.GetValue<int>() ?? 0;
+        var total = usage["total_tokens"]?.GetValue<int>() ?? input + output;
+        return new ProviderUsage
+        {
+            Provider = options.Name,
+            Model = model,
+            InputTokens = input,
+            OutputTokens = output,
+            TotalTokens = total,
+            Source = "provider",
+        };
     }
 
     private static string BuildChatCompletionsUrl(string baseUrl, bool isDeepSeek)

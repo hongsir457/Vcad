@@ -23,7 +23,7 @@ public class ProviderConfigForwardingTests
         var provider = new OpenAiProvider();
         var fakeKey = "unit-test-token";
 
-        var dsl = await provider.ParseAsync(new ParseRequest
+        var result = await provider.ParseAsync(new ParseRequest
         {
             text = "draw a rectangle",
             provider = new ProviderConfig
@@ -36,7 +36,10 @@ public class ProviderConfigForwardingTests
             },
         });
 
+        var dsl = result.Dsl!;
         Assert.Equal("vcad_dsl_v1", dsl["version"]!.GetValue<string>());
+        Assert.Equal("deepseek", result.Usage.Provider);
+        Assert.Equal("deepseek-v4-flash", result.Usage.Model);
         Assert.StartsWith("POST /chat/completions ", server.RequestLine);
         Assert.Contains("Authorization: Bearer " + fakeKey, server.Headers);
         Assert.Contains("\"model\":\"deepseek-v4-flash\"", server.Body);
@@ -54,7 +57,7 @@ public class ProviderConfigForwardingTests
         using var server = new OneShotHttpServer();
         var provider = new OpenAiProvider();
 
-        var dsl = await provider.ParseAsync(new ParseRequest
+        var result = await provider.ParseAsync(new ParseRequest
         {
             text = "draw the object from the sketch",
             attachments = new List<ParseAttachment>
@@ -79,6 +82,7 @@ public class ProviderConfigForwardingTests
             },
         });
 
+        var dsl = result.Dsl!;
         Assert.Equal("vcad_dsl_v1", dsl["version"]!.GetValue<string>());
         Assert.StartsWith("POST /v1/chat/completions ", server.RequestLine);
         Assert.Contains("\"type\":\"image_url\"", server.Body);

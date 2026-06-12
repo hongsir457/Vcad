@@ -9,7 +9,7 @@ namespace Vcad.AgentLite.Providers;
 /// </summary>
 public class EchoProvider : IProvider
 {
-    public Task<JsonNode> ParseAsync(ParseRequest req)
+    public Task<ProviderParseResult> ParseAsync(ParseRequest req)
     {
         var dsl = new JsonObject
         {
@@ -67,7 +67,13 @@ public class EchoProvider : IProvider
         }
 
         dsl["commands"] = commands;
-        return Task.FromResult<JsonNode>(dsl);
+        var options = ProviderRequestOptions.From(req);
+        return Task.FromResult(ProviderResultFactory.FromModelJson(
+            dsl,
+            options,
+            string.IsNullOrWhiteSpace(options.Model) ? "echo" : options.Model,
+            null,
+            req));
     }
 
     private static bool ContainsAny(string haystack, params string[] needles)

@@ -23,6 +23,10 @@ Rules:
   read-only CAD state from the open drawing, including block references expanded
   in memory. Use it to understand existing layers/entities/blocks before
   drafting commands.
+- If the request is too ambiguous to produce a safe CAD operation, return:
+  { ""assistant_message"": ""I need one detail before changing the drawing."",
+    ""clarification"": { ""required"": true, ""question"": ""Which layer or object should I use?"", ""options"": [""Use current layer"", ""Create a new layer"", ""Cancel""] },
+    ""dsl"": null }
 - Only emit command types from this list: create_layer, draw_line, draw_rectangle, draw_text.
 - For free-form objects such as animals, symbols, sketches, equipment outlines,
   or decorative shapes, approximate the object with multiple draw_line commands

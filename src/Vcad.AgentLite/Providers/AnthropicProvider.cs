@@ -8,7 +8,7 @@ public class AnthropicProvider : IProvider
 {
     private static readonly HttpClient _client = new() { Timeout = TimeSpan.FromSeconds(300) };
 
-    public async Task<JsonNode> ParseAsync(ParseRequest req)
+    public async Task<ProviderParseResult> ParseAsync(ParseRequest req)
     {
         var options = ProviderRequestOptions.From(req);
         var apiKey = options.ApiKey;
@@ -68,6 +68,28 @@ public class AnthropicProvider : IProvider
         {
             throw new InvalidOperationException("Anthropic returned non-JSON content.");
         }
-        return dsl;
+        return ProviderResultFactory.FromModelJson(
+            dsl,
+            options,
+            parsed?["model"]?.GetValue<string>() ?? model,
+            ExtractUsage(parsed, options, parsed?["model"]?.GetValue<string>() ?? model),
+            req);
+    }
+
+    private static ProviderUsage? ExtractUsage(JsonNode? parsed, ProviderRequestOptions options, string model)
+    {
+        var usage = parsed?["usage"];
+        if (usage == null) return null;
+        var input = usage["input_tokens"]?.GetValue<int>() ?? 0;
+        var output = usage["output_tokens"]?.GetValue<int>() ?? 0;
+        return new ProviderUsage
+        {
+            Provider = options.Name,
+            Model = model,
+            InputTokens = input,
+            OutputTokens = output,
+            TotalTokens = input + output,
+            Source = "provider",
+        };
     }
 }

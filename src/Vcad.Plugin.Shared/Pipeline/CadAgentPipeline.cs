@@ -795,6 +795,17 @@ namespace Vcad.Plugin.Pipeline
                 "可以创建图层",
                 "画直线和矩形",
                 "放置文字标注",
+                "未能读取pdf",
+                "未抽取到 pdf",
+                "pdf 未抽取",
+                "可能为扫描件",
+                "需要 ocr",
+                "ocr",
+                "请提供关键",
+                "请补充",
+                "无法读取",
+                "对话回复",
+                "状态说明",
             };
             foreach (var fragment in suspiciousFragments)
             {

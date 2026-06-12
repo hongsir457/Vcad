@@ -22,7 +22,7 @@ public class EchoProviderProducesValidDslTests
     {
         var p = new EchoProvider();
         var dsl = await p.ParseAsync(new ParseRequest { text = text });
-        var json = dsl.ToJsonString();
+        var json = dsl.Dsl!.ToJsonString();
 
         var v = DslValidator.ParseAndValidate(json);
         Assert.True(v.IsValid, "echo output rejected: " + v.ErrorMessage + " // dsl=" + json);

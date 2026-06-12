@@ -10,7 +10,7 @@ public class ProviderRouter
     private readonly GeminiProvider _gemini = new();
     private readonly OllamaProvider _ollama = new();
 
-    public Task<JsonNode> ParseAsync(ParseRequest req)
+    public Task<ProviderParseResult> ParseAsync(ParseRequest req)
     {
         var provider = ProviderRequestOptions.From(req).Name.ToLowerInvariant();
         return provider switch
