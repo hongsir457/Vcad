@@ -75,29 +75,51 @@ function Build-One {
     New-Item -ItemType Directory -Path $contents -Force | Out-Null
   }
 
-  # ALLOWLIST: only ship the plugin's own DLLs plus its direct third-party
-  # dependency. AutoCAD already provides the .NET BCL, so we must NOT
-  # bundle the System.*/netstandard reference assemblies the SDK copies
-  # into bin\, and we must NEVER bundle Autodesk managed DLLs or the
-  # compile-only stub.
-  $allowedNames = @(
+  # ALLOWLIST: ship the plugin's own DLLs plus explicit third-party runtime
+  # dependencies. AutoCAD already provides most .NET BCL assemblies, so do not
+  # blindly copy bin\*.dll; only include the NuGet assemblies this plugin uses.
+  # We must NEVER bundle Autodesk managed DLLs or the compile-only stub.
+  $requiredNames = @(
     "Vcad.Plugin.$Name.dll",
     "Vcad.Plugin.$Name.pdb",
     'Vcad.Core.dll',
     'Vcad.Core.pdb',
-    'Newtonsoft.Json.dll'
+    'Newtonsoft.Json.dll',
+    'UglyToad.PdfPig.dll',
+    'UglyToad.PdfPig.Core.dll',
+    'UglyToad.PdfPig.DocumentLayoutAnalysis.dll',
+    'UglyToad.PdfPig.Fonts.dll',
+    'UglyToad.PdfPig.Package.dll',
+    'UglyToad.PdfPig.Tokenization.dll',
+    'UglyToad.PdfPig.Tokens.dll'
+  )
+  $optionalNames = @(
+    'Microsoft.Bcl.HashCode.dll',
+    'System.Buffers.dll',
+    'System.Memory.dll',
+    'System.Numerics.Vectors.dll',
+    'System.Runtime.CompilerServices.Unsafe.dll',
+    'System.ValueTuple.dll'
   )
   $banned = @(
     'AcMgd.dll','AcDbMgd.dll','AcCoreMgd.dll',
     'acmgd.dll','acdbmgd.dll','accoremgd.dll',
     'Autodesk.AutoCAD.Stubs.dll'
   )
-  foreach ($name in $allowedNames) {
+  foreach ($name in $requiredNames) {
     $src = Join-Path $outDir $name
     if (-not (Test-Path $src -PathType Leaf)) {
       if ($name -match '\.pdb$') { continue } # pdb is optional
       throw "Expected build output missing: $name (under $outDir)"
     }
+    if ($banned -contains $name) {
+      throw "Refusing to ship banned file: $name"
+    }
+    Copy-Item $src (Join-Path $contents $name) -Force
+  }
+  foreach ($name in $optionalNames) {
+    $src = Join-Path $outDir $name
+    if (-not (Test-Path $src -PathType Leaf)) { continue }
     if ($banned -contains $name) {
       throw "Refusing to ship banned file: $name"
     }

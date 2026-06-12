@@ -70,7 +70,8 @@ What this does:
 2. Runs `dotnet build src\Vcad.Plugin.Acad2017\Vcad.Plugin.Acad2017.csproj
    -c Release`.
 3. Copies the built `Vcad.Plugin.Acad2017.dll`, `Vcad.Core.dll`,
-   `Newtonsoft.Json.dll` into `bundle\Acad2017\Contents\`.
+   `Newtonsoft.Json.dll`, PdfPig DLLs, and required NuGet support DLLs into
+   `bundle\Acad2017\Contents\`.
 4. **Strips out** any Autodesk managed DLL by name as a paranoid safety net.
 
 After it finishes you should see:
@@ -82,6 +83,8 @@ bundle\Acad2017\
     Vcad.Plugin.Acad2017.dll
     Vcad.Core.dll
     Newtonsoft.Json.dll
+    UglyToad.PdfPig.dll
+    System.Memory.dll
 ```
 
 ## 4. Install the bundle into AutoCAD's plugin folder
