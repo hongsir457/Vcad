@@ -54,7 +54,7 @@ public sealed class AgentTurnService
         var body = await resp.Content.ReadAsStringAsync();
         if (!resp.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException("OpenAI-compatible agent error " + (int)resp.StatusCode + ": " + SecretRedactor.Redact(body));
+            throw new ProviderRequestException("OpenAI-compatible", (int)resp.StatusCode, SecretRedactor.Redact(body));
         }
 
         var parsed = JsonNode.Parse(body);
@@ -97,7 +97,7 @@ public sealed class AgentTurnService
         var body = await resp.Content.ReadAsStringAsync();
         if (!resp.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException("Anthropic agent error " + (int)resp.StatusCode + ": " + SecretRedactor.Redact(body));
+            throw new ProviderRequestException("Anthropic", (int)resp.StatusCode, SecretRedactor.Redact(body));
         }
 
         var parsed = JsonNode.Parse(body);
@@ -368,4 +368,19 @@ Rules:
 
     private static string Truncate(string text, int max) =>
         string.IsNullOrEmpty(text) || text.Length <= max ? text ?? "" : text.Substring(0, max) + "\n...[truncated]";
+}
+
+public sealed class ProviderRequestException : Exception
+{
+    public ProviderRequestException(string provider, int statusCode, string responseBody)
+        : base(provider + " upstream error " + statusCode + ": " + responseBody)
+    {
+        Provider = provider;
+        StatusCode = statusCode;
+        ResponseBody = responseBody;
+    }
+
+    public string Provider { get; }
+    public int StatusCode { get; }
+    public string ResponseBody { get; }
 }

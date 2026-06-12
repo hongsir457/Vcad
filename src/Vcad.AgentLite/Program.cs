@@ -139,6 +139,17 @@ app.MapPost("/agent/turn", async (HttpContext ctx, AgentTurnService agent) =>
             response = result,
         });
     }
+    catch (ProviderRequestException ex)
+    {
+        return Results.Json(new
+        {
+            success = false,
+            error = ex.Message,
+            provider = ex.Provider,
+            upstream_status = ex.StatusCode,
+            upstream_body = ex.ResponseBody,
+        }, statusCode: StatusCodes.Status502BadGateway);
+    }
     catch (Exception ex)
     {
         return Results.Json(new

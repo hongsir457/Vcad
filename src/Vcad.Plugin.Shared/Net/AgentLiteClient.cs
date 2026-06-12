@@ -73,8 +73,7 @@ namespace Vcad.Plugin.Net
                 var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
                 if (!resp.IsSuccessStatusCode)
                 {
-                    throw new InvalidOperationException("Agent /agent/turn failed: " + (int)resp.StatusCode + " " +
-                        SecretRedactor.Redact(body));
+                    throw new InvalidOperationException(FormatAgentTurnFailure((int)resp.StatusCode, body));
                 }
 
                 var envelope = JObject.Parse(body);
@@ -114,6 +113,76 @@ namespace Vcad.Plugin.Net
             return "http://127.0.0.1:" + port + path;
         }
 
+        private static string FormatAgentTurnFailure(int localStatus, string body)
+        {
+            var redacted = SecretRedactor.Redact(body ?? "");
+            try
+            {
+                var jo = JObject.Parse(redacted);
+                var upstreamStatus = jo.Value<int?>("upstream_status");
+                var provider = jo.Value<string>("provider");
+                var error = FirstNonEmpty(
+                    ExtractProviderErrorMessage(jo.Value<string>("upstream_body")),
+                    jo.Value<string>("error"),
+                    redacted);
+
+                var message = upstreamStatus.HasValue
+                    ? "模型连接失败: 上游 " + FirstNonEmpty(provider, "provider") + " " + upstreamStatus.Value + "。 " + error
+                    : "模型连接失败: Agent Lite " + localStatus + "。 " + error;
+                if (LooksLikeModelAccessError(error))
+                {
+                    message += "\r\n当前 Project 没有所选模型权限；API Key 的 All 权限只表示这个 Key 在当前 Project 内的操作权限，不等于所有模型都已开通。";
+                }
+                return message;
+            }
+            catch
+            {
+                return "模型连接失败: Agent Lite " + localStatus + "。 " + redacted;
+            }
+        }
+
+        private static string ExtractProviderErrorMessage(string body)
+        {
+            if (string.IsNullOrWhiteSpace(body)) return null;
+            try
+            {
+                var jo = JObject.Parse(body);
+                var error = jo["error"] as JObject;
+                if (error != null)
+                {
+                    var message = error.Value<string>("message");
+                    var code = error.Value<string>("code");
+                    if (!string.IsNullOrWhiteSpace(message))
+                    {
+                        return string.IsNullOrWhiteSpace(code) ? message : message + " (" + code + ")";
+                    }
+                }
+            }
+            catch
+            {
+                // Fall through to raw provider body.
+            }
+            return body;
+        }
+
+        private static bool LooksLikeModelAccessError(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message)) return false;
+            var s = message.ToLowerInvariant();
+            return s.Contains("does not have access to model") ||
+                s.Contains("model_not_found") ||
+                s.Contains("model not found");
+        }
+
+        private static string FirstNonEmpty(params string[] values)
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value)) return value;
+            }
+            return "";
+        }
+
         public async Task<ConnectionCheckResult> TestModelAsync()
         {
             using (var client = NewClient())
@@ -147,7 +216,7 @@ namespace Vcad.Plugin.Net
                         var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
                         if (!resp.IsSuccessStatusCode)
                         {
-                            return ConnectionCheckResult.Fail("模型连接失败: " + (int)resp.StatusCode + " " + SecretRedactor.Redact(body));
+                            return ConnectionCheckResult.Fail(FormatAgentTurnFailure((int)resp.StatusCode, body));
                         }
                         var jo = JObject.Parse(body);
                         if (jo["response"] == null)
