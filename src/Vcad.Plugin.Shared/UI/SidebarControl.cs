@@ -41,6 +41,9 @@ namespace Vcad.Plugin.UI
         private Button _btnVoiceInput;
         private TextBox _txtNaturalLanguage;
         private Label _lblChatStatus;
+        private Label _lblChatCost;
+        private Label _lblChatRequests;
+        private Label _lblChatConnection;
         private readonly List<string> _attachedFiles = new List<string>();
         private ToolTip _toolTip;
 #if NETFRAMEWORK
@@ -74,6 +77,7 @@ namespace Vcad.Plugin.UI
         private Label _lblUsageModel;
         private Label _lblStatus;
 
+        private int _chatRequests;
         private int _usageRequests;
         private int _usageSuccess;
         private int _usageFailed;
@@ -478,13 +482,13 @@ namespace Vcad.Plugin.UI
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33));
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33));
-            panel.Controls.Add(MetricLabel("今日费用", "$0.00"), 0, 0);
-            panel.Controls.Add(MetricLabel("会话请求", "0"), 1, 0);
-            panel.Controls.Add(MetricLabel("状态", "接口已连接"), 2, 0);
+            panel.Controls.Add(MetricLabel("今日费用", "$0.00", out _lblChatCost), 0, 0);
+            panel.Controls.Add(MetricLabel("会话请求", "0", out _lblChatRequests), 1, 0);
+            panel.Controls.Add(MetricLabel("状态", "接口已连接", out _lblChatConnection), 2, 0);
             return panel;
         }
 
-        private Control MetricLabel(string title, string value)
+        private Control MetricLabel(string title, string value, out Label valueLabel)
         {
             var panel = new Panel { Dock = DockStyle.Fill, BackColor = CadBg };
             panel.Controls.Add(new Label
@@ -497,7 +501,7 @@ namespace Vcad.Plugin.UI
                 ForeColor = CadMuted,
                 Font = UiFontSmall,
             });
-            panel.Controls.Add(new Label
+            valueLabel = new Label
             {
                 Text = value,
                 Left = 0,
@@ -506,7 +510,8 @@ namespace Vcad.Plugin.UI
                 Height = 20,
                 ForeColor = CadCyan,
                 Font = UiFontBold,
-            });
+            };
+            panel.Controls.Add(valueLabel);
             return panel;
         }
 
@@ -825,6 +830,15 @@ namespace Vcad.Plugin.UI
 
         private void RefreshUsage()
         {
+            if (_lblChatRequests != null)
+            {
+                _lblChatRequests.Text = _chatRequests.ToString();
+            }
+            if (_lblChatCost != null)
+            {
+                _lblChatCost.Text = "$0.00";
+            }
+
             if (_lblUsageRequests == null) return;
             _lblUsageRequests.Text = _usageRequests.ToString();
             _lblUsageSuccess.Text = "成功 " + _usageSuccess;
@@ -1555,11 +1569,13 @@ namespace Vcad.Plugin.UI
 
                 _txtNaturalLanguage.Text = "";
                 AddUserCard(displayText);
+                _chatRequests++;
+                RefreshUsage();
                 if (attachmentWarnings.Count > 0)
                 {
                     AddAssistantCard("附件处理", string.Join("\r\n", attachmentWarnings));
                 }
-                AddAssistantCard("DWG Memory Snapshot", DrawingSnapshotCollector.FormatSummary(cadState));
+                AddAssistantCard("CAD 助手", BuildDwgContextReply(cadState));
                 SetChatStatus("正在理解意图...", CadCyan);
                 System.Windows.Forms.Application.DoEvents();
 
@@ -1571,7 +1587,9 @@ namespace Vcad.Plugin.UI
                     _usageRequests++;
                     _usageFailed++;
                     RefreshUsage();
-                    AddAssistantCard("Agent Lite", startResult.Message);
+                    AddAssistantCard("CAD 助手", "我还不能处理这条请求，因为本地 Agent Lite 没有启动成功。\r\n\r\n" +
+                        "没有修改当前图纸。请重新打开 VCAD 面板，或检查 `%APPDATA%\\VCAD\\logs` 后再点发送。\r\n\r\n" +
+                        "技术原因：" + startResult.Message);
                     SetChatStatus(startResult.Message, CadOrange);
                     return;
                 }
@@ -1583,7 +1601,8 @@ namespace Vcad.Plugin.UI
                 {
                     _usageRequests++;
                     _usageFailed++;
-                    AddAssistantCard("CAD 核心引擎", "模型没有返回可执行命令。");
+                    AddAssistantCard("CAD 助手", "我没有拿到可执行的 CAD 绘图步骤，所以没有修改当前图纸。\r\n\r\n" +
+                        "你可以补充尺寸、位置、图层、对象风格，或者换一个支持稳定 JSON 输出的模型后重试。");
                     SetChatStatus("模型未返回 DSL。", CadOrange);
                     RefreshUsage();
                     return;
@@ -1591,10 +1610,11 @@ namespace Vcad.Plugin.UI
 
                 SetChatStatus("正在生成 Intent / Task Plan / CAD-IR...", CadCyan);
                 _pendingCandidate = CadAgentPipeline.Interpret(prompt, dsl, cadState);
+                AddAssistantCard("CAD 助手", BuildNaturalPreviewReply(_pendingCandidate));
                 AddPipelineCards(_pendingCandidate);
                 SetChatStatus(_pendingCandidate.Safety.IsAllowed
                     ? "Preview 已生成，等待确认后执行。"
-                    : "Safety Checker 已阻止执行。", _pendingCandidate.Safety.IsAllowed ? CadOrange : CadOrange);
+                    : "没有生成可安全执行的计划。", _pendingCandidate.Safety.IsAllowed ? CadOrange : CadOrange);
             }
             catch (System.Exception ex)
             {
@@ -1602,7 +1622,7 @@ namespace Vcad.Plugin.UI
                 _usageFailed++;
                 RefreshUsage();
                 var msg = SecretRedactor.Redact(ex.Message);
-                AddAssistantCard("CAD 核心引擎", "连接或执行失败：" + msg);
+                AddAssistantCard("CAD 助手", BuildFriendlyFailureReply(msg));
                 SetChatStatus("失败：" + msg, CadOrange);
             }
             finally
@@ -1632,6 +1652,125 @@ namespace Vcad.Plugin.UI
             return "请检查模型输出或图形环境。";
         }
 
+        private static string ShortStatus(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message)) return "就绪";
+            var s = message.ToLowerInvariant();
+            if (s.Contains("失败") || s.Contains("failed") || s.Contains("error")) return "失败";
+            if (s.Contains("取消") || s.Contains("cancel")) return "已取消";
+            if (s.Contains("完成") || s.Contains("success") || s.Contains("done")) return "已完成";
+            if (s.Contains("preview") || s.Contains("预览") || s.Contains("确认")) return "待确认";
+            if (s.Contains("连接") || s.Contains("connected") || s.Contains("online")) return "接口已连接";
+            if (s.Contains("正在") || s.Contains("start") || s.Contains("处理")) return "处理中";
+            return message.Length > 8 ? message.Substring(0, 8) : message;
+        }
+
+        private static string BuildDwgContextReply(JObject cadState)
+        {
+            if (cadState == null)
+            {
+                return "我会先读取当前图纸上下文，再把你的要求转换成可预览的 CAD 操作。";
+            }
+
+            var summary = cadState["summary"] as JObject;
+            var warnings = cadState["warnings"] as JArray;
+            var entityCount = summary?["entity_count"]?.Value<int>() ?? 0;
+            var layerCount = summary?["layer_count"]?.Value<int>() ?? 0;
+            var blockRefs = summary?["block_reference_count"]?.Value<int>() ?? 0;
+            var exploded = summary?["exploded_entity_count"]?.Value<int>() ?? 0;
+            var truncated = summary?["truncated"]?.Value<bool>() ?? false;
+
+            var text = "我已读取当前 DWG 上下文：图层 " + layerCount +
+                       " 个、图元 " + entityCount + " 个";
+            if (blockRefs > 0 || exploded > 0)
+            {
+                text += "，其中块引用 " + blockRefs + " 个，块内展开图元 " + exploded + " 个";
+            }
+            text += "。\r\n\r\n接下来我会把你的自然语言请求转换成受控 CAD 操作，并先给出预览，确认前不会修改图纸。";
+            if (truncated)
+            {
+                text += "\r\n\r\n注意：当前图纸较大，读取上下文时已截断。";
+            }
+            if (warnings != null && warnings.Count > 0)
+            {
+                text += "\r\n\r\n读取提示：" + string.Join("; ", warnings.Values<string>());
+            }
+            return text;
+        }
+
+        private static string BuildNaturalPreviewReply(CadPipelineCandidate candidate)
+        {
+            if (candidate == null)
+            {
+                return "我没有生成可预览的 CAD 操作。";
+            }
+
+            var impact = candidate.Preview?["impact"];
+            var operation = candidate.Preview?["operation"];
+            var action = operation?["action"]?.Value<string>() ?? candidate.TaskType;
+            var count = impact?["matched_count"]?.Value<int>() ?? 0;
+            var layer = impact?["layer"]?.Value<string>() ?? "0";
+            var entityType = impact?["entity_type"]?.Value<string>() ?? "对象";
+
+            if (candidate.Safety == null || !candidate.Safety.IsAllowed)
+            {
+                var blocks = candidate.Safety == null || candidate.Safety.Blocks.Count == 0
+                    ? "没有生成满足安全检查的 CAD 命令。"
+                    : string.Join("；", candidate.Safety.Blocks);
+                return "我理解了你的请求，但这次没有生成可安全执行的 CAD 操作，所以没有修改当前图纸。\r\n\r\n原因：" +
+                       blocks + "\r\n\r\n你可以把需求拆得更具体一些，例如说明尺寸、位置、图层、由哪些线段或文字组成。";
+            }
+
+            var reply = "我理解你要" + DescribeCadAction(action) + "。我已经生成了执行预览：预计影响 " +
+                        count + " 个 " + entityType + "，目标图层是 " + layer + "。";
+            if (candidate.RequiresSecondConfirmation)
+            {
+                reply += "\r\n\r\n这个操作风险较高，需要二次确认；确认前不会修改图纸。";
+            }
+            else if (candidate.RequiresConfirmation)
+            {
+                reply += "\r\n\r\n请先确认预览，确认后我再执行；确认前不会修改图纸。";
+            }
+            else
+            {
+                reply += "\r\n\r\n这是低风险操作，我会直接执行并返回结果。";
+            }
+            return reply;
+        }
+
+        private static string BuildFriendlyFailureReply(string technicalMessage)
+        {
+            var msg = technicalMessage ?? "";
+            var lower = msg.ToLowerInvariant();
+            if (lower.Contains("e_schema_invalid") || lower.Contains("missing or empty") || lower.Contains("commands"))
+            {
+                return "我理解了你的请求，但模型没有返回有效的 CAD 命令列表，所以没有修改当前图纸。\r\n\r\n" +
+                       "这通常是因为请求太开放，或当前执行器还不能把复杂对象自动拆成线段、文字等基础图元。你可以补充尺寸、位置和构成方式后重试。\r\n\r\n" +
+                       "技术原因：" + msg;
+            }
+            if (lower.Contains("task was canceled") || lower.Contains("已取消一个任务") || lower.Contains("timeout"))
+            {
+                return "这次模型请求超时或被取消了，所以没有修改当前图纸。\r\n\r\n可以重试一次，或在配置页把超时时间调大。\r\n\r\n技术原因：" + msg;
+            }
+            if (lower.Contains("403") || lower.Contains("model_not_found") || lower.Contains("does not have access"))
+            {
+                return "当前 API Key 或项目没有所选模型的调用权限，所以没有生成 CAD 计划。\r\n\r\n请在配置页换成该账号可用的模型，保存后再测试连接。\r\n\r\n技术原因：" + msg;
+            }
+            return "我这次没有完成请求，也没有修改当前图纸。\r\n\r\n技术原因：" + msg;
+        }
+
+        private static string DescribeCadAction(string action)
+        {
+            if (string.Equals(action, "copy_objects", StringComparison.OrdinalIgnoreCase)) return "绘制这些对象";
+            if (string.Equals(action, "query_objects", StringComparison.OrdinalIgnoreCase)) return "查询图纸对象";
+            if (string.Equals(action, "count_objects", StringComparison.OrdinalIgnoreCase)) return "统计图纸对象";
+            if (string.Equals(action, "highlight_objects", StringComparison.OrdinalIgnoreCase)) return "高亮图纸对象";
+            if (string.Equals(action, "set_property", StringComparison.OrdinalIgnoreCase)) return "修改对象属性";
+            if (string.Equals(action, "move_objects", StringComparison.OrdinalIgnoreCase)) return "移动对象";
+            if (string.Equals(action, "delete_objects", StringComparison.OrdinalIgnoreCase)) return "删除对象";
+            return "执行 CAD 操作";
+        }
+
         private void SetChatStatus(string message, Color color)
         {
             if (_lblChatStatus != null)
@@ -1643,13 +1782,18 @@ namespace Vcad.Plugin.UI
             {
                 _lblStatus.Text = message;
             }
+            if (_lblChatConnection != null)
+            {
+                _lblChatConnection.Text = ShortStatus(message);
+                _lblChatConnection.ForeColor = color;
+            }
         }
 
         private void AddPipelineCards(CadPipelineCandidate candidate)
         {
-            AddAssistantCard("Intent Card", CadAgentPipeline.FormatIntent(candidate));
-            AddAssistantCard("Plan Card", CadAgentPipeline.FormatPlan(candidate));
-            AddAssistantCard("Preview Card", CadAgentPipeline.FormatPreview(candidate));
+            AddAssistantCard("理解结果", CadAgentPipeline.FormatIntent(candidate));
+            AddAssistantCard("执行计划", CadAgentPipeline.FormatPlan(candidate));
+            AddAssistantCard("执行预览", CadAgentPipeline.FormatPreview(candidate));
             if (candidate.Safety.IsAllowed)
             {
                 if (candidate.RequiresConfirmation)
@@ -1663,14 +1807,14 @@ namespace Vcad.Plugin.UI
             }
             else
             {
-                AddAssistantCard("Error Card", "Safety Checker 阻止执行。\r\n" + string.Join("\r\n", candidate.Safety.Blocks));
+                AddAssistantCard("安全检查", "已阻止执行。\r\n" + string.Join("\r\n", candidate.Safety.Blocks));
             }
         }
 
         private void AddLowRiskExecuteCard(CadPipelineCandidate candidate)
         {
             if (_chatList == null) return;
-            AddAssistantCard("Execute Card", "Low Risk 任务不需要 confirm_token。\r\n将使用 task_id + idempotency_key 直接执行。");
+            AddAssistantCard("CAD 助手", "这是低风险任务，不需要确认。我会直接执行并返回结果。");
             ExecuteConfirmedCandidate(candidate);
         }
 
@@ -1765,7 +1909,7 @@ namespace Vcad.Plugin.UI
                 CadAgentPipeline.Cancel(candidate);
                 confirm.Enabled = false;
                 cancel.Enabled = false;
-                AddAssistantCard("Error Card", "任务已取消，没有修改图纸。\r\n状态: cancelled");
+                AddAssistantCard("CAD 助手", "已取消这次任务，没有修改当前图纸。");
                 SetChatStatus("任务已取消。", CadMuted);
             };
             card.Controls.Add(label);
@@ -1799,14 +1943,12 @@ namespace Vcad.Plugin.UI
 
                 var cadResult = CadAgentPipeline.RecordExecutionResult(candidate, result, sw.ElapsedMilliseconds, idempotencyKey);
                 var message = result.Success
-                    ? "执行完成。\r\nTask: " + cadResult.Value<string>("task_id") +
-                      "\r\n命令: " + result.Summary.Succeeded +
-                      "\r\n对象: " + CountEntities(result) +
-                      "\r\nResult: " + cadResult.Value<string>("schema")
-                    : "执行失败。\r\nTask: " + cadResult.Value<string>("task_id") +
-                      "\r\n失败命令: " + result.Summary.Failed +
-                      "\r\n" + FirstError(result);
-                AddAssistantCard("Result Card", message);
+                    ? "已完成绘图，并写入当前图纸。\r\n\r\n命令：" + result.Summary.Succeeded +
+                      "\r\n对象：" + CountEntities(result) +
+                      "\r\n用时：" + sw.ElapsedMilliseconds + " ms"
+                    : "执行失败，没有完成这次修改。\r\n\r\n失败命令：" + result.Summary.Failed +
+                      "\r\n原因：" + FirstError(result);
+                AddAssistantCard("CAD 助手", message);
                 SetChatStatus(result.Success ? "完成，用时 " + sw.ElapsedMilliseconds + " ms。" : "执行失败。", result.Success ? CadGreen : CadOrange);
             }
             catch (System.Exception ex)
@@ -1817,7 +1959,7 @@ namespace Vcad.Plugin.UI
                 _usageTotalMs += sw.ElapsedMilliseconds;
                 RefreshUsage();
                 var msg = SecretRedactor.Redact(ex.Message);
-                AddAssistantCard("Error Card", "执行被阻止或失败：\r\n" + msg);
+                AddAssistantCard("CAD 助手", BuildFriendlyFailureReply(msg));
                 SetChatStatus("执行失败：" + msg, CadOrange);
             }
         }
