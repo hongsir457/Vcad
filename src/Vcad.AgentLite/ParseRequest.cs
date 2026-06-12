@@ -7,6 +7,21 @@ public class ParseRequest
     public ParseContext? context { get; set; }
     public ParseOptions? options { get; set; }
     public ProviderConfig? provider { get; set; }
+    public List<ParseAttachment> attachments { get; set; } = new();
+}
+
+public class ParseAttachment
+{
+    public string? id { get; set; }
+    public string name { get; set; } = "";
+    public string kind { get; set; } = "binary";
+    public string mime_type { get; set; } = "application/octet-stream";
+    public long size_bytes { get; set; }
+    public int? page_count { get; set; }
+    public string? sha256 { get; set; }
+    public string? text_excerpt { get; set; }
+    public string? data_base64 { get; set; }
+    public string? note { get; set; }
 }
 
 public class ParseContext

@@ -14,6 +14,11 @@ builder.Services.AddSingleton<ProviderRouter>();
 
 var app = builder.Build();
 
+const int MaxRequestBodyBytes = 8 * 1024 * 1024;
+const int MaxTextChars = 32000;
+const int MaxAttachmentCount = 12;
+const int MaxInlineAttachmentBase64Chars = 6 * 1024 * 1024;
+
 app.Use(async (ctx, next) =>
 {
     // Token check
@@ -28,11 +33,12 @@ app.Use(async (ctx, next) =>
         }
     }
 
-    // 256 KB request body cap
-    if (ctx.Request.ContentLength.HasValue && ctx.Request.ContentLength.Value > 256 * 1024)
+    // Keep request bodies bounded; large source files should be summarized or
+    // passed as typed attachments, not dumped raw into the prompt.
+    if (ctx.Request.ContentLength.HasValue && ctx.Request.ContentLength.Value > MaxRequestBodyBytes)
     {
         ctx.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
-        await ctx.Response.WriteAsync("Request body exceeds 256 KB.");
+        await ctx.Response.WriteAsync("Request body exceeds 8 MB.");
         return;
     }
 
@@ -70,9 +76,23 @@ app.MapPost("/parse", async (HttpContext ctx, ProviderRouter router) =>
     {
         return Results.BadRequest(new { error = "'text' is required." });
     }
-    if (req.text.Length > 8000)
+    if (req.text.Length > MaxTextChars)
     {
-        return Results.BadRequest(new { error = "'text' exceeds 8000 character limit." });
+        return Results.BadRequest(new { error = "'text' exceeds 32000 character limit." });
+    }
+
+    req.attachments ??= new List<ParseAttachment>();
+    if (req.attachments.Count > MaxAttachmentCount)
+    {
+        return Results.BadRequest(new { error = "'attachments' exceeds 12 item limit." });
+    }
+    foreach (var attachment in req.attachments)
+    {
+        if (!string.IsNullOrEmpty(attachment.data_base64) &&
+            attachment.data_base64.Length > MaxInlineAttachmentBase64Chars)
+        {
+            return Results.BadRequest(new { error = "An inline attachment exceeds 6 MB base64 limit." });
+        }
     }
 
     try

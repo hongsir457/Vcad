@@ -22,7 +22,12 @@ public class GeminiProvider : IProvider
             : options.BaseUrl;
         var model = string.IsNullOrEmpty(options.Model) ? "gemini-1.5-flash" : options.Model;
 
-        var prompt = PromptLibrary.SystemPrompt() + "\n\nUser request:\n" + req.text;
+        var prompt = PromptLibrary.SystemPrompt() + "\n\nUser request:\n" + (req.text ?? "").Trim();
+        var parts = AttachmentPromptBuilder.BuildGeminiParts(new ParseRequest
+        {
+            text = prompt,
+            attachments = req.attachments,
+        }, includeImages: true);
         object payload = options.StrictJson
             ? new
             {
@@ -31,7 +36,7 @@ public class GeminiProvider : IProvider
                     new
                     {
                         role = "user",
-                        parts = new object[] { new { text = prompt } },
+                        parts = parts,
                     },
                 },
                 generationConfig = new { responseMimeType = "application/json" },
@@ -43,7 +48,7 @@ public class GeminiProvider : IProvider
                     new
                     {
                         role = "user",
-                        parts = new object[] { new { text = prompt } },
+                        parts = parts,
                     },
                 },
             };

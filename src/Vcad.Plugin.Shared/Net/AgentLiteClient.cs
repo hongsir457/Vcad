@@ -40,7 +40,12 @@ namespace Vcad.Plugin.Net
             }
         }
 
-        public async Task<string> ParseAsync(string naturalLanguage)
+        public Task<string> ParseAsync(string naturalLanguage)
+        {
+            return ParseAsync(naturalLanguage, null);
+        }
+
+        public async Task<string> ParseAsync(string naturalLanguage, JArray attachments)
         {
             if (string.IsNullOrWhiteSpace(naturalLanguage)) return null;
 
@@ -52,6 +57,10 @@ namespace Vcad.Plugin.Net
                 ["options"] = new JObject { ["max_commands"] = 50 },
                 ["provider"] = BuildProviderPayload(),
             };
+            if (attachments != null && attachments.Count > 0)
+            {
+                payload["attachments"] = attachments;
+            }
 
             using (var client = NewClient())
             using (var content = new StringContent(payload.ToString(), Encoding.UTF8, "application/json"))

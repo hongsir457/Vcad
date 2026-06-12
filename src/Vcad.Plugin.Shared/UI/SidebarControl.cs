@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -12,6 +13,8 @@ using System.Speech.Recognition;
 #endif
 using Autodesk.AutoCAD.ApplicationServices;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using UglyToad.PdfPig;
 using Vcad.Core.Results;
 using Vcad.Plugin.Config;
 using Vcad.Plugin.Execution;
@@ -90,6 +93,10 @@ namespace Vcad.Plugin.UI
         private static readonly Font UiFontSmall = new Font("Microsoft YaHei UI", 8F);
         private static readonly Font UiFontBold = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
         private static readonly Font MonoFont = new Font("Consolas", 9F);
+        private const int MaxTextAttachmentChars = 20000;
+        private const int MaxAttachmentCount = 12;
+        private const long MaxInlineImageBytes = 4 * 1024 * 1024;
+        private const long MaxInlineImageBytesTotal = 5 * 1024 * 1024;
 
         public SidebarControl()
         {
@@ -1129,14 +1136,22 @@ namespace Vcad.Plugin.UI
             {
                 dialog.Title = "选择附件";
                 dialog.Multiselect = true;
-                dialog.Filter = "CAD / 文本文件|*.dwg;*.dxf;*.lsp;*.scr;*.txt;*.md;*.json;*.csv;*.xml|所有文件|*.*";
+                dialog.Filter = "上下文文件|*.dwg;*.dxf;*.lsp;*.scr;*.txt;*.md;*.json;*.csv;*.xml;*.pdf;*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.tif;*.tiff|CAD 文件|*.dwg;*.dxf|图片|*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.tif;*.tiff|PDF|*.pdf|文本|*.txt;*.md;*.json;*.csv;*.xml;*.lsp;*.scr|所有文件|*.*";
                 if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
+                var skipped = 0;
                 foreach (var fileName in dialog.FileNames)
                 {
                     if (File.Exists(fileName) && !_attachedFiles.Contains(fileName))
                     {
-                        _attachedFiles.Add(fileName);
+                        if (_attachedFiles.Count < MaxAttachmentCount)
+                        {
+                            _attachedFiles.Add(fileName);
+                        }
+                        else
+                        {
+                            skipped++;
+                        }
                     }
                 }
 
@@ -1144,7 +1159,9 @@ namespace Vcad.Plugin.UI
                 {
                     _txtNaturalLanguage.Text = "";
                 }
-                SetChatStatus("已添加附件：" + string.Join(", ", _attachedFiles.ConvertAll(Path.GetFileName)), CadCyan);
+                var status = "已添加附件：" + string.Join(", ", _attachedFiles.ConvertAll(Path.GetFileName));
+                if (skipped > 0) status += "；已忽略超出 " + MaxAttachmentCount + " 个的附件。";
+                SetChatStatus(status, skipped > 0 ? CadOrange : CadCyan);
             }
         }
 
@@ -1163,22 +1180,106 @@ namespace Vcad.Plugin.UI
             }
 
             sb.AppendLine();
-            sb.AppendLine("附件上下文：");
+            sb.AppendLine("附件上下文（结构化内容会随请求发送）：");
             foreach (var path in _attachedFiles)
             {
                 var info = new FileInfo(path);
+                if (!info.Exists) continue;
                 sb.Append("- ").Append(info.Name)
-                    .Append(" | path=").Append(info.FullName)
+                    .Append(" | kind=").Append(GetAttachmentKind(info.Extension))
                     .Append(" | bytes=").Append(info.Length)
                     .AppendLine();
-
-                if (IsTextAttachment(info.Extension) && info.Length <= 65536)
-                {
-                    sb.AppendLine("内容片段：");
-                    sb.AppendLine(ReadAttachmentExcerpt(info.FullName));
-                }
             }
             return sb.ToString();
+        }
+
+        private JArray BuildAttachmentPayloads(List<string> warnings)
+        {
+            var payloads = new JArray();
+            var index = 1;
+            long inlineImageBytesUsed = 0;
+            foreach (var path in _attachedFiles)
+            {
+                try
+                {
+                    var info = new FileInfo(path);
+                    if (!info.Exists) continue;
+
+                    var kind = GetAttachmentKind(info.Extension);
+                    var attachment = new JObject
+                    {
+                        ["id"] = "att-" + index.ToString("00"),
+                        ["name"] = info.Name,
+                        ["kind"] = kind,
+                        ["mime_type"] = GetMimeType(info.Extension),
+                        ["size_bytes"] = info.Length,
+                        ["sha256"] = ComputeSha256(info.FullName),
+                    };
+
+                    if (IsTextAttachment(info.Extension))
+                    {
+                        attachment["text_excerpt"] = ReadAttachmentExcerpt(info.FullName);
+                        if (info.Length > 1024 * 1024)
+                        {
+                            attachment["note"] = "文本附件超过 1MB，仅发送前 " + MaxTextAttachmentChars + " 字符作为上下文。";
+                            warnings.Add(info.Name + " 超过 1MB，已只发送文本片段。");
+                        }
+                    }
+                    else if (IsImageAttachment(info.Extension))
+                    {
+                        if (info.Length <= MaxInlineImageBytes &&
+                            inlineImageBytesUsed + info.Length <= MaxInlineImageBytesTotal)
+                        {
+                            attachment["data_base64"] = Convert.ToBase64String(File.ReadAllBytes(info.FullName));
+                            attachment["note"] = "图片将发送给支持视觉输入的模型；文本模型只能看到附件元数据。";
+                            inlineImageBytesUsed += info.Length;
+                        }
+                        else
+                        {
+                            attachment["note"] = "图片超过单文件 4MB 或本次图片总内联预算，未内联发送；请压缩或后续接入文件上传/视觉预处理。";
+                            warnings.Add(info.Name + " 未内联发送，本次只发送图片元数据。");
+                        }
+                    }
+                    else if (IsPdfAttachment(info.Extension))
+                    {
+                        int pageCount;
+                        bool truncated;
+                        string pdfError;
+                        var pdfText = ReadPdfTextExcerpt(info.FullName, out pageCount, out truncated, out pdfError);
+                        attachment["page_count"] = pageCount;
+                        if (!string.IsNullOrWhiteSpace(pdfText))
+                        {
+                            attachment["text_excerpt"] = pdfText;
+                            attachment["note"] = truncated
+                                ? "PDF 已抽取可复制文字；内容超过上限，仅发送前 " + MaxTextAttachmentChars + " 字符。"
+                                : "PDF 已抽取可复制文字并作为上下文发送。";
+                            if (truncated)
+                            {
+                                warnings.Add(info.Name + " PDF 正文较长，已只发送前 " + MaxTextAttachmentChars + " 字符。");
+                            }
+                        }
+                        else
+                        {
+                            attachment["note"] = string.IsNullOrWhiteSpace(pdfError)
+                                ? "PDF 未抽取到可复制文字，可能是扫描件；需要 OCR 或模型文件输入后才能读取正文。"
+                                : "PDF 文本抽取失败：" + pdfError;
+                            warnings.Add(info.Name + " 未抽取到 PDF 正文，本次只发送元数据。");
+                        }
+                    }
+                    else
+                    {
+                        attachment["note"] = "二进制或未知格式附件，本次只发送元数据。";
+                    }
+
+                    payloads.Add(attachment);
+                    index++;
+                }
+                catch (System.Exception ex)
+                {
+                    warnings.Add(Path.GetFileName(path) + " 附件处理失败：" + SecretRedactor.Redact(ex.Message));
+                }
+            }
+            return payloads;
         }
 
         private string BuildDisplayTextWithAttachments(string text)
@@ -1215,19 +1316,161 @@ namespace Vcad.Plugin.UI
             }
         }
 
+        private static bool IsImageAttachment(string extension)
+        {
+            switch ((extension ?? "").ToLowerInvariant())
+            {
+                case ".png":
+                case ".jpg":
+                case ".jpeg":
+                case ".webp":
+                case ".bmp":
+                case ".tif":
+                case ".tiff":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool IsPdfAttachment(string extension)
+        {
+            return string.Equals(extension, ".pdf", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string GetAttachmentKind(string extension)
+        {
+            if (IsTextAttachment(extension)) return "text";
+            if (IsImageAttachment(extension)) return "image";
+            if (IsPdfAttachment(extension)) return "pdf";
+            if (string.Equals(extension, ".dwg", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(extension, ".dxf", StringComparison.OrdinalIgnoreCase)) return "cad";
+            return "binary";
+        }
+
+        private static string GetMimeType(string extension)
+        {
+            switch ((extension ?? "").ToLowerInvariant())
+            {
+                case ".txt":
+                case ".md":
+                case ".lsp":
+                case ".scr":
+                    return "text/plain";
+                case ".json":
+                    return "application/json";
+                case ".csv":
+                    return "text/csv";
+                case ".xml":
+                    return "application/xml";
+                case ".dxf":
+                    return "application/dxf";
+                case ".dwg":
+                    return "application/acad";
+                case ".pdf":
+                    return "application/pdf";
+                case ".png":
+                    return "image/png";
+                case ".jpg":
+                case ".jpeg":
+                    return "image/jpeg";
+                case ".webp":
+                    return "image/webp";
+                case ".bmp":
+                    return "image/bmp";
+                case ".tif":
+                case ".tiff":
+                    return "image/tiff";
+                default:
+                    return "application/octet-stream";
+            }
+        }
+
         private static string ReadAttachmentExcerpt(string path)
         {
             try
             {
-                var content = File.ReadAllText(path, Encoding.UTF8);
-                const int maxChars = 12000;
-                return content.Length <= maxChars
-                    ? content
-                    : content.Substring(0, maxChars) + "\r\n...[已截断]";
+                using (var stream = File.OpenRead(path))
+                using (var reader = new StreamReader(stream, Encoding.UTF8, true))
+                {
+                    var buffer = new char[MaxTextAttachmentChars + 1];
+                    var read = reader.Read(buffer, 0, buffer.Length);
+                    var content = new string(buffer, 0, Math.Min(read, MaxTextAttachmentChars));
+                    return read <= MaxTextAttachmentChars
+                        ? content
+                        : content + "\r\n...[已截断]";
+                }
             }
             catch (System.Exception ex)
             {
                 return "[无法读取附件内容：" + SecretRedactor.Redact(ex.Message) + "]";
+            }
+        }
+
+        private static string ReadPdfTextExcerpt(string path, out int pageCount, out bool truncated, out string error)
+        {
+            pageCount = 0;
+            truncated = false;
+            error = "";
+            try
+            {
+                var sb = new StringBuilder();
+                using (var document = PdfDocument.Open(path))
+                {
+                    pageCount = document.NumberOfPages;
+                    var pageIndex = 0;
+                    foreach (var page in document.GetPages())
+                    {
+                        pageIndex++;
+                        var pageText = page.Text;
+                        if (string.IsNullOrWhiteSpace(pageText)) continue;
+
+                        var header = "[Page " + pageIndex + "]\r\n";
+                        if (sb.Length + header.Length >= MaxTextAttachmentChars)
+                        {
+                            truncated = true;
+                            break;
+                        }
+                        sb.Append(header);
+
+                        var remaining = MaxTextAttachmentChars - sb.Length;
+                        if (pageText.Length > remaining)
+                        {
+                            sb.Append(pageText.Substring(0, remaining));
+                            truncated = true;
+                            break;
+                        }
+                        sb.AppendLine(pageText);
+                    }
+                }
+                return sb.ToString().Trim();
+            }
+            catch (System.Exception ex)
+            {
+                error = SecretRedactor.Redact(ex.Message);
+                return "";
+            }
+        }
+
+        private static string ComputeSha256(string path)
+        {
+            try
+            {
+                using (var sha = SHA256.Create())
+                using (var stream = File.OpenRead(path))
+                {
+                    var hash = sha.ComputeHash(stream);
+                    var sb = new StringBuilder(hash.Length * 2);
+                    foreach (var b in hash)
+                    {
+                        sb.Append(b.ToString("x2"));
+                    }
+                    return sb.ToString();
+                }
+            }
+            catch
+            {
+                return "";
             }
         }
 
@@ -1243,6 +1486,8 @@ namespace Vcad.Plugin.UI
 
             try
             {
+                var attachmentWarnings = new List<string>();
+                var attachmentPayloads = BuildAttachmentPayloads(attachmentWarnings);
                 var prompt = BuildPromptWithAttachments(text);
                 var displayText = BuildDisplayTextWithAttachments(text);
                 _attachedFiles.Clear();
@@ -1255,12 +1500,16 @@ namespace Vcad.Plugin.UI
                 if (_btnVoiceInput != null) _btnVoiceInput.Enabled = false;
                 _txtNaturalLanguage.Text = "";
                 AddUserCard(displayText);
+                if (attachmentWarnings.Count > 0)
+                {
+                    AddAssistantCard("附件处理", string.Join("\r\n", attachmentWarnings));
+                }
                 SetChatStatus("正在理解意图...", CadCyan);
                 System.Windows.Forms.Application.DoEvents();
 
                 var settings = AgentConfigStore.LoadActive();
                 var client = new AgentLiteClient(settings);
-                var dsl = await client.ParseAsync(prompt);
+                var dsl = await client.ParseAsync(prompt, attachmentPayloads);
 
                 if (dsl == null)
                 {

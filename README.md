@@ -17,7 +17,8 @@ voice or typed natural-language requests into a validated CAD task pipeline.
   `net8.0-windows` for AutoCAD 2025+).
 - Provides the `VCAD` command which opens a sidebar.
 - The sidebar has three tabs:
-  - **Chat** — type or dictate a CAD request, attach local context files, review
+  - **Chat** — type or dictate a CAD request, attach local context files
+    (text, DXF/LISP/script, images, PDF text/metadata, DWG metadata), review
     Intent / Plan / Preview cards, then confirm before execution.
   - **Model Settings** — configure your own LLM provider and API key. The key
      is encrypted with Windows DPAPI (CurrentUser) and stored at
@@ -85,9 +86,10 @@ AutoCAD LT is not supported (it has no managed plugin host).
 
 2. Start AutoCAD. Type `VCAD` to open the sidebar.
 
-3. Switch to the **DSL Input** tab, click **Load Sample**, then **Run DSL**.
-   You should see a 6000×4000 rectangle and a text label appear in model
-   space, with two new layers `A-WALL` and `T-TEXT`.
+3. In the **Chat** tab, enter `draw a 6000 by 4000 rectangle with a ROOM
+   label`, then submit. Review the generated Intent / Plan / Preview cards and
+   click **Confirm Execute**. You should see a 6000×4000 rectangle and a text
+   label appear in model space, with two new layers `A-WALL` and `T-TEXT`.
 
 4. Press `Ctrl+Z` once — the whole batch is undone.
 
@@ -139,6 +141,27 @@ VCAD_AGENT_API_KEY=sk-... \
 VCAD_AGENT_MODEL=deepseek-v4-flash \
 dotnet run
 ```
+
+### Attachment context
+
+The plugin does not upload whole DWG/PDF/source files by path. Attachments are
+converted into a bounded local context payload before they are sent to Agent
+Lite:
+
+- Text-like files (`.txt`, `.md`, `.json`, `.csv`, `.xml`, `.dxf`, `.lsp`,
+  `.scr`) send a text excerpt, capped at 20,000 characters per file.
+- Images (`.png`, `.jpg`, `.jpeg`, `.webp`, `.bmp`, `.tif`, `.tiff`) up to
+  4 MB per file are sent as inline vision payloads to providers that support
+  image input. The plugin keeps the total inline image budget bounded; larger
+  or overflow images send metadata only.
+- PDFs with selectable text are extracted locally and send a bounded text
+  excerpt. Scanned/image-only PDFs send metadata only and need OCR or a model
+  file-input pipeline before the model can read the report body.
+- Binary CAD files currently send metadata (`name`, type, size, SHA-256) only.
+  The project intentionally does not dump a 10+ MB binary into a prompt.
+
+Agent Lite accepts request bodies up to 8 MB, 32,000 characters of direct text,
+12 attachments per request, and 6 MB of base64 per inline attachment.
 
 ## License
 

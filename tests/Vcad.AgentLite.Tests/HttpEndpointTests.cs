@@ -61,19 +61,45 @@ public class HttpEndpointTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
-    public async Task Parse_rejects_text_over_8000_chars()
+    public async Task Parse_rejects_text_over_32000_chars()
     {
         var client = _factory.CreateClient();
-        var huge = new string('x', 8001);
+        var huge = new string('x', 32001);
         var resp = await client.PostAsJsonAsync("/parse", new { text = huge });
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task Parse_accepts_attachment_metadata()
+    {
+        var client = _factory.CreateClient();
+        var req = new
+        {
+            request_id = "req-attachment-1",
+            text = "draw from the attached appraisal report",
+            attachments = new[]
+            {
+                new
+                {
+                    id = "att-01",
+                    name = "report.pdf",
+                    kind = "pdf",
+                    mime_type = "application/pdf",
+                    size_bytes = 12_000_000,
+                    sha256 = "abc123",
+                    note = "metadata-only test",
+                },
+            },
+        };
+        var resp = await client.PostAsJsonAsync("/parse", req);
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
     }
 
     [Fact]
     public async Task Parse_rejects_oversize_body()
     {
         var client = _factory.CreateClient();
-        var huge = new string('x', 300 * 1024); // > 256 KB
+        var huge = new string('x', 9 * 1024 * 1024); // > 8 MB
         var content = new StringContent(@"{ ""text"": """ + huge + @""" }",
             Encoding.UTF8, "application/json");
         var resp = await client.PostAsync("/parse", content);

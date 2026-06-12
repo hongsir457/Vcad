@@ -43,6 +43,48 @@ public class ProviderConfigForwardingTests
         Assert.Contains("\"response_format\":{\"type\":\"json_object\"}", server.Body);
     }
 
+    [Fact]
+    public async Task Openai_provider_sends_image_attachments_as_multimodal_content()
+    {
+        Environment.SetEnvironmentVariable("VCAD_AGENT_PROVIDER", null);
+        Environment.SetEnvironmentVariable("VCAD_AGENT_API_KEY", null);
+        Environment.SetEnvironmentVariable("VCAD_AGENT_BASE_URL", null);
+        Environment.SetEnvironmentVariable("VCAD_AGENT_MODEL", null);
+
+        using var server = new OneShotHttpServer();
+        var provider = new OpenAiProvider();
+
+        var dsl = await provider.ParseAsync(new ParseRequest
+        {
+            text = "draw the object from the sketch",
+            attachments = new List<ParseAttachment>
+            {
+                new()
+                {
+                    id = "att-01",
+                    name = "sketch.png",
+                    kind = "image",
+                    mime_type = "image/png",
+                    size_bytes = 12,
+                    data_base64 = "iVBORw0KGgo=",
+                },
+            },
+            provider = new ProviderConfig
+            {
+                name = "openai",
+                base_url = server.BaseUrl,
+                model = "gpt-4o-mini",
+                api_key = "unit-test-token",
+                strict_json = true,
+            },
+        });
+
+        Assert.Equal("vcad_dsl_v1", dsl["version"]!.GetValue<string>());
+        Assert.StartsWith("POST /v1/chat/completions ", server.RequestLine);
+        Assert.Contains("\"type\":\"image_url\"", server.Body);
+        Assert.Contains("\"url\":\"data:image/png;base64,iVBORw0KGgo=\"", server.Body);
+    }
+
     private sealed class OneShotHttpServer : IDisposable
     {
         private readonly TcpListener _listener;

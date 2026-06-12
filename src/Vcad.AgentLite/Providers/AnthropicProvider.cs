@@ -21,7 +21,7 @@ public class AnthropicProvider : IProvider
         var model = string.IsNullOrEmpty(options.Model) ? "claude-3-5-haiku-latest" : options.Model;
 
         var systemPrompt = PromptLibrary.SystemPrompt();
-        var userPrompt = req.text;
+        var userContent = AttachmentPromptBuilder.BuildAnthropicUserContent(req, includeImages: true);
 
         var payload = new
         {
@@ -30,7 +30,7 @@ public class AnthropicProvider : IProvider
             system = systemPrompt,
             messages = new object[]
             {
-                new { role = "user", content = userPrompt },
+                new { role = "user", content = userContent },
             },
         };
 

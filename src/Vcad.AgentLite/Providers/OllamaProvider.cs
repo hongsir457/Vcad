@@ -20,13 +20,13 @@ public class OllamaProvider : IProvider
                 model = model,
                 stream = false,
                 format = "json",
-                messages = Messages(req.text),
+                messages = Messages(req),
             }
             : new
             {
                 model = model,
                 stream = false,
-                messages = Messages(req.text),
+                messages = Messages(req),
             };
 
         using var http = new HttpRequestMessage(HttpMethod.Post, baseUrl.TrimEnd('/') + "/api/chat");
@@ -54,12 +54,18 @@ public class OllamaProvider : IProvider
         return dsl;
     }
 
-    private static object[] Messages(string text)
+    private static object[] Messages(ParseRequest req)
     {
+        var text = AttachmentPromptBuilder.BuildUserPrompt(req);
+        var images = AttachmentPromptBuilder.ImageBase64Payloads(req);
+        object userMessage = images.Length == 0
+            ? new { role = "user", content = text }
+            : new { role = "user", content = text, images = images };
+
         return new object[]
         {
             new { role = "system", content = PromptLibrary.SystemPrompt() },
-            new { role = "user", content = text },
+            userMessage,
         };
     }
 

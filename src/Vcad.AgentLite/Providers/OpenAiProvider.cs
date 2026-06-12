@@ -28,7 +28,7 @@ public class OpenAiProvider : IProvider
             : options.Model;
 
         var systemPrompt = PromptLibrary.SystemPrompt();
-        var userPrompt = req.text;
+        var userContent = AttachmentPromptBuilder.BuildOpenAiUserContent(req, SupportsVision(options, isDeepSeek));
 
         object payload = options.StrictJson
             ? new
@@ -37,7 +37,7 @@ public class OpenAiProvider : IProvider
                 messages = new object[]
                 {
                     new { role = "system", content = systemPrompt },
-                    new { role = "user", content = userPrompt },
+                    new { role = "user", content = userContent },
                 },
                 response_format = new { type = "json_object" },
             }
@@ -47,7 +47,7 @@ public class OpenAiProvider : IProvider
                 messages = new object[]
                 {
                     new { role = "system", content = systemPrompt },
-                    new { role = "user", content = userPrompt },
+                    new { role = "user", content = userContent },
                 },
             };
 
@@ -92,5 +92,12 @@ public class OpenAiProvider : IProvider
             return trimmed + "/chat/completions";
         }
         return trimmed + (isDeepSeek ? "/chat/completions" : "/v1/chat/completions");
+    }
+
+    private static bool SupportsVision(ProviderRequestOptions options, bool isDeepSeek)
+    {
+        if (isDeepSeek) return false;
+        return string.Equals(options.Name, "openai", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(options.Name, "custom", StringComparison.OrdinalIgnoreCase);
     }
 }
