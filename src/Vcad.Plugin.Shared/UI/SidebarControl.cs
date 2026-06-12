@@ -16,12 +16,10 @@ using Autodesk.AutoCAD.ApplicationServices;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UglyToad.PdfPig;
-using Vcad.Core.Results;
 using Vcad.Plugin.Config;
 using Vcad.Plugin.Context;
 using Vcad.Plugin.Execution;
 using Vcad.Plugin.Net;
-using Vcad.Plugin.Pipeline;
 
 namespace Vcad.Plugin.UI
 {
@@ -83,11 +81,6 @@ namespace Vcad.Plugin.UI
         private Label _lblStatus;
 
         private int _chatRequests;
-        private int _usageRequests;
-        private int _usageSuccess;
-        private int _usageFailed;
-        private long _usageTotalMs;
-        private CadPipelineCandidate _pendingCandidate;
 
         private static readonly Color CadBg = Color.FromArgb(0x13, 0x13, 0x13);
         private static readonly Color CadPanel = Color.FromArgb(0x1B, 0x1B, 0x1C);
@@ -1743,8 +1736,6 @@ namespace Vcad.Plugin.UI
                 var startResult = await AgentLiteProcessManager.EnsureStartedAsync(settings).ConfigureAwait(true);
                 if (!startResult.Success)
                 {
-                    _usageRequests++;
-                    _usageFailed++;
                     RefreshUsage();
                     AddAssistantCard("CAD 助手", "我还不能处理这条请求，因为本地 Agent Lite 没有启动成功。\r\n\r\n" +
                         "没有修改当前图纸。请重新打开 VCAD 面板，或检查 `%APPDATA%\\VCAD\\logs` 后再点发送。\r\n\r\n" +
@@ -1754,60 +1745,12 @@ namespace Vcad.Plugin.UI
                 }
 
                 var client = new AgentLiteClient(settings);
-                AddAssistantCard("Agent 进度", "正在调用模型生成结构化 CAD 草案。复杂图形会先被拆成基础线段、矩形和文字；当前图纸还不会被修改。");
-                var modelSw = Stopwatch.StartNew();
-                var parseResult = await WaitForModelDraftAsync(client.ParseFullAsync(prompt, attachmentPayloads, cadState));
-                modelSw.Stop();
-                RecordModelUsage(parseResult, settings, true, modelSw.ElapsedMilliseconds);
-
-                if (parseResult != null && parseResult.NeedsClarification)
-                {
-                    AddClarificationCard(parseResult.Clarification, text);
-                    SetChatStatus("需要补充信息，等待你选择。", CadOrange);
-                    return;
-                }
-
-                if (!string.IsNullOrWhiteSpace(parseResult?.AssistantMessage))
-                {
-                    AddAssistantCard("CAD 助手", parseResult.AssistantMessage);
-                }
-
-                var dsl = parseResult?.DslJson;
-
-                if (dsl == null)
-                {
-                    _usageRequests++;
-                    _usageFailed++;
-                    AddAssistantCard("CAD 助手", "我没有拿到可执行的 CAD 绘图步骤，所以没有修改当前图纸。\r\n\r\n" +
-                        "你可以补充尺寸、位置、图层、对象风格，或者换一个支持稳定 JSON 输出的模型后重试。");
-                    SetChatStatus("模型未返回 DSL。", CadOrange);
-                    RefreshUsage();
-                    return;
-                }
-
-                SetChatStatus("正在生成 Intent / Task Plan / CAD-IR...", CadCyan);
-                AddAssistantCard("Agent 进度", "模型草案已返回。现在开始生成 Intent、Task Plan、CAD-IR，并执行安全检查。");
-                _pendingCandidate = CadAgentPipeline.Interpret(prompt, dsl, cadState);
-                AddAssistantCard("CAD 助手", BuildNaturalPreviewReply(_pendingCandidate));
-                AddPipelineCards(_pendingCandidate);
-                var trustedMode = IsTrustedExecutionMode(settings);
-                if (!_pendingCandidate.Safety.IsAllowed)
-                {
-                    SetChatStatus("没有生成可安全执行的计划。", CadOrange);
-                }
-                else if (trustedMode)
-                {
-                    SetChatStatus("完全授权模式已处理。", CadGreen);
-                }
-                else
-                {
-                    SetChatStatus("Preview 已生成，等待确认后执行。", CadOrange);
-                }
+                AddAssistantCard("Agent 进度", "正在调用模型理解意图、读取上下文并选择工具；确认前不会修改当前图纸。");
+                var sessionId = "session-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff");
+                await RunAgentToolLoopAsync(client, settings, sessionId, prompt, attachmentPayloads, cadState);
             }
             catch (System.Exception ex)
             {
-                _usageRequests++;
-                _usageFailed++;
                 RefreshUsage();
                 var msg = SecretRedactor.Redact(ex.Message);
                 AddAssistantCard("CAD 助手", BuildFriendlyFailureReply(msg));
@@ -1821,53 +1764,123 @@ namespace Vcad.Plugin.UI
             }
         }
 
-        private static int CountEntities(VcadResult result)
+        private async Task RunAgentToolLoopAsync(
+            AgentLiteClient client,
+            AgentSettings settings,
+            string sessionId,
+            string message,
+            JArray attachments,
+            JObject cadObservation)
         {
-            var count = 0;
-            foreach (var r in result.Results)
+            var toolResults = new JArray();
+            var currentMessage = message ?? "";
+            var currentAttachments = attachments ?? new JArray();
+            var currentObservation = cadObservation;
+            var anyToolFailed = false;
+
+            for (var turn = 1; turn <= 8; turn++)
             {
-                if (r.Entities != null) count += r.Entities.Count;
+                SetChatStatus(turn == 1 ? "正在调用模型..." : "正在把工具结果交给模型继续判断...", CadCyan);
+                var sw = Stopwatch.StartNew();
+                var turnResult = await WaitForAgentTurnAsync(
+                    client.AgentTurnAsync(sessionId, currentMessage, currentAttachments, currentObservation, toolResults))
+                    .ConfigureAwait(true);
+                sw.Stop();
+                RecordModelUsage(turnResult, settings, true, sw.ElapsedMilliseconds);
+
+                AddAgentTraceCards(turnResult.Trace);
+                if (!string.IsNullOrWhiteSpace(turnResult.AssistantMessage))
+                {
+                    AddAssistantCard("CAD 助手", turnResult.AssistantMessage);
+                }
+
+                if (turnResult.NeedsClarification)
+                {
+                    AddClarificationCard(turnResult.Clarification, message);
+                    SetChatStatus("需要补充信息，等待你选择。", CadOrange);
+                    return;
+                }
+
+                if (turnResult.ToolCalls == null || turnResult.ToolCalls.Count == 0)
+                {
+                    SetChatStatus(anyToolFailed ? "已完成，但有工具失败。" : "已完成。", anyToolFailed ? CadOrange : CadGreen);
+                    return;
+                }
+
+                toolResults = new JArray();
+                currentMessage = "";
+                currentAttachments = new JArray();
+                foreach (var token in turnResult.ToolCalls)
+                {
+                    var call = token as JObject;
+                    if (call == null) continue;
+                    var result = await ExecuteToolCallAsync(client, settings, call).ConfigureAwait(true);
+                    toolResults.Add(result);
+                    if (result.Value<bool?>("success") != true)
+                    {
+                        anyToolFailed = true;
+                    }
+                }
+
+                currentObservation = DrawingSnapshotCollector.CaptureActive();
             }
-            return count;
+
+            AddAssistantCard("CAD 助手", "Agent 工具循环已达到 8 轮上限。当前不再继续自动执行，避免无限循环。");
+            SetChatStatus("Agent 循环达到上限。", CadOrange);
         }
 
-        private async Task<AgentParseResult> WaitForModelDraftAsync(Task<AgentParseResult> parseTask)
+        private async Task<AgentTurnResult> WaitForAgentTurnAsync(Task<AgentTurnResult> turnTask)
         {
             var checkpoints = new[]
             {
-                new { DelayMs = 15000, Message = "模型仍在生成 CAD 草案。复杂对象会被拆成当前执行器支持的基础图元；图纸仍未修改。" },
-                new { DelayMs = 30000, Message = "还在等待模型返回结构化结果。你可以继续等待；如果经常超过 1 分钟，建议换更快模型或提高超时时间。" },
-                new { DelayMs = 45000, Message = "任务还在进行中。Agent 会在模型返回后继续生成 Intent、Task Plan、CAD-IR 和安全预览。" },
-                new { DelayMs = 90000, Message = "这是一个长任务。当前仍只是在规划阶段，没有对 AutoCAD 图纸做任何修改。" },
+                new { DelayMs = 15000, Message = "模型仍在理解意图和选择工具；确认前不会修改图纸。" },
+                new { DelayMs = 30000, Message = "任务仍在进行。复杂图纸会携带 DWG 快照、附件摘要和工具结果一起推理。" },
+                new { DelayMs = 45000, Message = "仍在等待模型返回下一步动作。长任务会分多轮观察和工具调用完成。" },
+                new { DelayMs = 90000, Message = "这是一个长任务。当前仍在 Agent 决策阶段，没有自动绕过确认。" },
             };
 
             foreach (var checkpoint in checkpoints)
             {
-                var completed = await Task.WhenAny(parseTask, Task.Delay(checkpoint.DelayMs)).ConfigureAwait(true);
-                if (completed == parseTask)
+                var completed = await Task.WhenAny(turnTask, Task.Delay(checkpoint.DelayMs)).ConfigureAwait(true);
+                if (completed == turnTask)
                 {
-                    return await parseTask.ConfigureAwait(true);
+                    return await turnTask.ConfigureAwait(true);
                 }
                 AddAssistantCard("Agent 进度", checkpoint.Message);
-                SetChatStatus("模型仍在生成 CAD 草案...", CadOrange);
+                SetChatStatus("模型仍在处理...", CadOrange);
                 System.Windows.Forms.Application.DoEvents();
             }
 
-            return await parseTask.ConfigureAwait(true);
+            return await turnTask.ConfigureAwait(true);
         }
 
-        private void RecordModelUsage(AgentParseResult result, AgentSettings settings, bool success, long elapsedMs)
+        private void RecordModelUsage(AgentTurnResult result, AgentSettings settings, bool success, long elapsedMs)
         {
             try
             {
                 if (result?.Usage == null) return;
-                var record = UsageLedgerStore.FromAgentUsage(result.Usage, result.RequestId, success, elapsedMs, settings);
+                var requestId = string.IsNullOrWhiteSpace(result.SessionId)
+                    ? "turn-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff")
+                    : result.SessionId + "-" + DateTime.UtcNow.ToString("HHmmssfff");
+                var record = UsageLedgerStore.FromAgentUsage(result.Usage, requestId, success, elapsedMs, settings);
                 UsageLedgerStore.Append(record);
                 RefreshUsage();
             }
             catch
             {
                 // Usage accounting is informational and must not block the CAD flow.
+            }
+        }
+
+        private void AddAgentTraceCards(JArray trace)
+        {
+            if (trace == null) return;
+            foreach (var item in trace.OfType<JObject>())
+            {
+                var title = item.Value<string>("title");
+                var summary = item.Value<string>("summary");
+                if (string.IsNullOrWhiteSpace(title) && string.IsNullOrWhiteSpace(summary)) continue;
+                AddAssistantCard(string.IsNullOrWhiteSpace(title) ? "Agent 步骤" : title, summary ?? "");
             }
         }
 
@@ -1952,15 +1965,6 @@ namespace Vcad.Plugin.UI
             _chatList.ScrollControlIntoView(card);
         }
 
-        private static string FirstError(VcadResult result)
-        {
-            if (result.Errors != null && result.Errors.Count > 0)
-            {
-                return result.Errors[0].Message;
-            }
-            return "请检查模型输出或图形环境。";
-        }
-
         private static string ShortStatus(string message)
         {
             if (string.IsNullOrWhiteSpace(message)) return "就绪";
@@ -1978,7 +1982,7 @@ namespace Vcad.Plugin.UI
         {
             if (cadState == null)
             {
-                return "我会先读取当前图纸上下文，再把你的要求转换成可预览的 CAD 操作。";
+                return "我会先读取当前图纸上下文，再由 Agent 选择合适工具执行。";
             }
 
             var summary = cadState["summary"] as JObject;
@@ -1995,7 +1999,7 @@ namespace Vcad.Plugin.UI
             {
                 text += "，其中块引用 " + blockRefs + " 个，块内展开图元 " + exploded + " 个";
             }
-            text += "。\r\n\r\n接下来我会把你的自然语言请求转换成受控 CAD 操作，并先给出预览，确认前不会修改图纸。";
+            text += "。\r\n\r\n接下来我会把你的自然语言请求交给 Agent 处理。写图工具在确认模式下会先询问你，确认前不会修改图纸。";
             if (truncated)
             {
                 text += "\r\n\r\n注意：当前图纸较大，读取上下文时已截断。";
@@ -2007,56 +2011,10 @@ namespace Vcad.Plugin.UI
             return text;
         }
 
-        private static string BuildNaturalPreviewReply(CadPipelineCandidate candidate)
-        {
-            if (candidate == null)
-            {
-                return "我没有生成可预览的 CAD 操作。";
-            }
-
-            var impact = candidate.Preview?["impact"];
-            var operation = candidate.Preview?["operation"];
-            var action = operation?["action"]?.Value<string>() ?? candidate.TaskType;
-            var count = impact?["matched_count"]?.Value<int>() ?? 0;
-            var layer = impact?["layer"]?.Value<string>() ?? "0";
-            var entityType = impact?["entity_type"]?.Value<string>() ?? "对象";
-
-            if (candidate.Safety == null || !candidate.Safety.IsAllowed)
-            {
-                var blocks = candidate.Safety == null || candidate.Safety.Blocks.Count == 0
-                    ? "没有生成满足安全检查的 CAD 命令。"
-                    : string.Join("；", candidate.Safety.Blocks);
-                return "我理解了你的请求，但这次没有生成可安全执行的 CAD 操作，所以没有修改当前图纸。\r\n\r\n原因：" +
-                       blocks + "\r\n\r\n你可以把需求拆得更具体一些，例如说明尺寸、位置、图层、由哪些线段或文字组成。";
-            }
-
-            var reply = "我理解你要" + DescribeCadAction(action) + "。我已经生成了执行预览：预计影响 " +
-                        count + " 个 " + entityType + "，目标图层是 " + layer + "。";
-            if (candidate.RequiresSecondConfirmation)
-            {
-                reply += "\r\n\r\n这个操作风险较高，需要二次确认；确认前不会修改图纸。";
-            }
-            else if (candidate.RequiresConfirmation)
-            {
-                reply += "\r\n\r\n请先确认预览，确认后我再执行；确认前不会修改图纸。";
-            }
-            else
-            {
-                reply += "\r\n\r\n这是低风险操作，我会直接执行并返回结果。";
-            }
-            return reply;
-        }
-
         private static string BuildFriendlyFailureReply(string technicalMessage)
         {
             var msg = technicalMessage ?? "";
             var lower = msg.ToLowerInvariant();
-            if (lower.Contains("e_schema_invalid") || lower.Contains("missing or empty") || lower.Contains("commands"))
-            {
-                return "我理解了你的请求，但模型没有返回有效的 CAD 命令列表，所以没有修改当前图纸。\r\n\r\n" +
-                       "这通常是因为请求太开放，或当前执行器还不能把复杂对象自动拆成线段、文字等基础图元。你可以补充尺寸、位置和构成方式后重试。\r\n\r\n" +
-                       "技术原因：" + msg;
-            }
             if (lower.Contains("assistant/ui reply") || lower.Contains("conversational replies"))
             {
                 return "模型返回的是对话说明文字，而不是应该写入图纸的标注内容，所以我已阻止执行。\r\n\r\n" +
@@ -2073,16 +2031,142 @@ namespace Vcad.Plugin.UI
             return "我这次没有完成请求，也没有修改当前图纸。\r\n\r\n技术原因：" + msg;
         }
 
-        private static string DescribeCadAction(string action)
+        private async Task<JObject> ExecuteToolCallAsync(AgentLiteClient client, AgentSettings settings, JObject call)
         {
-            if (string.Equals(action, "copy_objects", StringComparison.OrdinalIgnoreCase)) return "绘制这些对象";
-            if (string.Equals(action, "query_objects", StringComparison.OrdinalIgnoreCase)) return "查询图纸对象";
-            if (string.Equals(action, "count_objects", StringComparison.OrdinalIgnoreCase)) return "统计图纸对象";
-            if (string.Equals(action, "highlight_objects", StringComparison.OrdinalIgnoreCase)) return "高亮图纸对象";
-            if (string.Equals(action, "set_property", StringComparison.OrdinalIgnoreCase)) return "修改对象属性";
-            if (string.Equals(action, "move_objects", StringComparison.OrdinalIgnoreCase)) return "移动对象";
-            if (string.Equals(action, "delete_objects", StringComparison.OrdinalIgnoreCase)) return "删除对象";
-            return "执行 CAD 操作";
+            var callId = call.Value<string>("id");
+            if (string.IsNullOrWhiteSpace(callId)) callId = "call-" + DateTime.UtcNow.ToString("HHmmssfff");
+            var name = call.Value<string>("name") ?? "";
+            var args = call["args"] as JObject ?? new JObject();
+            AddAssistantCard("工具调用", FormatToolCall(name, args));
+
+            var writeTool = CadToolHost.IsWriteTool(name) || IsAgentLiteWriteTool(name);
+            if (writeTool && !IsTrustedExecutionMode(settings))
+            {
+                var confirmed = await AddToolConfirmCard(callId, name, args).ConfigureAwait(true);
+                if (!confirmed)
+                {
+                    AddAssistantCard("CAD 助手", "已取消这次工具调用，没有修改当前图纸。");
+                    SetChatStatus("工具调用已取消。", CadMuted);
+                    return new JObject
+                    {
+                        ["id"] = callId,
+                        ["name"] = name,
+                        ["success"] = false,
+                        ["error"] = "User cancelled the tool call.",
+                    };
+                }
+            }
+
+            if (CadToolHost.IsCadTool(name))
+            {
+                SetChatStatus(CadToolHost.IsWriteTool(name) ? "正在执行 AutoCAD 工具..." : "正在读取 DWG 上下文...", CadCyan);
+                System.Windows.Forms.Application.DoEvents();
+                var result = CadToolHost.Execute(callId, name, args);
+                AddAssistantCard(result.Success ? "工具结果" : "工具失败", FormatCadToolResult(result));
+                SetChatStatus(result.Success ? "工具完成，用时 " + result.ElapsedMs + " ms。" : "工具失败：" + result.Error,
+                    result.Success ? CadGreen : CadOrange);
+                return result.ToAgentToolResult();
+            }
+
+            try
+            {
+                SetChatStatus("正在执行 AgentLite 工具...", CadCyan);
+                System.Windows.Forms.Application.DoEvents();
+                var sw = Stopwatch.StartNew();
+                var remote = await client.RunToolAsync(name, args).ConfigureAwait(true);
+                sw.Stop();
+                var success = remote.Value<bool?>("success") ?? false;
+                AddAssistantCard(success ? "工具结果" : "工具失败", FormatRemoteToolResult(name, remote, sw.ElapsedMilliseconds));
+                SetChatStatus(success ? "工具完成，用时 " + sw.ElapsedMilliseconds + " ms。" : "工具失败。", success ? CadGreen : CadOrange);
+                return new JObject
+                {
+                    ["id"] = callId,
+                    ["name"] = name,
+                    ["success"] = success,
+                    ["result"] = remote,
+                    ["error"] = success ? null : (remote.Value<string>("message") ?? remote.Value<string>("error")),
+                };
+            }
+            catch (System.Exception ex)
+            {
+                var msg = SecretRedactor.Redact(ex.Message);
+                AddAssistantCard("工具失败", msg);
+                SetChatStatus("工具失败：" + msg, CadOrange);
+                return new JObject
+                {
+                    ["id"] = callId,
+                    ["name"] = name,
+                    ["success"] = false,
+                    ["error"] = msg,
+                };
+            }
+        }
+
+        private Task<bool> AddToolConfirmCard(string callId, string name, JObject args)
+        {
+            var tcs = new TaskCompletionSource<bool>();
+            if (_chatList == null)
+            {
+                tcs.SetResult(false);
+                return tcs.Task;
+            }
+
+            var width = GetChatCardWidth();
+            var card = new Panel
+            {
+                Width = width,
+                BackColor = CadPanel,
+                Margin = new Padding(0, 0, 0, 10),
+                Padding = new Padding(8),
+                Tag = "confirm-tool",
+            };
+            card.Paint += (s, e) =>
+            {
+                using (var pen = new Pen(CadOrange))
+                {
+                    e.Graphics.DrawRectangle(pen, 0, 0, card.Width - 1, card.Height - 1);
+                }
+            };
+
+            var label = new Label
+            {
+                Text = "确认执行工具\r\n" + FormatToolCall(name, args),
+                Left = 10,
+                Top = 8,
+                Width = width - 20,
+                ForeColor = CadText,
+                Font = UiFontBold,
+                AutoSize = false,
+            };
+            var preferred = label.GetPreferredSize(new Size(width - 20, 0));
+            label.Height = Math.Max(52, preferred.Height + 4);
+            var buttonTop = label.Bottom + 10;
+
+            var confirm = new Button { Text = "确认执行", Left = 10, Top = buttonTop, Width = 110, Height = 30 };
+            var cancel = new Button { Text = "取消", Left = 130, Top = buttonTop, Width = 72, Height = 30 };
+            StylePrimaryButton(confirm);
+            StyleGhostButton(cancel);
+            confirm.Click += (s, e) =>
+            {
+                confirm.Enabled = false;
+                cancel.Enabled = false;
+                AddAssistantCard("CAD 助手", "已确认工具调用：" + name);
+                tcs.TrySetResult(true);
+            };
+            cancel.Click += (s, e) =>
+            {
+                confirm.Enabled = false;
+                cancel.Enabled = false;
+                tcs.TrySetResult(false);
+            };
+
+            card.Height = buttonTop + 40;
+            card.Controls.Add(label);
+            card.Controls.Add(confirm);
+            card.Controls.Add(cancel);
+            _chatList.Controls.Add(card);
+            _chatList.ScrollControlIntoView(card);
+            return tcs.Task;
         }
 
         private void SetChatStatus(string message, Color color)
@@ -2103,200 +2187,48 @@ namespace Vcad.Plugin.UI
             }
         }
 
-        private void AddPipelineCards(CadPipelineCandidate candidate)
+        private static bool IsAgentLiteWriteTool(string name)
         {
-            AddAssistantCard("理解结果", CadAgentPipeline.FormatIntent(candidate));
-            AddAssistantCard("执行计划", CadAgentPipeline.FormatPlan(candidate));
-            AddAssistantCard("执行预览", CadAgentPipeline.FormatPreview(candidate));
-            if (candidate.Safety.IsAllowed)
-            {
-                var settings = AgentConfigStore.LoadActive();
-                NormalizeRuntimeSettings(settings);
-                if (IsTrustedExecutionMode(settings))
-                {
-                    AddAssistantCard("授权模式", "当前是完全授权自动执行模式。Safety 已放行，我会自动完成确认并执行；被 Safety 拦截的任务仍不会执行。");
-                    AuthorizeCandidateForTrustedMode(candidate);
-                    ExecuteConfirmedCandidate(candidate);
-                }
-                else if (candidate.RequiresConfirmation)
-                {
-                    AddConfirmCard(candidate);
-                }
-                else
-                {
-                    AddLowRiskExecuteCard(candidate);
-                }
-            }
-            else
-            {
-                AddAssistantCard("安全检查", "已阻止执行。\r\n" + string.Join("\r\n", candidate.Safety.Blocks));
-            }
+            return string.Equals(name, "workspace.write_file", StringComparison.OrdinalIgnoreCase);
         }
 
-        private static void AuthorizeCandidateForTrustedMode(CadPipelineCandidate candidate)
+        private static string FormatToolCall(string name, JObject args)
         {
-            if (candidate == null || candidate.Safety == null || !candidate.Safety.IsAllowed) return;
-            if (candidate.RequiresConfirmation)
-            {
-                CadAgentPipeline.Confirm(candidate);
-            }
-            if (candidate.RequiresSecondConfirmation)
-            {
-                CadAgentPipeline.SecondConfirm(candidate);
-            }
+            var json = args == null ? "{}" : args.ToString(Formatting.None);
+            return name + "\r\n" + TruncateForCard(json, 900);
         }
 
-        private void AddLowRiskExecuteCard(CadPipelineCandidate candidate)
+        private static string FormatCadToolResult(CadToolExecutionResult result)
         {
-            if (_chatList == null) return;
-            AddAssistantCard("CAD 助手", "这是低风险任务，不需要确认。我会直接执行并返回结果。");
-            ExecuteConfirmedCandidate(candidate);
-        }
-
-        private void AddConfirmCard(CadPipelineCandidate candidate)
-        {
-            AddConfirmCard(candidate, false);
-        }
-
-        private void AddConfirmCard(CadPipelineCandidate candidate, bool secondStep)
-        {
-            if (_chatList == null) return;
-            var width = GetChatCardWidth();
-            var card = new Panel
+            if (result == null) return "无结果。";
+            if (result.Data != null && result.Data["summary_text"] != null)
             {
-                Width = width,
-                Height = secondStep ? 132 : 116,
-                BackColor = CadPanel,
-                Margin = new Padding(0, 0, 0, 10),
-                Padding = new Padding(8),
-                Tag = secondStep ? "confirm-second" : "confirm",
-            };
-            card.Paint += (s, e) =>
-            {
-                using (var pen = new Pen(CadOrange))
-                {
-                    e.Graphics.DrawRectangle(pen, 0, 0, card.Width - 1, card.Height - 1);
-                }
-            };
-            var label = new Label
-            {
-                Text = secondStep
-                    ? "Second Confirm Card\r\n高风险 CAD-IR 需要二次确认。确认 token 绑定 task_id、ir_hash 和过期时间。"
-                    : (candidate.RequiresSecondConfirmation
-                        ? "Confirm Card\r\n此任务被标记为 high risk。第一次确认只签发 confirm_token，不会改图。"
-                        : "Confirm Card\r\n确认后签发 confirm_token，再由 AdapterCommand(mode=execute) 执行。"),
-                Left = 10,
-                Top = 8,
-                Width = width - 20,
-                Height = secondStep ? 64 : 48,
-                ForeColor = CadText,
-                Font = UiFontBold,
-            };
-            var preferred = label.GetPreferredSize(new Size(width - 20, 0));
-            label.Height = Math.Max(secondStep ? 64 : 48, preferred.Height + 4);
-            var buttonTop = label.Top + label.Height + 10;
-            card.Height = buttonTop + 38;
-            var cancelWidth = 72;
-            var confirmWidth = Math.Max(96, Math.Min(secondStep ? 124 : 110, width - cancelWidth - 30));
-            var confirm = new Button
-            {
-                Text = secondStep ? "二次确认执行" : (candidate.RequiresSecondConfirmation ? "第一次确认" : "确认执行"),
-                Left = 10,
-                Top = buttonTop,
-                Width = confirmWidth,
-                Height = 30,
-            };
-            var cancel = new Button
-            {
-                Text = "取消",
-                Left = confirm.Left + confirm.Width + 10,
-                Top = buttonTop,
-                Width = cancelWidth,
-                Height = 30,
-            };
-            StylePrimaryButton(confirm);
-            StyleGhostButton(cancel);
-            confirm.Click += (s, e) =>
-            {
-                confirm.Enabled = false;
-                cancel.Enabled = false;
-                if (candidate.RequiresSecondConfirmation && !secondStep)
-                {
-                    CadAgentPipeline.Confirm(candidate);
-                    AddConfirmCard(candidate, true);
-                    SetChatStatus("已完成第一次确认，等待二次确认。", CadOrange);
-                }
-                else
-                {
-                    if (secondStep)
-                    {
-                        CadAgentPipeline.SecondConfirm(candidate);
-                    }
-                    else
-                    {
-                        CadAgentPipeline.Confirm(candidate);
-                    }
-                    ExecuteConfirmedCandidate(candidate);
-                }
-            };
-            cancel.Click += (s, e) =>
-            {
-                CadAgentPipeline.Cancel(candidate);
-                confirm.Enabled = false;
-                cancel.Enabled = false;
-                AddAssistantCard("CAD 助手", "已取消这次任务，没有修改当前图纸。");
-                SetChatStatus("任务已取消。", CadMuted);
-            };
-            card.Controls.Add(label);
-            card.Controls.Add(confirm);
-            card.Controls.Add(cancel);
-            _chatList.Controls.Add(card);
-            _chatList.ScrollControlIntoView(card);
-        }
-
-        private void ExecuteConfirmedCandidate(CadPipelineCandidate candidate)
-        {
-            var sw = Stopwatch.StartNew();
-            try
-            {
-                candidate.Confirmed = true;
-                SetChatStatus("Adapter 正在转换 CAD-IR...", CadCyan);
-                System.Windows.Forms.Application.DoEvents();
-
-                var idempotencyKey = CadAgentPipeline.GetDefaultIdempotencyKey(candidate);
-                var adapterCommand = CadAgentPipeline.AdaptToAdapterCommand(candidate, "execute", idempotencyKey);
-                var dsl = adapterCommand.Value<string>("command");
-                SetChatStatus("Executor 正在执行 Adapter 输出...", CadCyan);
-                System.Windows.Forms.Application.DoEvents();
-                var result = DslExecutor.Execute(dsl);
-                sw.Stop();
-
-                _usageRequests++;
-                _usageTotalMs += sw.ElapsedMilliseconds;
-                if (result.Success) _usageSuccess++; else _usageFailed++;
-                RefreshUsage();
-
-                var cadResult = CadAgentPipeline.RecordExecutionResult(candidate, result, sw.ElapsedMilliseconds, idempotencyKey);
-                var message = result.Success
-                    ? "已完成绘图，并写入当前图纸。\r\n\r\n命令：" + result.Summary.Succeeded +
-                      "\r\n对象：" + CountEntities(result) +
-                      "\r\n用时：" + sw.ElapsedMilliseconds + " ms"
-                    : "执行失败，没有完成这次修改。\r\n\r\n失败命令：" + result.Summary.Failed +
-                      "\r\n原因：" + FirstError(result);
-                AddAssistantCard("CAD 助手", message);
-                SetChatStatus(result.Success ? "完成，用时 " + sw.ElapsedMilliseconds + " ms。" : "执行失败。", result.Success ? CadGreen : CadOrange);
+                return result.Data.Value<string>("summary_text");
             }
-            catch (System.Exception ex)
+            var status = result.Success ? "成功" : "失败";
+            var text = status + "，用时 " + result.ElapsedMs + " ms。";
+            if (!string.IsNullOrWhiteSpace(result.Error))
             {
-                sw.Stop();
-                _usageRequests++;
-                _usageFailed++;
-                _usageTotalMs += sw.ElapsedMilliseconds;
-                RefreshUsage();
-                var msg = SecretRedactor.Redact(ex.Message);
-                AddAssistantCard("CAD 助手", BuildFriendlyFailureReply(msg));
-                SetChatStatus("执行失败：" + msg, CadOrange);
+                text += "\r\n原因：" + result.Error;
             }
+            if (result.Data != null)
+            {
+                text += "\r\n" + TruncateForCard(result.Data.ToString(Formatting.Indented), 900);
+            }
+            return text;
+        }
+
+        private static string FormatRemoteToolResult(string name, JObject result, long elapsedMs)
+        {
+            var success = result.Value<bool?>("success") ?? false;
+            return (success ? "成功" : "失败") + "，用时 " + elapsedMs + " ms。\r\n" +
+                   name + "\r\n" + TruncateForCard(result.ToString(Formatting.Indented), 1200);
+        }
+
+        private static string TruncateForCard(string text, int max)
+        {
+            if (string.IsNullOrEmpty(text) || text.Length <= max) return text ?? "";
+            return text.Substring(0, max) + "\r\n...[已截断]";
         }
 
         // --- Settings tab actions ---
@@ -2304,9 +2236,9 @@ namespace Vcad.Plugin.UI
         private static readonly Dictionary<string, (string BaseUrl, string Model)> ProviderDefaults =
             new Dictionary<string, (string, string)>(StringComparer.OrdinalIgnoreCase)
             {
-                { "openai",    ("https://api.openai.com", "gpt-5") },
+                { "openai",    ("https://api.openai.com", "gpt-5.5") },
                 { "deepseek",  ("https://api.deepseek.com", "deepseek-v4-flash") },
-                { "anthropic", ("https://api.anthropic.com", "claude-sonnet-4-6") },
+                { "anthropic", ("https://api.anthropic.com", "claude-fable-5") },
                 { "gemini",    ("https://generativelanguage.googleapis.com", "gemini-3.5-flash") },
                 { "ollama",    ("http://localhost:11434", "llama3.2") },
                 { "custom",    ("", "") },
@@ -2626,46 +2558,4 @@ namespace Vcad.Plugin.UI
         }
     }
 
-    internal static class SampleDsl
-    {
-        public const string RectangleAndText = @"{
-  ""version"": ""vcad_dsl_v1"",
-  ""unit"": ""mm"",
-  ""coordinate_system"": ""WCS"",
-  ""commands"": [
-    {
-      ""type"": ""create_layer"",
-      ""id"": ""LAYER-A-WALL"",
-      ""name"": ""A-WALL"",
-      ""color"": 7
-    },
-    {
-      ""type"": ""create_layer"",
-      ""id"": ""LAYER-T-TEXT"",
-      ""name"": ""T-TEXT"",
-      ""color"": 2
-    },
-    {
-      ""type"": ""draw_rectangle"",
-      ""id"": ""RECT-001"",
-      ""origin"": [0, 0],
-      ""width"": 6000,
-      ""height"": 4000,
-      ""rotation"": 0,
-      ""layer"": ""A-WALL""
-    },
-    {
-      ""type"": ""draw_text"",
-      ""id"": ""TEXT-001"",
-      ""text"": ""VCAD DEMO"",
-      ""position"": [1000, 500],
-      ""height"": 250,
-      ""rotation"": 0,
-      ""alignment"": ""left"",
-      ""text_style"": ""STANDARD"",
-      ""layer"": ""T-TEXT""
-    }
-  ]
-}";
-    }
 }

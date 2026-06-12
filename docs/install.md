@@ -1,78 +1,96 @@
 # Installing VCAD
 
-## 1. Pick the right bundle
+## 1. Pick The Bundle
 
-| Your AutoCAD | Bundle |
+| AutoCAD | Bundle |
 |---|---|
-| AutoCAD 2017 – 2024 | `VCAD-Acad2017.bundle` |
+| AutoCAD 2017-2024 | `VCAD-Acad2017.bundle` |
 | AutoCAD 2025+ | `VCAD-Acad2025.bundle` |
 
-AutoCAD LT is not supported.
+AutoCAD LT is not supported because it does not host managed plugins.
 
-## 2. Copy the bundle to AutoCAD's plugin folder
+## 2. Build The Bundle
 
-Pick **one** of the following. Both are in AutoCAD's default `TRUSTEDPATHS`:
+For this machine, AutoCAD 2017 is installed at:
 
-- Current user (no admin rights needed):
-  ```
-  %APPDATA%\Autodesk\ApplicationPlugins\VCAD-AcadXXXX.bundle\
-  ```
-- All users (admin rights):
-  ```
-  %PROGRAMDATA%\Autodesk\ApplicationPlugins\VCAD-AcadXXXX.bundle\
-  ```
-
-After copying, the folder should look like:
-
+```powershell
+$env:AutoCAD2017_Managed = "D:\autocad2017\AutoCAD 2017"
 ```
+
+Build and populate the bundle:
+
+```powershell
+cd F:\Vcad
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\pack-bundle.ps1 -Target acad2017
+```
+
+Expected layout:
+
+```text
 VCAD-Acad2017.bundle\
   PackageContents.xml
   Contents\
     Vcad.Plugin.Acad2017.dll
-    Vcad.Core.dll
     Newtonsoft.Json.dll
+    UglyToad.PdfPig.dll
+    AgentLite\
+      Vcad.AgentLite.exe
 ```
 
-## 3. Restart AutoCAD
+## 3. Copy To AutoCAD's Plugin Folder
 
-Start AutoCAD. You should see this in the command line on first load:
-
-```
-VCAD plugin loaded. Type VCAD to open the sidebar.
-```
-
-Type `VCAD` and the sidebar opens.
-
-## 4. AutoCAD 2017 only — install .NET Framework 4.7
-
-AutoCAD 2017 ships with .NET 4.6. The plugin requires .NET 4.7. Almost all
-Windows machines already have 4.7 or later via Windows Update; if not,
-install the runtime from the Microsoft download center.
-
-You can verify with PowerShell:
+Current user install:
 
 ```powershell
-(Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full').Release -ge 460798
+$dest = "$env:APPDATA\Autodesk\ApplicationPlugins\VCAD-Acad2017.bundle"
+Get-Process -Name Vcad.AgentLite -ErrorAction SilentlyContinue |
+  Where-Object { $_.Path -like "$dest*" } |
+  Stop-Process -Force
+if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+Copy-Item bundle\Acad2017 $dest -Recurse -Force
 ```
 
-`True` means .NET 4.7+ is installed.
+All users install, with admin rights:
 
-## 5. AutoCAD 2025+ only — install .NET 8 Desktop Runtime
-
-AutoCAD 2025 itself ships with the .NET 8 runtime, so this is usually
-automatic. If the plugin still fails to load, install the **.NET Desktop
-Runtime 8.x (x64)** from Microsoft.
-
-## Loading via NETLOAD (developer workflow)
-
-For development iterations you can bypass the bundle:
-
+```text
+%PROGRAMDATA%\Autodesk\ApplicationPlugins\VCAD-Acad2017.bundle
 ```
+
+## 4. Start AutoCAD
+
+Start AutoCAD and type:
+
+```text
+VCAD
+```
+
+The sidebar opens with **对话 / 配置 / 用量** tabs. The plugin starts bundled
+AgentLite automatically from `Contents\AgentLite`.
+
+## 5. Configure A Model
+
+Open **配置**:
+
+1. Pick provider and model.
+2. Enter API Base URL and API key.
+3. Choose execution mode:
+   - `确认后执行`
+   - `完全授权自动执行`
+4. Click **保存**.
+5. Click **测试连接**.
+
+The API key is encrypted with Windows DPAPI and stored under
+`%APPDATA%\VCAD\agent.config.json`.
+
+## Developer NETLOAD Workflow
+
+For fast local iterations:
+
+```text
 NETLOAD
 ```
 
-and pick `Vcad.Plugin.Acad2017.dll` or `Vcad.Plugin.Acad2025.dll` from your
-build output. Then type `VCAD`.
+Pick `Vcad.Plugin.Acad2017.dll` from the build output, then type `VCAD`.
 
-If `NETLOAD` produces no output and `VCAD` is "unknown command", see
+If `NETLOAD` produces no output and `VCAD` is unknown, see
 [troubleshooting.md](troubleshooting.md).

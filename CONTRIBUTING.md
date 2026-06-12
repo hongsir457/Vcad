@@ -1,76 +1,64 @@
 # Contributing to VCAD
 
-Thanks for taking the time to contribute. VCAD is an open-source AutoCAD
-plugin framework licensed under Apache-2.0; by submitting a contribution
-you agree it is licensed the same way.
+VCAD is an open-source AutoCAD plugin framework licensed under Apache-2.0. By
+submitting a contribution, you agree it is licensed the same way.
 
-## What we want
+## What We Want
 
-- Bug fixes for existing whitelisted commands.
-- Better error messages and diagnostics.
-- New AutoCAD version compatibility reports (we keep a matrix; see
-  `docs/troubleshooting.md`).
-- Additional sample DSL JSON in `samples/commands/`.
-- New language pairs for the model-settings UI labels.
+- Better AutoCAD tool-host behavior.
+- Better AgentLite turn handling and provider diagnostics.
+- Safer CAD write tools with focused tests.
+- Better file/PDF/image context extraction.
+- AutoCAD version compatibility reports.
+- UI improvements for the **对话 / 配置 / 用量** panel.
 
-## What we will say no to (for now)
+## What We Will Say No To For Now
 
-- Login / billing / cloud calls — see [the v0.5 blueprint](docs/vcad_open_blueprint_v0_5.html).
-- Anything that uploads DWG, prompts, or logs by default.
-- Anything that adds a built-in default API key or default remote endpoint.
-- New whitelisted commands without an accompanying RFC (file an issue
-  using the **Command Request** template first).
+- Login, billing, hosted backend, or bundled API keys.
+- Default uploading of DWG files, prompts, logs, or attachments.
+- Arbitrary script execution returned by a model.
+- CAD write tools without parameter validation and confirmation behavior.
 
-## Developer setup
+## Developer Setup
 
-1. Install the .NET SDK 8.x.
-2. Clone the repo.
-3. Restore and build the parts that don't need AutoCAD:
-
-   ```bash
-   dotnet build src/Vcad.Core/Vcad.Core.csproj
-   dotnet build src/Vcad.AgentLite/Vcad.AgentLite.csproj
-   dotnet test  tests/Vcad.Core.Tests/Vcad.Core.Tests.csproj
-   dotnet test  tests/Vcad.AgentLite.Tests/Vcad.AgentLite.Tests.csproj
-   ```
-
-4. On Windows, with AutoCAD installed, set the AutoCAD managed-DLL paths
-   in your environment, then build the plugin csprojs:
-
-   ```powershell
-   $env:AutoCAD2017_Managed = "C:\Program Files\Autodesk\AutoCAD 2017"
-   $env:AutoCAD2025_Managed = "C:\Program Files\Autodesk\AutoCAD 2025"
-   dotnet build src\Vcad.Plugin.Acad2017\Vcad.Plugin.Acad2017.csproj
-   dotnet build src\Vcad.Plugin.Acad2025\Vcad.Plugin.Acad2025.csproj
-   ```
-
-> Never commit `AcMgd.dll`, `AcDbMgd.dll`, `AcCoreMgd.dll`. CI rejects PRs
-> that include them.
-
-## Pull request checklist
-
-- [ ] Code builds on `Vcad.Core` and on at least one of the plugin csprojs.
-- [ ] `dotnet test` is green for both test projects.
-- [ ] The release-check script (`tools/check-release.sh`) passes.
-- [ ] No new third-party NuGet without a note on why.
-- [ ] No secrets, no real API keys, no internal endpoints anywhere in the
-      diff (CI also scans for these).
-- [ ] If you added a new command, you also added a JSON schema entry,
-      a sample, and a test.
-
-## Commit style
-
-Conventional Commits is preferred but not enforced:
-
-```
-feat: add draw_polyline command
-fix: handle empty layer name correctly
-docs: clarify SECURELOAD instructions
+```powershell
+dotnet build src\Vcad.AgentLite\Vcad.AgentLite.csproj -c Release
+dotnet test tests\Vcad.AgentLite.Tests\Vcad.AgentLite.Tests.csproj -c Release
 ```
 
-## Reviews
+For plugin builds on this machine:
 
-Maintainers will look at PRs as time allows. Drive-by reviews from other
-contributors are welcome — please keep them technical and respectful.
+```powershell
+$env:AutoCAD2017_Managed = "D:\autocad2017\AutoCAD 2017"
+dotnet build src\Vcad.Plugin.Acad2017\Vcad.Plugin.Acad2017.csproj -c Release
+```
 
-See [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+Compile-only fallback:
+
+```powershell
+$env:VCAD_STUB_AUTODESK = "true"
+dotnet build src\Vcad.Plugin.Acad2017\Vcad.Plugin.Acad2017.csproj -c Release
+```
+
+Never commit `AcMgd.dll`, `AcDbMgd.dll`, or `AcCoreMgd.dll`.
+
+## Pull Request Checklist
+
+- [ ] AgentLite tests pass.
+- [ ] At least one plugin target builds.
+- [ ] `tools/check-release.ps1` passes.
+- [ ] No real API keys or internal endpoints.
+- [ ] New CAD write tools validate input and respect execution mode.
+- [ ] Docs match changed behavior.
+
+## Commit Style
+
+Conventional Commits are preferred but not required:
+
+```text
+feat: add cad draw arc tool
+fix: keep assistant replies out of drawing text
+docs: clarify AutoCAD 2017 install path
+```
+
+See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

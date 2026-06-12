@@ -2,192 +2,180 @@
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-VCAD means **VoiceCAD**: an open-source AutoCAD plugin framework for turning
-voice or typed natural-language requests into a validated CAD task pipeline.
+VCAD means **VoiceCAD**: an experimental AutoCAD side panel that lets you use
+voice or typed natural language to drive a local CAD agent.
 
 **Status:** experimental MVP (v0.1.0).
 
-> **First time on Windows + AutoCAD 2017?** Follow
-> [`docs/windows-verify.md`](docs/windows-verify.md) — clone → build →
-> install bundle → see a rectangle drawn in ~10 minutes.
+## What It Does
 
-## What it does
+- Loads into AutoCAD 2017+ as a `.NET` plugin.
+- Provides the `VCAD` command, which opens a docked sidebar.
+- Uses three tabs: **对话**, **配置**, **用量**.
+- Starts the bundled `Vcad.AgentLite` local service automatically when the panel
+  opens.
+- Calls your configured model provider through AgentLite. You bring your own API
+  key; VCAD does not ship a key or a hosted backend.
+- Runs a tool loop:
 
-- Loads into AutoCAD 2017+ as a `.NET` plugin (`net47` for AutoCAD 2017–2024,
-  `net8.0-windows` for AutoCAD 2025+).
-- Provides the `VCAD` command which opens a sidebar.
-- The sidebar has three tabs:
-  - **Chat** — type or dictate a CAD request, attach local context files
-    (text, DXF/LISP/script, images, PDF text/metadata, DWG metadata), review
-    Intent / Plan / Preview cards, then confirm before execution.
-  - **Model Settings** — configure your own LLM provider and API key. The key
-     is encrypted with Windows DPAPI (CurrentUser) and stored at
-     `%APPDATA%\VCAD\agent.config.json`. Natural-language parse requests send
-     the active profile's provider, model, base URL, and API key to the local
-     Agent Lite service on `127.0.0.1`.
-  - **Usage** — view local session request and success/failure counters.
-- Voice input uses Windows local speech recognition when available; audio is
-  not uploaded by the plugin.
-- Before model parsing, the plugin captures a read-only in-memory snapshot of
-  the open DWG: layers, top-level entities, block references, and entities
-  produced by exploding block references in memory. This gives the agent drawing
-  state for intent understanding and planning without granting execution
-  access.
-- Execution goes through the CAD agent pipeline: Intent → Task Plan → CAD-IR →
-  Validator/Risk Policy → Preview/Confirm → AdapterCommand → Result/Audit.
-- AutoCAD execution still has one controlled route: CAD-IR is adapted into the
-  VCAD DSL whitelist, then the local AutoCAD .NET executor runs it after
-  Preview/Confirm. The model cannot directly invoke arbitrary AutoCAD commands.
-- Each request runs inside one `LockDocument` + one `Transaction` + one Undo
-  group, so a single `Ctrl+Z` rolls back the whole batch.
-- Returns a `vcad_result_v1` JSON including `dsl_id ↔ Handle/ObjectId`
-  mapping for every entity created.
+  ```text
+  User message -> AgentLite -> tool_calls -> plugin tool host
+  -> AutoCAD .NET API or local context tool -> tool_results -> AgentLite
+  -> natural-language result in the panel
+  ```
 
-## First goal
+- Reads the active DWG into memory before a turn: layers, entities, block
+  references, and exploded block internals.
+- Supports local context attachments: text-like files, DXF/LISP/script text,
+  image metadata or small inline images, PDF text extraction, and DWG metadata.
+- Supports voice input through Windows local speech recognition when available.
+- Keeps assistant replies in the sidebar. Text is written into the drawing only
+  when the user explicitly asks for a label, annotation, title, dimension, or
+  note.
+- Supports two execution modes:
+  - **确认后执行**: write tools pause for confirmation.
+  - **完全授权自动执行**: allowed write tools execute without repeated prompts.
 
-Paste the sample JSON and draw a 6000×4000 rectangle plus a text label in
-AutoCAD.
+## Repository Layout
 
-## Repository layout
-
-```
+```text
 src/
-  Vcad.Core/                netstandard2.0  DSL DTOs, validation, result contract
-  Vcad.Plugin.Shared/       shared plugin source files (linked into both csprojs)
-  Vcad.Plugin.Acad2017/     net47            AutoCAD 2017–2024
+  Vcad.Plugin.Shared/       shared plugin source files
+  Vcad.Plugin.Acad2017/     net47            AutoCAD 2017-2024
   Vcad.Plugin.Acad2025/     net8.0-windows   AutoCAD 2025+
-  Vcad.AgentLite/           net8.0           local HTTP service (127.0.0.1:8765)
-bundle/Acad2017/  bundle/Acad2025/   PackageContents.xml templates
-schema/                     vcad_dsl_v1 / vcad_result_v1 JSON schemas
-samples/commands/           reference DSL JSON
-docs/                       install / troubleshooting / DSL spec / blueprint
-tools/                      release packaging checks
-.github/workflows/          CI release check
-tests/                      unit + integration tests
+  Vcad.AgentLite/           net8.0           local HTTP service
+bundle/Acad2017/            AutoCAD 2017-2024 bundle template
+bundle/Acad2025/            AutoCAD 2025+ bundle template
+docs/                       install, verification, architecture notes
+tools/                      bundle packaging and release checks
+tests/                      AgentLite tests
 ```
 
-## What this project will never ship in open source
+## Quick Start On Your Machine
 
-- A built-in API key.
-- A login system.
-- A paid backend.
-- Automatic uploading of your DWG files.
-- Telemetry that runs by default.
-
-## Supported AutoCAD versions
-
-| AutoCAD version | Bundle | Target framework |
-|---|---|---|
-| 2017 | `VCAD-Acad2017.bundle` | `net47` (install .NET 4.7 runtime if missing) |
-| 2018–2024 | `VCAD-Acad2017.bundle` | `net47` |
-| 2025+ | `VCAD-Acad2025.bundle` | `net8.0-windows` |
-
-AutoCAD LT is not supported (it has no managed plugin host).
-
-## Quick start
-
-1. Install the bundle that matches your AutoCAD version (`bundle/Acad2017` or
-   `bundle/Acad2025`) to one of:
-
-   - `%APPDATA%\Autodesk\ApplicationPlugins\VCAD-Acad2017.bundle` (current user)
-   - `%PROGRAMDATA%\Autodesk\ApplicationPlugins\VCAD-Acad2017.bundle` (all users)
-
-   Stop AutoCAD and any bundled Agent Lite process before replacing an
-   installed bundle:
-
-   ```powershell
-   $dest = "$env:APPDATA\Autodesk\ApplicationPlugins\VCAD-Acad2017.bundle"
-   Get-Process -Name Vcad.AgentLite -ErrorAction SilentlyContinue |
-     Where-Object { $_.Path -like "$dest*" } |
-     Stop-Process -Force
-   if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
-   Copy-Item bundle\Acad2017 $dest -Recurse -Force
-   ```
-
-2. Start AutoCAD. Type `VCAD` to open the sidebar.
-
-3. In the **Chat** tab, enter `draw a 6000 by 4000 rectangle with a ROOM
-   label`, then submit. Review the generated Intent / Plan / Preview cards and
-   click **Confirm Execute**. You should see a 6000×4000 rectangle and a text
-   label appear in model space, with two new layers `A-WALL` and `T-TEXT`.
-
-4. Press `Ctrl+Z` once — the whole batch is undone.
-
-## Build (Windows)
-
-You need the AutoCAD managed DLLs (`AcMgd.dll`, `AcDbMgd.dll`,
-`AcCoreMgd.dll`) from your installed AutoCAD or the ObjectARX SDK. **They
-are never committed to this repo.**
+Your AutoCAD 2017 path is:
 
 ```powershell
-$env:AutoCAD2017_Managed = "C:\Program Files\Autodesk\AutoCAD 2017"
-$env:AutoCAD2025_Managed = "C:\Program Files\Autodesk\AutoCAD 2025"
+$env:AutoCAD2017_Managed = "D:\autocad2017\AutoCAD 2017"
+```
+
+Build and populate the AutoCAD 2017 bundle:
+
+```powershell
+cd F:\Vcad
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\pack-bundle.ps1 -Target acad2017
+```
+
+Install to the current user's AutoCAD plugin folder. Close AutoCAD and stop the
+bundled AgentLite first, otherwise Windows may keep DLLs locked:
+
+```powershell
+$dest = "$env:APPDATA\Autodesk\ApplicationPlugins\VCAD-Acad2017.bundle"
+Get-Process -Name Vcad.AgentLite -ErrorAction SilentlyContinue |
+  Where-Object { $_.Path -like "$dest*" } |
+  Stop-Process -Force
+if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+Copy-Item bundle\Acad2017 $dest -Recurse -Force
+```
+
+Start AutoCAD, type `VCAD`, open **配置**, set provider/model/API key, save, and
+click **测试连接**. Then use **对话**:
+
+```text
+画一个 6000 x 4000 的矩形，图层 A-WALL，颜色 7。
+```
+
+In confirm mode the panel asks before writing to the drawing.
+
+## Build
+
+AutoCAD managed DLLs are required for plugin builds. They are never committed or
+packaged.
+
+```powershell
+$env:AutoCAD2017_Managed = "D:\autocad2017\AutoCAD 2017"
 dotnet build src\Vcad.Plugin.Acad2017\Vcad.Plugin.Acad2017.csproj -c Release
-dotnet build src\Vcad.Plugin.Acad2025\Vcad.Plugin.Acad2025.csproj -c Release
+dotnet test tests\Vcad.AgentLite.Tests\Vcad.AgentLite.Tests.csproj -c Release
 ```
 
-See [docs/install.md](docs/install.md) for detailed setup, and
-[docs/troubleshooting.md](docs/troubleshooting.md) for the common loading
-failures (SECURELOAD, missing .NET 4.7, AutoCAD LT, etc).
+For compile-only work without AutoCAD installed, use the stub API:
 
-## Agent Lite
-
-`Vcad.AgentLite` is a tiny local HTTP service (`127.0.0.1:8765`) that turns
-natural-language input into VCAD DSL. The plugin only talks to it on
-localhost. The service can call your own provider (OpenAI / DeepSeek /
-Anthropic / Gemini / Ollama / custom HTTP). **You bring the key.**
-
-`tools/pack-bundle.ps1` publishes Agent Lite into
-`Contents\AgentLite\Vcad.AgentLite.exe`. When the VCAD sidebar opens, the
-plugin checks `/health` and automatically starts the bundled service if it is
-not already running. Manual startup is still useful for development or
-troubleshooting:
-
-```bash
-cd src/Vcad.AgentLite
-dotnet run
+```powershell
+$env:VCAD_STUB_AUTODESK = "true"
+dotnet build src\Vcad.Plugin.Acad2017\Vcad.Plugin.Acad2017.csproj -c Release
 ```
 
-By default it runs with the deterministic `echo` provider (no network, no
-key required). You can either configure a provider in the plugin's **Model
-Settings** tab or set environment variables before starting Agent Lite:
+## AgentLite
 
-```bash
-VCAD_AGENT_PROVIDER=openai \
-VCAD_AGENT_API_KEY=sk-... \
-VCAD_AGENT_MODEL=gpt-5 \
-dotnet run
+`Vcad.AgentLite` binds to `127.0.0.1` and uses `X-VCAD-Agent-Token`. The plugin
+stores the token under `%APPDATA%\VCAD\agent.token` and auto-starts the bundled
+service from `Contents\AgentLite\Vcad.AgentLite.exe`.
+
+Manual development startup:
+
+```powershell
+dotnet run --project src\Vcad.AgentLite\Vcad.AgentLite.csproj
 ```
 
-DeepSeek is supported through its OpenAI-compatible API:
+Provider settings can be saved in the plugin UI or set as environment variables:
 
-```bash
-VCAD_AGENT_PROVIDER=deepseek \
-VCAD_AGENT_API_KEY=sk-... \
-VCAD_AGENT_MODEL=deepseek-v4-flash \
-dotnet run
+```powershell
+$env:VCAD_AGENT_PROVIDER = "openai"
+$env:VCAD_AGENT_BASE_URL = "https://api.openai.com"
+$env:VCAD_AGENT_MODEL    = "gpt-5.5"
+$env:VCAD_AGENT_API_KEY  = "sk-..."
+dotnet run --project src\Vcad.AgentLite\Vcad.AgentLite.csproj
 ```
 
-### Attachment context
+DeepSeek uses the OpenAI-compatible path:
 
-The plugin does not upload whole DWG/PDF/source files by path. Attachments are
-converted into a bounded local context payload before they are sent to Agent
-Lite:
+```powershell
+$env:VCAD_AGENT_PROVIDER = "deepseek"
+$env:VCAD_AGENT_BASE_URL = "https://api.deepseek.com"
+$env:VCAD_AGENT_MODEL    = "deepseek-v4-flash"
+$env:VCAD_AGENT_API_KEY  = "sk-..."
+dotnet run --project src\Vcad.AgentLite\Vcad.AgentLite.csproj
+```
 
-- Text-like files (`.txt`, `.md`, `.json`, `.csv`, `.xml`, `.dxf`, `.lsp`,
-  `.scr`) send a text excerpt, capped at 20,000 characters per file.
-- Images (`.png`, `.jpg`, `.jpeg`, `.webp`, `.bmp`, `.tif`, `.tiff`) up to
-  4 MB per file are sent as inline vision payloads to providers that support
-  image input. The plugin keeps the total inline image budget bounded; larger
-  or overflow images send metadata only.
-- PDFs with selectable text are extracted locally and send a bounded text
-  excerpt. Scanned/image-only PDFs send metadata only and need OCR or a model
-  file-input pipeline before the model can read the report body.
-- Binary CAD files currently send metadata (`name`, type, size, SHA-256) only.
-  The project intentionally does not dump a 10+ MB binary into a prompt.
+## Tool Surface
 
-Agent Lite accepts request bodies up to 8 MB, 32,000 characters of direct text,
-12 attachments per request, and 6 MB of base64 per inline attachment.
+Plugin-hosted CAD tools:
+
+- `cad.read_dwg_snapshot`
+- `cad.create_layer`
+- `cad.draw_line`
+- `cad.draw_rectangle`
+- `cad.draw_text`
+
+AgentLite-hosted context tools:
+
+- `web.search`
+- `web.fetch_url`
+- `workspace.read_file`
+- `workspace.write_file`
+
+## Attachment Limits
+
+The plugin does not send whole large source documents blindly into a prompt.
+It builds a bounded context payload:
+
+- Text-like files send up to 20,000 characters per file.
+- PDFs with selectable text are extracted locally and capped at 20,000
+  characters.
+- Scanned/image-only PDFs currently send metadata and require OCR or a future
+  file-input pipeline.
+- Images up to 4 MB per file can be sent inline, with a bounded total image
+  budget; larger images send metadata only.
+- AgentLite accepts request bodies up to 8 MB, 32,000 direct message
+  characters, 12 attachments, and 6 MB base64 per inline attachment.
+
+## More Docs
+
+- [Install guide](docs/install.md)
+- [Windows + AutoCAD 2017 verification](docs/windows-verify.md)
+- [Agent panel architecture](docs/plugin-agent-panel.md)
+- [Claude Code AutoCAD COM development bridge](docs/claude-code-autocad-com.md)
+- [Troubleshooting](docs/troubleshooting.md)
 
 ## License
 

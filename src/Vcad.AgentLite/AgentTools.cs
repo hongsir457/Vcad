@@ -71,11 +71,35 @@ public static class AgentTools
         },
         new()
         {
-            Name = "cad.execute_adapter_command",
+            Name = "cad.create_layer",
             Category = "cad_action",
             Effect = "write",
             Status = "available_in_plugin",
-            Description = "Execute Safety-approved CAD-IR through the AutoCAD adapter.",
+            Description = "Create or update a layer in the active AutoCAD drawing.",
+        },
+        new()
+        {
+            Name = "cad.draw_line",
+            Category = "cad_action",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Draw a line in the active AutoCAD drawing.",
+        },
+        new()
+        {
+            Name = "cad.draw_rectangle",
+            Category = "cad_action",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Draw a rectangle in the active AutoCAD drawing.",
+        },
+        new()
+        {
+            Name = "cad.draw_text",
+            Category = "cad_action",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Draw an explicit user-requested annotation, label, note, or title.",
         },
     ];
 }

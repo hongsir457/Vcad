@@ -16,7 +16,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Vcad.AgentLite\Vcad.AgentLite.csproj" />
-    <ProjectReference Include="..\..\src\Vcad.Core\Vcad.Core.csproj" />
   </ItemGroup>
 
 </Project>

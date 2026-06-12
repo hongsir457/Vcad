@@ -1,6 +1,5 @@
 using System.Net;
 using Vcad.AgentLite;
-using Vcad.AgentLite.Providers;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -10,7 +9,7 @@ builder.WebHost.ConfigureKestrel(opts =>
     opts.Listen(IPAddress.Loopback, port);
 });
 
-builder.Services.AddSingleton<ProviderRouter>();
+builder.Services.AddSingleton<AgentTurnService>();
 
 var app = builder.Build();
 
@@ -50,7 +49,7 @@ app.MapGet("/health", () => Results.Ok(new
     status = "ok",
     service = "vcad-agent-lite",
     version = "0.1.0",
-    supported_dsl_versions = new[] { "vcad_dsl_v1" },
+    supported_agent_protocols = new[] { "vcad_agent_turn_v1" },
 }));
 
 app.MapGet("/tools", () => Results.Ok(new
@@ -88,7 +87,7 @@ app.MapPost("/tool", async (HttpContext ctx) =>
     return Results.Json(result);
 });
 
-app.MapPost("/parse", async (HttpContext ctx, ProviderRouter router) =>
+app.MapPost("/agent/turn", async (HttpContext ctx, AgentTurnService agent) =>
 {
     using var reader = new StreamReader(ctx.Request.Body);
     var body = await reader.ReadToEndAsync();
@@ -97,26 +96,27 @@ app.MapPost("/parse", async (HttpContext ctx, ProviderRouter router) =>
         return Results.BadRequest(new { error = "Empty request body." });
     }
 
-    ParseRequest? req;
+    AgentTurnRequest? req;
     try
     {
-        req = System.Text.Json.JsonSerializer.Deserialize<ParseRequest>(body);
+        req = System.Text.Json.JsonSerializer.Deserialize<AgentTurnRequest>(body);
     }
     catch (System.Text.Json.JsonException ex)
     {
         return Results.BadRequest(new { error = "Invalid JSON: " + ex.Message });
     }
 
-    if (req == null || string.IsNullOrWhiteSpace(req.text))
+    if (req == null || (string.IsNullOrWhiteSpace(req.message) &&
+        (req.tool_results == null || req.tool_results.Count == 0)))
     {
-        return Results.BadRequest(new { error = "'text' is required." });
+        return Results.BadRequest(new { error = "'message' or 'tool_results' is required." });
     }
-    if (req.text.Length > MaxTextChars)
+    if ((req.message ?? "").Length > MaxTextChars)
     {
-        return Results.BadRequest(new { error = "'text' exceeds 32000 character limit." });
+        return Results.BadRequest(new { error = "'message' exceeds 32000 character limit." });
     }
 
-    req.attachments ??= new List<ParseAttachment>();
+    req.attachments ??= new List<AgentAttachment>();
     if (req.attachments.Count > MaxAttachmentCount)
     {
         return Results.BadRequest(new { error = "'attachments' exceeds 12 item limit." });
@@ -132,23 +132,17 @@ app.MapPost("/parse", async (HttpContext ctx, ProviderRouter router) =>
 
     try
     {
-        var result = await router.ParseAsync(req);
+        var result = await agent.RunAsync(req);
         return Results.Json(new
         {
-            request_id = req.request_id ?? ("req-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff")),
             success = true,
-            dsl = result.Dsl,
-            assistant_message = result.AssistantMessage,
-            clarification = result.Clarification,
-            usage = result.Usage,
-            warnings = Array.Empty<string>(),
+            response = result,
         });
     }
     catch (Exception ex)
     {
         return Results.Json(new
         {
-            request_id = req.request_id,
             success = false,
             error = SecretRedactor.Redact(ex.Message),
         }, statusCode: 500);

@@ -1,57 +1,44 @@
 # Security Policy
 
-VCAD is designed so that an open-source install can be used safely with
-arbitrary LLM-generated input. The plugin and the local Agent are the
-final security boundary — never the prompt.
+VCAD treats the plugin and the local AgentLite service as the security boundary,
+not the model prompt.
 
-## What VCAD does not do
+## What VCAD Does Not Do
 
-- It does **not** execute arbitrary code returned by an LLM.
-- It does **not** execute arbitrary AutoLISP strings.
-- It does **not** shell out to the operating system.
-- It does **not** read or write arbitrary files on your disk.
-- It does **not** upload your DWG, prompts, or logs anywhere.
-- It does **not** ship with any built-in API key or pre-configured remote
-  endpoint.
+- It does not ship with an API key.
+- It does not call a VCAD-owned hosted backend.
+- It does not execute arbitrary model-returned scripts.
+- It does not execute arbitrary AutoLISP strings.
+- It does not upload your DWG, prompts, logs, or attachments by default.
+- It does not read or write arbitrary disk paths; workspace tools are rooted.
 
-## Defenses in depth
+## Defenses
 
-1. **JSON schema and whitelist.** Every command is validated against
-   `vcad_dsl_v1`. Unknown command types fail with `E_COMMAND_NOT_ALLOWED`.
-2. **Parameter range checks.** See `ParameterLimits` in `Vcad.Core`.
-   Coordinates capped at 1e9 mm; dimensions in (0, 1e8 mm]; text length
-   ≤ 2048; layer name ≤ 255; request body ≤ 1 MB.
-3. **One transaction per request.** All commands in a request execute
-   inside a single `LockDocument` + `Transaction` + Undo group. If any
-   command fails, the transaction is aborted and **nothing is committed**.
-4. **Loopback-only Agent.** `Vcad.AgentLite` binds `127.0.0.1` only. A
-   per-user token (`X-VCAD-Agent-Token`) is required.
-5. **DPAPI-encrypted secrets.** API keys saved in the UI are encrypted
-   with Windows DPAPI (CurrentUser scope) and stored under `%APPDATA%`.
-6. **Log redaction.** Error messages, exception text, and copy/diagnostic
-   exports run through `SecretRedactor` so `Authorization`, `Bearer`,
-   `api_key=`, `sk-...`, and `sk-ant-...` are replaced with `***`.
+1. **Tool allowlist.** Agent output is only acted on when it names a registered
+   tool.
+2. **Plugin-owned CAD writes.** AutoCAD writes happen inside the plugin process,
+   through explicit `cad.*` tools.
+3. **Input validation.** CAD tool arguments validate layer names, coordinates,
+   dimensions, text length, and color values.
+4. **Assistant text guard.** Panel replies are not written into the drawing.
+   Drawing text is only for explicit labels, annotations, titles, dimensions,
+   and notes.
+5. **Confirm/trusted mode.** Write tools require confirmation unless the user
+   selects trusted execution mode.
+6. **Loopback AgentLite.** AgentLite binds `127.0.0.1` and uses
+   `X-VCAD-Agent-Token`.
+7. **DPAPI secrets.** Saved API keys use Windows DPAPI CurrentUser encryption.
+8. **Redaction.** Error reporting redacts common API key and bearer-token
+   patterns.
 
-## Reporting a vulnerability
+## Reporting A Vulnerability
 
-Please open a **private** security advisory on GitHub (Security tab →
-"Report a vulnerability") rather than a public issue. Include:
+Open a private GitHub security advisory. Include:
 
-- Affected version (e.g. `v0.1.0`).
+- Affected version.
 - AutoCAD version and OS.
-- A minimal reproducer if possible (a small DSL JSON, or a sequence of
-  steps in the sidebar).
-- Whether the issue lets a crafted DSL or LLM response break the
-  invariants above (e.g. run shell commands, exfiltrate files, escape the
-  whitelist).
+- Minimal reproduction steps.
+- Whether the issue lets a model response escape the registered tool surface,
+  write unintended drawing content, read unintended files, or exfiltrate data.
 
-We aim to acknowledge within 5 business days. There is no bug bounty.
-
-## Out of scope
-
-- Reports that require an attacker to already have local code execution
-  on the user's machine.
-- Findings that depend on the user disabling `SECURELOAD` or copying the
-  plugin into a non-standard, untrusted directory.
-- Vulnerabilities in third-party libraries that VCAD does not actually
-  expose (please report those upstream).
+There is no bug bounty.

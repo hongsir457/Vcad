@@ -6,11 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Vcad.AgentLite</AssemblyName>
     <RootNamespace>Vcad.AgentLite</RootNamespace>
-    <Description>Local HTTP service that turns natural language into VCAD DSL. Binds 127.0.0.1 only.</Description>
+    <Description>Local HTTP service for VoiceCAD agent turns. Binds 127.0.0.1 only.</Description>
   </PropertyGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\Vcad.Core\Vcad.Core.csproj" />
-  </ItemGroup>
 
 </Project>

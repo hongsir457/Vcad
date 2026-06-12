@@ -4,7 +4,7 @@
   AutodeskProduct="AutoCAD"
   ProductType="Application"
   Name="VCAD Plugin (AutoCAD 2025+)"
-  Description="Open-source AutoCAD plugin for executing VCAD DSL commands."
+  Description="Open-source AutoCAD agent panel for VoiceCAD tool calls."
   AppVersion="0.1.0"
   Author="VCAD Contributors"
   HelpFile="./Contents/README_FIRST.txt"

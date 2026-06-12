@@ -40,64 +40,71 @@ namespace Vcad.Plugin.Net
             }
         }
 
-        public Task<string> ParseAsync(string naturalLanguage)
+        public async Task<AgentTurnResult> AgentTurnAsync(
+            string sessionId,
+            string message,
+            JArray attachments,
+            JObject cadObservation,
+            JArray toolResults)
         {
-            return ParseAsync(naturalLanguage, null, null);
-        }
-
-        public async Task<string> ParseAsync(string naturalLanguage, JArray attachments)
-        {
-            return await ParseAsync(naturalLanguage, attachments, null).ConfigureAwait(false);
-        }
-
-        public async Task<string> ParseAsync(string naturalLanguage, JArray attachments, JObject cadState)
-        {
-            var result = await ParseFullAsync(naturalLanguage, attachments, cadState).ConfigureAwait(false);
-            return result?.DslJson;
-        }
-
-        public async Task<AgentParseResult> ParseFullAsync(string naturalLanguage, JArray attachments, JObject cadState)
-        {
-            if (string.IsNullOrWhiteSpace(naturalLanguage)) return null;
-
             var payload = new JObject
             {
-                ["request_id"] = "req-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff"),
-                ["text"] = naturalLanguage,
-                ["context"] = new JObject { ["unit"] = "mm", ["coordinate_system"] = "WCS" },
-                ["options"] = new JObject { ["max_commands"] = 50 },
+                ["session_id"] = string.IsNullOrWhiteSpace(sessionId) ? "session-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff") : sessionId,
+                ["message"] = message ?? "",
                 ["provider"] = BuildProviderPayload(),
             };
             if (attachments != null && attachments.Count > 0)
             {
                 payload["attachments"] = attachments;
             }
-            if (cadState != null)
+            if (cadObservation != null)
             {
-                payload["cad_state"] = cadState;
+                payload["cad_observation"] = cadObservation;
+            }
+            if (toolResults != null && toolResults.Count > 0)
+            {
+                payload["tool_results"] = toolResults;
             }
 
             using (var client = NewClient())
             using (var content = new StringContent(payload.ToString(), Encoding.UTF8, "application/json"))
             {
-                var resp = await client.PostAsync(BuildUrl("/parse"), content).ConfigureAwait(false);
+                var resp = await client.PostAsync(BuildUrl("/agent/turn"), content).ConfigureAwait(false);
                 var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
                 if (!resp.IsSuccessStatusCode)
                 {
-                    throw new InvalidOperationException("Agent /parse failed: " + (int)resp.StatusCode + " " +
+                    throw new InvalidOperationException("Agent /agent/turn failed: " + (int)resp.StatusCode + " " +
                         SecretRedactor.Redact(body));
                 }
 
-                var jo = JObject.Parse(body);
-                var dsl = jo["dsl"];
-                return new AgentParseResult
+                var envelope = JObject.Parse(body);
+                var response = envelope["response"] as JObject;
+                if (response == null)
                 {
-                    RequestId = jo.Value<string>("request_id"),
-                    DslJson = dsl == null || dsl.Type == JTokenType.Null ? null : dsl.ToString(Formatting.Indented),
-                    AssistantMessage = jo.Value<string>("assistant_message"),
-                    Clarification = jo["clarification"] as JObject,
-                    Usage = AgentUsage.FromJson(jo["usage"] as JObject),
-                };
+                    throw new InvalidOperationException("Agent response is missing 'response'.");
+                }
+                return AgentTurnResult.FromJson(response);
+            }
+        }
+
+        public async Task<JObject> RunToolAsync(string name, JObject args)
+        {
+            var payload = new JObject
+            {
+                ["name"] = name,
+                ["args"] = args ?? new JObject(),
+            };
+            using (var client = NewClient())
+            using (var content = new StringContent(payload.ToString(), Encoding.UTF8, "application/json"))
+            {
+                var resp = await client.PostAsync(BuildUrl("/tool"), content).ConfigureAwait(false);
+                var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (!resp.IsSuccessStatusCode)
+                {
+                    throw new InvalidOperationException("Agent /tool failed: " + (int)resp.StatusCode + " " +
+                        SecretRedactor.Redact(body));
+                }
+                return JObject.Parse(body);
             }
         }
 
@@ -130,24 +137,22 @@ namespace Vcad.Plugin.Net
                 {
                     var payload = new JObject
                     {
-                        ["request_id"] = "test-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff"),
-                        ["text"] = "draw a small text label VCAD TEST",
-                        ["context"] = new JObject { ["unit"] = "mm", ["coordinate_system"] = "WCS" },
-                        ["options"] = new JObject { ["max_commands"] = 10 },
+                        ["session_id"] = "test-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff"),
+                        ["message"] = "请只回复 ready，不要调用 CAD 工具。",
                         ["provider"] = BuildProviderPayload(),
                     };
                     using (var content = new StringContent(payload.ToString(), Encoding.UTF8, "application/json"))
                     {
-                        var resp = await client.PostAsync(BuildUrl("/parse"), content).ConfigureAwait(false);
+                        var resp = await client.PostAsync(BuildUrl("/agent/turn"), content).ConfigureAwait(false);
                         var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
                         if (!resp.IsSuccessStatusCode)
                         {
                             return ConnectionCheckResult.Fail("模型连接失败: " + (int)resp.StatusCode + " " + SecretRedactor.Redact(body));
                         }
                         var jo = JObject.Parse(body);
-                        if (jo["dsl"] == null)
+                        if (jo["response"] == null)
                         {
-                            return ConnectionCheckResult.Fail("模型返回成功，但没有 DSL 字段。");
+                            return ConnectionCheckResult.Fail("模型返回成功，但没有 agent response 字段。");
                         }
                         return ConnectionCheckResult.Ok("模型连接成功。");
                     }
@@ -211,16 +216,45 @@ namespace Vcad.Plugin.Net
         }
     }
 
-    internal class AgentParseResult
+    internal class AgentTurnResult
     {
-        public string RequestId { get; set; }
-        public string DslJson { get; set; }
+        public string SessionId { get; set; }
         public string AssistantMessage { get; set; }
+        public JArray Trace { get; set; }
+        public JArray ToolCalls { get; set; }
         public JObject Clarification { get; set; }
+        public bool RequiresUserInput { get; set; }
+        public bool Done { get; set; }
         public AgentUsage Usage { get; set; }
 
         public bool NeedsClarification =>
-            Clarification != null && Clarification.Value<bool?>("required") == true;
+            RequiresUserInput || Clarification != null;
+
+        public static AgentTurnResult FromJson(JObject obj)
+        {
+            if (obj == null) return null;
+            return new AgentTurnResult
+            {
+                SessionId = Value(obj, "session_id", "SessionId"),
+                AssistantMessage = Value(obj, "assistant_message", "AssistantMessage"),
+                Trace = obj["trace"] as JArray ?? new JArray(),
+                ToolCalls = obj["tool_calls"] as JArray ?? new JArray(),
+                Clarification = obj["clarification"] as JObject,
+                RequiresUserInput = obj.Value<bool?>("requires_user_input") ?? false,
+                Done = obj.Value<bool?>("done") ?? false,
+                Usage = AgentUsage.FromJson(obj["usage"] as JObject),
+            };
+        }
+
+        private static string Value(JObject obj, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                var token = obj[name];
+                if (token != null && token.Type != JTokenType.Null) return token.Value<string>();
+            }
+            return "";
+        }
     }
 
     internal class AgentUsage

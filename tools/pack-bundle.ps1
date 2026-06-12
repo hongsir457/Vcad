@@ -136,8 +136,6 @@ function Build-One {
   $requiredNames = @(
     "Vcad.Plugin.$Name.dll",
     "Vcad.Plugin.$Name.pdb",
-    'Vcad.Core.dll',
-    'Vcad.Core.pdb',
     'Newtonsoft.Json.dll',
     'UglyToad.PdfPig.dll',
     'UglyToad.PdfPig.Core.dll',

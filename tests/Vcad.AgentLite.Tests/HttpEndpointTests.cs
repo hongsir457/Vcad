@@ -28,30 +28,29 @@ public class HttpEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
         var body = await resp.Content.ReadAsStringAsync();
         Assert.Contains("vcad-agent-lite", body);
-        Assert.Contains("vcad_dsl_v1", body);
+        Assert.Contains("vcad_agent_turn_v1", body);
     }
 
     [Fact]
-    public async Task Parse_returns_valid_dsl_for_simple_text()
+    public async Task Agent_turn_returns_tool_call_for_simple_text()
     {
         var client = _factory.CreateClient();
         var req = new
         {
-            request_id = "req-test-1",
-            text = "draw a rectangle 6m x 4m",
-            context = new { unit = "mm", coordinate_system = "WCS" },
-            options = new { max_commands = 10 },
+            session_id = "req-test-1",
+            message = "draw a rectangle 6m x 4m",
         };
-        var resp = await client.PostAsJsonAsync("/parse", req);
+        var resp = await client.PostAsJsonAsync("/agent/turn", req);
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
 
         var body = await resp.Content.ReadAsStringAsync();
         var jo = JsonNode.Parse(body)!.AsObject();
         Assert.True(jo["success"]!.GetValue<bool>());
-        Assert.NotNull(jo["dsl"]);
-        Assert.Equal("vcad_dsl_v1", jo["dsl"]!["version"]!.GetValue<string>());
-        Assert.NotNull(jo["usage"]);
-        Assert.True(jo["usage"]!["totalTokens"]!.GetValue<int>() > 0);
+        var response = jo["response"]!.AsObject();
+        Assert.NotNull(response["tool_calls"]);
+        Assert.Contains(response["tool_calls"]!.AsArray(), t => t!["name"]!.GetValue<string>() == "cad.draw_rectangle");
+        Assert.NotNull(response["usage"]);
+        Assert.True(response["usage"]!["totalTokens"]!.GetValue<int>() > 0);
     }
 
     [Fact]
@@ -68,30 +67,30 @@ public class HttpEndpointTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
-    public async Task Parse_rejects_empty_text()
+    public async Task Agent_turn_rejects_empty_message_without_tool_results()
     {
         var client = _factory.CreateClient();
-        var resp = await client.PostAsJsonAsync("/parse", new { text = "" });
+        var resp = await client.PostAsJsonAsync("/agent/turn", new { message = "" });
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
 
     [Fact]
-    public async Task Parse_rejects_text_over_32000_chars()
+    public async Task Agent_turn_rejects_message_over_32000_chars()
     {
         var client = _factory.CreateClient();
         var huge = new string('x', 32001);
-        var resp = await client.PostAsJsonAsync("/parse", new { text = huge });
+        var resp = await client.PostAsJsonAsync("/agent/turn", new { message = huge });
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
 
     [Fact]
-    public async Task Parse_accepts_attachment_metadata()
+    public async Task Agent_turn_accepts_attachment_metadata()
     {
         var client = _factory.CreateClient();
         var req = new
         {
-            request_id = "req-attachment-1",
-            text = "draw from the attached appraisal report",
+            session_id = "req-attachment-1",
+            message = "draw from the attached appraisal report",
             attachments = new[]
             {
                 new
@@ -106,19 +105,19 @@ public class HttpEndpointTests : IClassFixture<WebApplicationFactory<Program>>
                 },
             },
         };
-        var resp = await client.PostAsJsonAsync("/parse", req);
+        var resp = await client.PostAsJsonAsync("/agent/turn", req);
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
     }
 
     [Fact]
-    public async Task Parse_accepts_cad_state_snapshot()
+    public async Task Agent_turn_accepts_cad_observation_snapshot()
     {
         var client = _factory.CreateClient();
         var req = new
         {
-            request_id = "req-cad-state-1",
-            text = "label the open drawing",
-            cad_state = new
+            session_id = "req-cad-state-1",
+            message = "label the open drawing",
+            cad_observation = new
             {
                 schema = "cad_drawing_snapshot_v1",
                 summary = new
@@ -132,18 +131,18 @@ public class HttpEndpointTests : IClassFixture<WebApplicationFactory<Program>>
                 },
             },
         };
-        var resp = await client.PostAsJsonAsync("/parse", req);
+        var resp = await client.PostAsJsonAsync("/agent/turn", req);
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
     }
 
     [Fact]
-    public async Task Parse_rejects_oversize_body()
+    public async Task Agent_turn_rejects_oversize_body()
     {
         var client = _factory.CreateClient();
         var huge = new string('x', 9 * 1024 * 1024); // > 8 MB
-        var content = new StringContent(@"{ ""text"": """ + huge + @""" }",
+        var content = new StringContent(@"{ ""message"": """ + huge + @""" }",
             Encoding.UTF8, "application/json");
-        var resp = await client.PostAsync("/parse", content);
+        var resp = await client.PostAsync("/agent/turn", content);
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, resp.StatusCode);
     }
 }

@@ -17,7 +17,7 @@ public class TokenAuthTests
             using var factory = new WebApplicationFactory<Program>();
             var client = factory.CreateClient();
 
-            var resp = await client.PostAsJsonAsync("/parse", new { text = "rectangle" });
+            var resp = await client.PostAsJsonAsync("/agent/turn", new { message = "rectangle" });
             Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
         }
         finally
@@ -36,7 +36,7 @@ public class TokenAuthTests
             var client = factory.CreateClient();
             client.DefaultRequestHeaders.Add("X-VCAD-Agent-Token", "secret-xyz");
 
-            var resp = await client.PostAsJsonAsync("/parse", new { text = "rectangle" });
+            var resp = await client.PostAsJsonAsync("/agent/turn", new { message = "rectangle" });
             Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
         }
         finally

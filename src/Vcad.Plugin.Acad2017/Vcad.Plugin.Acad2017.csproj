@@ -15,10 +15,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Vcad.Core\Vcad.Core.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
     <!-- Lets dotnet build target net47 without a Visual Studio install -->
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
