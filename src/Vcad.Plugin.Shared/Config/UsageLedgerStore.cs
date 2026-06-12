@@ -187,9 +187,9 @@ namespace Vcad.Plugin.Config
         private static readonly Dictionary<string, Tuple<decimal, decimal>> Prices =
             new Dictionary<string, Tuple<decimal, decimal>>(StringComparer.OrdinalIgnoreCase)
             {
-                { "openai:gpt-5.5", Tuple.Create(2.50m, 15.00m) },
-                { "openai:gpt-5.5-pro", Tuple.Create(15.00m, 90.00m) },
-                { "openai:gpt-5.4", Tuple.Create(1.25m, 7.50m) },
+                { "openai:gpt-5.5", Tuple.Create(5.00m, 30.00m) },
+                { "openai:gpt-5.5-pro", Tuple.Create(30.00m, 180.00m) },
+                { "openai:gpt-5.4", Tuple.Create(2.50m, 15.00m) },
                 { "openai:gpt-5.4-mini", Tuple.Create(0.375m, 2.25m) },
                 { "openai:gpt-5.4-nano", Tuple.Create(0.10m, 0.625m) },
                 { "openai:gpt-5.4-pro", Tuple.Create(15.00m, 90.00m) },
