@@ -135,13 +135,35 @@ namespace Vcad.Plugin.Config
             try
             {
                 if (!File.Exists(TodayPath)) return new List<UsageRecord>();
-                return JsonConvert.DeserializeObject<List<UsageRecord>>(File.ReadAllText(TodayPath)) ??
+                var records = JsonConvert.DeserializeObject<List<UsageRecord>>(File.ReadAllText(TodayPath)) ??
                     new List<UsageRecord>();
+                foreach (var record in records)
+                {
+                    RepriceIfNeeded(record);
+                }
+                return records;
             }
             catch
             {
                 return new List<UsageRecord>();
             }
+        }
+
+        private static void RepriceIfNeeded(UsageRecord record)
+        {
+            if (record == null) return;
+            if (record.InputTokens <= 0 && record.OutputTokens <= 0) return;
+            if (record.CostUsd > 0m && !IsMissingPricing(record.PricingNote)) return;
+
+            var cost = ModelPricing.Estimate(record.Provider, record.Model, record.InputTokens, record.OutputTokens);
+            record.CostUsd = cost.CostUsd;
+            record.PricingNote = cost.Note;
+        }
+
+        private static bool IsMissingPricing(string note)
+        {
+            return !string.IsNullOrWhiteSpace(note) &&
+                note.IndexOf("pricing not configured", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static string FirstNonEmpty(params string[] values)
@@ -165,11 +187,12 @@ namespace Vcad.Plugin.Config
         private static readonly Dictionary<string, Tuple<decimal, decimal>> Prices =
             new Dictionary<string, Tuple<decimal, decimal>>(StringComparer.OrdinalIgnoreCase)
             {
-                { "openai:gpt-5.5", Tuple.Create(5.00m, 30.00m) },
-                { "openai:gpt-5.5-pro", Tuple.Create(30.00m, 180.00m) },
-                { "openai:gpt-5.4", Tuple.Create(2.50m, 15.00m) },
+                { "openai:gpt-5.5", Tuple.Create(2.50m, 15.00m) },
+                { "openai:gpt-5.5-pro", Tuple.Create(15.00m, 90.00m) },
+                { "openai:gpt-5.4", Tuple.Create(1.25m, 7.50m) },
                 { "openai:gpt-5.4-mini", Tuple.Create(0.375m, 2.25m) },
                 { "openai:gpt-5.4-nano", Tuple.Create(0.10m, 0.625m) },
+                { "openai:gpt-5.4-pro", Tuple.Create(15.00m, 90.00m) },
                 { "openai:gpt-5", Tuple.Create(1.25m, 10.00m) },
                 { "openai:gpt-4.1", Tuple.Create(2.00m, 8.00m) },
                 { "openai:gpt-4o", Tuple.Create(2.50m, 10.00m) },
@@ -197,21 +220,52 @@ namespace Vcad.Plugin.Config
         public static CostEstimate Estimate(string provider, string model, int inputTokens, int outputTokens)
         {
             var key = (provider ?? "").Trim().ToLowerInvariant() + ":" + (model ?? "").Trim().ToLowerInvariant();
-            if (Prices.TryGetValue(key, out var price))
+            if (!TryGetPrice(key, out var price, out var matchedKey))
             {
-                var cost = (inputTokens * price.Item1 + outputTokens * price.Item2) / 1000000m;
                 return new CostEstimate
                 {
-                    CostUsd = decimal.Round(cost, 8),
-                    Note = "$" + price.Item1 + "/M input, $" + price.Item2 + "/M output",
+                    CostUsd = 0m,
+                    Note = "pricing not configured for " + provider + "/" + model,
                 };
             }
 
+            var cost = (inputTokens * price.Item1 + outputTokens * price.Item2) / 1000000m;
             return new CostEstimate
             {
-                CostUsd = 0m,
-                Note = "pricing not configured for " + provider + "/" + model,
+                CostUsd = decimal.Round(cost, 8),
+                Note = "$" + price.Item1 + "/M input, $" + price.Item2 + "/M output" +
+                    (string.Equals(matchedKey, key, StringComparison.OrdinalIgnoreCase) ? "" : " (" + matchedKey + ")"),
             };
+        }
+
+        private static bool TryGetPrice(string key, out Tuple<decimal, decimal> price, out string matchedKey)
+        {
+            if (Prices.TryGetValue(key, out price))
+            {
+                matchedKey = key;
+                return true;
+            }
+
+            foreach (var item in Prices.OrderByDescending(x => x.Key.Length))
+            {
+                if (IsSnapshotOf(item.Key, key))
+                {
+                    price = item.Value;
+                    matchedKey = item.Key;
+                    return true;
+                }
+            }
+
+            matchedKey = key;
+            price = null;
+            return false;
+        }
+
+        private static bool IsSnapshotOf(string priceKey, string actualKey)
+        {
+            if (string.IsNullOrWhiteSpace(priceKey) || string.IsNullOrWhiteSpace(actualKey)) return false;
+            return actualKey.StartsWith(priceKey + "-", StringComparison.OrdinalIgnoreCase) ||
+                actualKey.StartsWith(priceKey + ".", StringComparison.OrdinalIgnoreCase);
         }
     }
 }
