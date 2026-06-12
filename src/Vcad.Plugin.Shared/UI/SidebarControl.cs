@@ -107,6 +107,56 @@ namespace Vcad.Plugin.UI
             Font = UiFont;
             BuildLayout();
             LoadProfilesIntoUi();
+            StartAgentLiteOnOpen();
+        }
+
+        private void StartAgentLiteOnOpen()
+        {
+            Task.Run(async () =>
+            {
+                try
+                {
+                    var settings = AgentConfigStore.LoadActive();
+                    NormalizeRuntimeSettings(settings);
+                    var result = await AgentLiteProcessManager.EnsureStartedAsync(settings).ConfigureAwait(false);
+                    PostToUi(() =>
+                    {
+                        if (result.Success)
+                        {
+                            SetChatStatus(result.Message, CadGreen);
+                        }
+                        else
+                        {
+                            SetChatStatus(result.Message, CadOrange);
+                            SetSettingsStatus(result.Message, CadOrange);
+                        }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    var message = "Agent Lite auto-start failed: " + SecretRedactor.Redact(ex.Message);
+                    PostToUi(() =>
+                    {
+                        SetChatStatus(message, CadOrange);
+                        SetSettingsStatus(message, CadOrange);
+                    });
+                }
+            });
+        }
+
+        private void PostToUi(Action action)
+        {
+            if (action == null || IsDisposed || !IsHandleCreated) return;
+            try
+            {
+                BeginInvoke(action);
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
         }
 
         protected override void Dispose(bool disposing)
@@ -1514,6 +1564,18 @@ namespace Vcad.Plugin.UI
                 System.Windows.Forms.Application.DoEvents();
 
                 var settings = AgentConfigStore.LoadActive();
+                NormalizeRuntimeSettings(settings);
+                var startResult = await AgentLiteProcessManager.EnsureStartedAsync(settings).ConfigureAwait(true);
+                if (!startResult.Success)
+                {
+                    _usageRequests++;
+                    _usageFailed++;
+                    RefreshUsage();
+                    AddAssistantCard("Agent Lite", startResult.Message);
+                    SetChatStatus(startResult.Message, CadOrange);
+                    return;
+                }
+
                 var client = new AgentLiteClient(settings);
                 var dsl = await client.ParseAsync(prompt, attachmentPayloads, cadState);
 
@@ -1765,10 +1827,10 @@ namespace Vcad.Plugin.UI
         private static readonly Dictionary<string, (string BaseUrl, string Model)> ProviderDefaults =
             new Dictionary<string, (string, string)>(StringComparer.OrdinalIgnoreCase)
             {
-                { "openai",    ("https://api.openai.com", "gpt-4o-mini") },
+                { "openai",    ("https://api.openai.com", "gpt-5") },
                 { "deepseek",  ("https://api.deepseek.com", "deepseek-v4-flash") },
-                { "anthropic", ("https://api.anthropic.com", "claude-3-5-haiku-latest") },
-                { "gemini",    ("https://generativelanguage.googleapis.com", "gemini-1.5-flash") },
+                { "anthropic", ("https://api.anthropic.com", "claude-sonnet-4-6") },
+                { "gemini",    ("https://generativelanguage.googleapis.com", "gemini-3.5-flash") },
                 { "ollama",    ("http://localhost:11434", "llama3.2") },
                 { "custom",    ("", "") },
             };
@@ -1776,12 +1838,21 @@ namespace Vcad.Plugin.UI
         private static readonly Dictionary<string, string[]> ProviderModels =
             new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
             {
-                { "openai", new[] { "gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1" } },
+                { "openai", new[] { "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5", "gpt-4.1", "gpt-4o" } },
                 { "deepseek", new[] { "deepseek-v4-flash", "deepseek-v4-pro" } },
-                { "anthropic", new[] { "claude-3-5-haiku-latest", "claude-3-5-sonnet-latest", "claude-sonnet-4-5" } },
-                { "gemini", new[] { "gemini-1.5-flash", "gemini-1.5-pro" } },
+                { "anthropic", new[] { "claude-fable-5", "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5" } },
+                { "gemini", new[] { "gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite", "gemini-2.5-flash" } },
                 { "ollama", new[] { "llama3.2", "qwen2.5", "deepseek-r1" } },
                 { "custom", new string[0] },
+            };
+
+        private static readonly Dictionary<string, string[]> LegacyDefaultModels =
+            new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "openai", new[] { "gpt-4o-mini" } },
+                { "anthropic", new[] { "claude-3-5-haiku-latest", "claude-3-5-sonnet-latest" } },
+                { "gemini", new[] { "gemini-1.5-flash", "gemini-1.5-pro" } },
+                { "deepseek", new[] { "deepseek-chat", "deepseek-reasoner" } },
             };
 
         private bool _suppressProviderChange;
@@ -1816,7 +1887,44 @@ namespace Vcad.Plugin.UI
         private static bool IsAnyKnownDefaultModel(string s)
         {
             foreach (var kv in ProviderDefaults) if (kv.Value.Model == s) return true;
+            foreach (var kv in LegacyDefaultModels)
+            {
+                foreach (var model in kv.Value)
+                {
+                    if (string.Equals(model, s, StringComparison.OrdinalIgnoreCase)) return true;
+                }
+            }
             return false;
+        }
+
+        private static string NormalizeModelForProvider(string provider, string configuredModel)
+        {
+            if (!ProviderDefaults.TryGetValue(provider, out var def)) return configuredModel ?? "";
+            if (string.IsNullOrWhiteSpace(configuredModel)) return def.Model;
+            if (LegacyDefaultModels.TryGetValue(provider, out var legacyModels))
+            {
+                foreach (var model in legacyModels)
+                {
+                    if (string.Equals(model, configuredModel, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return def.Model;
+                    }
+                }
+            }
+            return configuredModel;
+        }
+
+        private static void NormalizeRuntimeSettings(AgentSettings settings)
+        {
+            if (settings == null) return;
+            var provider = string.IsNullOrWhiteSpace(settings.Provider) ? "openai" : settings.Provider;
+            settings.Provider = provider;
+            if (!ProviderDefaults.TryGetValue(provider, out var def)) return;
+            if (string.IsNullOrWhiteSpace(settings.ApiBaseUrl))
+            {
+                settings.ApiBaseUrl = def.BaseUrl;
+            }
+            settings.Model = NormalizeModelForProvider(provider, settings.Model);
         }
 
         private void FillModelChoices(string provider, string preferredModel)
@@ -1900,9 +2008,9 @@ namespace Vcad.Plugin.UI
                 _txtBaseUrl.Text = !string.IsNullOrEmpty(s.ApiBaseUrl)
                     ? s.ApiBaseUrl
                     : (hasDefault ? def.BaseUrl : "");
-                _cmbModel.Text = !string.IsNullOrEmpty(s.Model)
-                    ? s.Model
-                    : (hasDefault ? def.Model : "");
+                _cmbModel.Text = hasDefault
+                    ? NormalizeModelForProvider(provider, s.Model)
+                    : (s.Model ?? "");
                 _txtApiKey.Text = s.ApiKeyPlain ?? "";
                 _numPort.Value = s.AgentPort == 0 ? 8765 : s.AgentPort;
                 _chkStrictJson.Checked = s.StrictJson;
@@ -1951,6 +2059,18 @@ namespace Vcad.Plugin.UI
                 System.Windows.Forms.Application.DoEvents();
                 OnSaveSettings();
                 var settings = AgentConfigStore.LoadActive();
+                NormalizeRuntimeSettings(settings);
+                var startResult = await AgentLiteProcessManager.EnsureStartedAsync(settings).ConfigureAwait(true);
+                if (!startResult.Success)
+                {
+                    SetSettingsStatus(startResult.Message, CadOrange);
+                    return;
+                }
+                if (startResult.Started)
+                {
+                    SetSettingsStatus(startResult.Message, CadGreen);
+                    System.Windows.Forms.Application.DoEvents();
+                }
                 var client = new AgentLiteClient(settings);
                 var result = await client.TestModelAsync();
                 SetSettingsStatus(result.Message, result.Success ? CadGreen : CadOrange);

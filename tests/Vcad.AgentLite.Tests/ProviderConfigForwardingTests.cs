@@ -73,7 +73,7 @@ public class ProviderConfigForwardingTests
             {
                 name = "openai",
                 base_url = server.BaseUrl,
-                model = "gpt-4o-mini",
+                model = "gpt-5",
                 api_key = "unit-test-token",
                 strict_json = true,
             },

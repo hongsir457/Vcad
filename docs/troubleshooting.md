@@ -37,10 +37,11 @@ Another plugin or macro on the machine already registers `VCAD`. Options:
 - Use `_VCAD` (AutoCAD's "force global" alias).
 - Rename the registration in your bundle to `VCAD_OPEN` and rebuild.
 
-## Sidebar opens but `Run DSL` does nothing
+## Sidebar opens but execution does nothing
 
-Open the **DSL Input** tab, click **Load Sample**, then **Run DSL** and
-read the log panel.
+Use the **Chat** tab, submit a request, review the generated Intent / Plan /
+Preview cards, then confirm execution. If execution fails, read the Result or
+Error card in the chat panel.
 
 - `E_SCHEMA_INVALID` — JSON syntax is broken.
 - `E_COMMAND_NOT_ALLOWED` — command type is not in the v0.1 whitelist:
@@ -61,8 +62,13 @@ report with the full crash log (Drwatson / Windows Event Viewer).
 
 ## "Test Connection" in Model Settings always fails
 
-- Is `Vcad.AgentLite` actually running on the configured port?
-  Check: open `http://127.0.0.1:8765/health` in a browser (or `curl`).
+- Is `Vcad.AgentLite` actually running on the configured port? The plugin
+  should auto-start the bundled service when the sidebar opens. Check health:
+  `http://127.0.0.1:8765/health` with the token from
+  `%APPDATA%\VCAD\agent.token`.
+- If Agent Lite is connected but the model test fails, the provider rejected
+  the configured model or key. Pick a model your provider project can access
+  and click **Save** before testing again.
 - Did you set `VCAD_AGENT_TOKEN` on the Agent? Then the plugin needs the
   same token. The plugin writes its token to `%APPDATA%\VCAD\agent.token`.
 - Is a local antivirus / firewall blocking loopback HTTP?

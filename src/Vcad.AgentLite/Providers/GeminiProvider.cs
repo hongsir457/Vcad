@@ -20,7 +20,7 @@ public class GeminiProvider : IProvider
         var baseUrl = string.IsNullOrEmpty(options.BaseUrl)
             ? "https://generativelanguage.googleapis.com"
             : options.BaseUrl;
-        var model = string.IsNullOrEmpty(options.Model) ? "gemini-1.5-flash" : options.Model;
+        var model = string.IsNullOrEmpty(options.Model) ? "gemini-3.5-flash" : options.Model;
 
         var prompt = PromptLibrary.SystemPrompt() + "\n\nUser request:\n" + (req.text ?? "").Trim();
         var parts = AttachmentPromptBuilder.BuildGeminiParts(new ParseRequest

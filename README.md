@@ -118,12 +118,18 @@ See [docs/install.md](docs/install.md) for detailed setup, and
 [docs/troubleshooting.md](docs/troubleshooting.md) for the common loading
 failures (SECURELOAD, missing .NET 4.7, AutoCAD LT, etc).
 
-## Agent Lite (optional)
+## Agent Lite
 
 `Vcad.AgentLite` is a tiny local HTTP service (`127.0.0.1:8765`) that turns
 natural-language input into VCAD DSL. The plugin only talks to it on
-localhost. The service can call your own provider (OpenAI / Anthropic /
-Ollama / custom HTTP). **You bring the key.**
+localhost. The service can call your own provider (OpenAI / DeepSeek /
+Anthropic / Gemini / Ollama / custom HTTP). **You bring the key.**
+
+`tools/pack-bundle.ps1` publishes Agent Lite into
+`Contents\AgentLite\Vcad.AgentLite.exe`. When the VCAD sidebar opens, the
+plugin checks `/health` and automatically starts the bundled service if it is
+not already running. Manual startup is still useful for development or
+troubleshooting:
 
 ```bash
 cd src/Vcad.AgentLite
@@ -137,7 +143,7 @@ Settings** tab or set environment variables before starting Agent Lite:
 ```bash
 VCAD_AGENT_PROVIDER=openai \
 VCAD_AGENT_API_KEY=sk-... \
-VCAD_AGENT_MODEL=gpt-4o-mini \
+VCAD_AGENT_MODEL=gpt-5 \
 dotnet run
 ```
 

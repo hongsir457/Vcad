@@ -24,7 +24,7 @@ public class OpenAiProvider : IProvider
             ? (isDeepSeek ? "https://api.deepseek.com" : "https://api.openai.com")
             : options.BaseUrl;
         var model = string.IsNullOrEmpty(options.Model)
-            ? (isDeepSeek ? "deepseek-v4-flash" : "gpt-4o-mini")
+            ? (isDeepSeek ? "deepseek-v4-flash" : "gpt-5")
             : options.Model;
 
         var systemPrompt = PromptLibrary.SystemPrompt();

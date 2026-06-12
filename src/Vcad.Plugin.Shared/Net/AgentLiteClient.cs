@@ -110,7 +110,7 @@ namespace Vcad.Plugin.Net
                 catch (Exception ex)
                 {
                     return ConnectionCheckResult.Fail(
-                        "Agent Lite 未连接。请先运行: dotnet run --project src\\Vcad.AgentLite\\Vcad.AgentLite.csproj -c Release。详情: " +
+                        "Agent Lite is not reachable. The plugin will auto-start the bundled service when available. Details: " +
                         SecretRedactor.Redact(ex.Message));
                 }
 

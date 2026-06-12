@@ -18,11 +18,11 @@
 
 .EXAMPLE
   # Build both, then install the 2017 bundle for the current user
-  pwsh tools/pack-bundle.ps1 -Target all
+  powershell -NoProfile -ExecutionPolicy Bypass -File tools/pack-bundle.ps1 -Target all
   Copy-Item bundle\Acad2017 "$env:APPDATA\Autodesk\ApplicationPlugins\VCAD-Acad2017.bundle" -Recurse -Force
 
 .EXAMPLE
-  pwsh tools/pack-bundle.ps1 -Target acad2017 -Zip
+  powershell -NoProfile -ExecutionPolicy Bypass -File tools/pack-bundle.ps1 -Target acad2017 -Zip
 
 .NOTES
   Autodesk DLLs (AcMgd, AcDbMgd, AcCoreMgd) are NEVER copied into Contents.
@@ -42,6 +42,31 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..')
 Set-Location $root
+
+function Publish-AgentLite {
+  param([string]$Contents)
+
+  $agentProj = "src\Vcad.AgentLite\Vcad.AgentLite.csproj"
+  $agentOut = Join-Path $Contents "AgentLite"
+  if (Test-Path $agentOut) {
+    Remove-Item $agentOut -Recurse -Force
+  }
+  New-Item -ItemType Directory -Path $agentOut -Force | Out-Null
+
+  Write-Host "[pack-bundle] dotnet publish $agentProj -> $agentOut" -ForegroundColor Cyan
+  dotnet publish $agentProj -c $Configuration -r win-x64 --self-contained true -o $agentOut /p:PublishSingleFile=false | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw "AgentLite publish failed" }
+
+  foreach ($name in @('AcMgd.dll','AcDbMgd.dll','AcCoreMgd.dll','Autodesk.AutoCAD.Stubs.dll')) {
+    if (Test-Path (Join-Path $agentOut $name)) {
+      throw "Refusing to ship banned file in AgentLite: $name"
+    }
+  }
+
+  if (-not (Test-Path (Join-Path $agentOut 'Vcad.AgentLite.exe'))) {
+    throw "Expected AgentLite executable missing under $agentOut"
+  }
+}
 
 function Build-One {
   param(
@@ -125,6 +150,8 @@ function Build-One {
     }
     Copy-Item $src (Join-Path $contents $name) -Force
   }
+
+  Publish-AgentLite -Contents $contents
 
   Write-Host "[pack-bundle] populated $contents" -ForegroundColor Green
   Get-ChildItem $contents -File | Select-Object Name, Length | Format-Table | Out-Host

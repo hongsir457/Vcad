@@ -60,7 +60,7 @@ them (sometimes it's an `inc-x64\` subfolder of the AutoCAD install).
 ## 3. Build + assemble the bundle
 
 ```powershell
-pwsh tools\pack-bundle.ps1 -Target acad2017
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\pack-bundle.ps1 -Target acad2017
 ```
 
 What this does:
@@ -72,7 +72,8 @@ What this does:
 3. Copies the built `Vcad.Plugin.Acad2017.dll`, `Vcad.Core.dll`,
    `Newtonsoft.Json.dll`, PdfPig DLLs, and required NuGet support DLLs into
    `bundle\Acad2017\Contents\`.
-4. **Strips out** any Autodesk managed DLL by name as a paranoid safety net.
+4. Publishes bundled Agent Lite into `bundle\Acad2017\Contents\AgentLite\`.
+5. **Strips out** any Autodesk managed DLL by name as a paranoid safety net.
 
 After it finishes you should see:
 
@@ -83,6 +84,8 @@ bundle\Acad2017\
     Vcad.Plugin.Acad2017.dll
     Vcad.Core.dll
     Newtonsoft.Json.dll
+    AgentLite\
+      Vcad.AgentLite.exe
     UglyToad.PdfPig.dll
     System.Memory.dll
 ```
@@ -109,8 +112,12 @@ silently reject the plugin.
    VCAD plugin loaded. Type VCAD to open the sidebar.
    ```
    If you don't, see `docs/troubleshooting.md`.
-4. Type `VCAD`. The sidebar opens with two tabs.
-5. **DSL Input** tab → click **Load Sample** → click **Run DSL**.
+4. Type `VCAD`. The sidebar opens with three tabs: **Chat**, **Config**, and
+   **Usage**. Agent Lite should be started automatically from the bundle; the
+   status should move to connected/online if port `8765` is free.
+5. Configure a working model profile in **Config**, then use **Chat** to enter
+   `draw a 6000 by 4000 rectangle with a VCAD DEMO label`. Review the
+   Intent / Plan / Preview cards and confirm execution.
 6. Result, in this order:
    - Two new layers `A-WALL` (color 7 / white) and `T-TEXT` (color 2 / yellow).
    - A 6000 × 4000 polyline rectangle on `A-WALL`.
@@ -123,34 +130,32 @@ silently reject the plugin.
 
 If steps 1–7 all pass, the plugin is verified.
 
-## 6. (Optional) Verify the Model Settings tab
+## 6. (Optional) Verify Agent Lite auto-start
 
-The natural-language → DSL flow is independent. To check the UI without
-spending a single API call:
+Open the VCAD sidebar and then check health locally:
 
-1. Open a second PowerShell window inside the repo:
-   ```powershell
-   dotnet run --project src\Vcad.AgentLite\Vcad.AgentLite.csproj -c Release
-   ```
-   This binds `127.0.0.1:8765` with the deterministic `echo` provider
-   (no key, no network). You should see
-   `Now listening on: http://127.0.0.1:8765`.
-2. Back in AutoCAD's VCAD sidebar → **Model Settings** tab → set
-   `Provider = custom`, `Agent Port = 8765`, click **Save**, click
-   **Test Connection**. Status should read **Connection OK.**
-3. Switch to **DSL Input**, type any text in the top box ("draw a
-   rectangle 6m x 4m"), click **Parse via Agent**. A `vcad_dsl_v1` JSON
-   appears in the DSL box. Click **Run DSL**.
+```powershell
+Invoke-RestMethod http://127.0.0.1:8765/health -Headers @{
+  "X-VCAD-Agent-Token" = (Get-Content "$env:APPDATA\VCAD\agent.token" -Raw)
+}
+```
+
+For development or troubleshooting, you can still run Agent Lite manually:
+
+```powershell
+dotnet run --project src\Vcad.AgentLite\Vcad.AgentLite.csproj -c Release
+```
 
 ## 7. (Optional) Use your own LLM
 
-Stop the AgentLite from step 6 (`Ctrl+C`). Restart it with your key in
-environment variables — never in any file in the repo:
+You can run Agent Lite manually with your key in environment variables for
+development, but the installed plugin normally starts the bundled service
+automatically:
 
 ```powershell
 $env:VCAD_AGENT_PROVIDER = "openai"
 $env:VCAD_AGENT_BASE_URL = "https://api.openai.com"
-$env:VCAD_AGENT_MODEL    = "gpt-4o-mini"
+$env:VCAD_AGENT_MODEL    = "gpt-5"
 $env:VCAD_AGENT_API_KEY  = "sk-..."   # your key, this shell only
 dotnet run --project src\Vcad.AgentLite\Vcad.AgentLite.csproj -c Release
 ```

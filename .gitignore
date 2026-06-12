@@ -47,3 +47,4 @@ secrets/
 bundle/*/Contents/*.dll
 bundle/*/Contents/*.pdb
 bundle/*/Contents/*.config
+bundle/*/Contents/AgentLite/
