@@ -33,7 +33,7 @@ public sealed class AgentTurnService
             ? (isDeepSeek ? "https://api.deepseek.com" : "https://api.openai.com")
             : options.BaseUrl;
         var model = string.IsNullOrWhiteSpace(options.Model)
-            ? (isDeepSeek ? "deepseek-v4-flash" : "gpt-5.5")
+            ? (isDeepSeek ? "deepseek-v4-flash" : "gpt-5")
             : options.Model;
 
         var payload = new
@@ -251,6 +251,8 @@ Rules:
 - Use tool_calls for CAD work. Do not emit AutoLISP, scripts, or command text unless a specific tool supports it.
 - Assistant replies, progress messages, status, errors, or explanations must stay in assistant_message, never cad.draw_text.
 - Use cad.draw_text only when the user explicitly asks for a drawing label, annotation, title, dimension, or note.
+- For CAD tool color args, use an AutoCAD ACI integer from 1 to 255 only. Omit color or use null for ByLayer. Do not send strings like "By Layer".
+- If a previous tool_result failed because of invalid args, correct the args and retry the tool instead of asking the initial intent question again.
 - If information is missing, ask a clarification in the panel.
 - Prefer observe -> small action -> observe loops.
 - Safety matters: avoid destructive or global edits unless the user clearly asks.
@@ -292,6 +294,11 @@ Rules:
             foreach (var result in req.tool_results)
             {
                 sb.AppendLine(JsonSerializer.Serialize(result));
+            }
+            if (req.tool_results.Any(x => !x.success))
+            {
+                sb.AppendLine();
+                sb.AppendLine("Important: at least one previous tool call failed. Diagnose the tool error, correct the arguments, and continue the same user task. Do not restart with the generic initial intent clarification unless the missing information cannot be inferred from the original user message, CAD observation, and tool error.");
             }
         }
 

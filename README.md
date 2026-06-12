@@ -122,7 +122,7 @@ Provider settings can be saved in the plugin UI or set as environment variables:
 ```powershell
 $env:VCAD_AGENT_PROVIDER = "openai"
 $env:VCAD_AGENT_BASE_URL = "https://api.openai.com"
-$env:VCAD_AGENT_MODEL    = "gpt-5.5"
+$env:VCAD_AGENT_MODEL    = "gpt-5"
 $env:VCAD_AGENT_API_KEY  = "sk-..."
 dotnet run --project src\Vcad.AgentLite\Vcad.AgentLite.csproj
 ```

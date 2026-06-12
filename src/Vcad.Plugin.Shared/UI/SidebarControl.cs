@@ -606,7 +606,7 @@ namespace Vcad.Plugin.UI
                 Padding = new Padding(10),
                 AutoSize = false,
             };
-            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 105));
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
             for (int i = 1; i < 16; i++)
@@ -649,7 +649,7 @@ namespace Vcad.Plugin.UI
 
             panel.Controls.Add(new Label { Text = Strings.LblProfile, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
             var profileRow = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight };
-            _cmbProfile = new ComboBox { Width = 180, DropDownStyle = ComboBoxStyle.DropDownList };
+            _cmbProfile = new ComboBox { Width = 180, DropDownWidth = 260, DropDownStyle = ComboBoxStyle.DropDownList };
             _cmbProfile.SelectedIndexChanged += (s, e) => OnProfileChanged();
             _btnNewProfile = new Button { Text = Strings.BtnNewProfile, Width = 60 };
             _btnNewProfile.Click += (s, e) => OnNewProfile();
@@ -661,17 +661,18 @@ namespace Vcad.Plugin.UI
             panel.Controls.Add(profileRow, 1, row++);
 
             panel.Controls.Add(new Label { Text = "模型厂家", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
-            _cmbProvider = new ComboBox { Width = 220, DropDownStyle = ComboBoxStyle.DropDownList };
+            _cmbProvider = new ComboBox { Width = 220, DropDownWidth = 260, Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
             _cmbProvider.Items.AddRange(new object[] { "openai", "deepseek", "anthropic", "gemini", "ollama", "custom" });
+            SetComboDropDownWidth(_cmbProvider, 260);
             _cmbProvider.SelectedIndexChanged += (s, e) => OnProviderChanged();
             panel.Controls.Add(_cmbProvider, 1, row++);
 
             panel.Controls.Add(new Label { Text = Strings.LblApiBaseUrl, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
-            _txtBaseUrl = new TextBox { Width = 320 };
+            _txtBaseUrl = new TextBox { Width = 320, Dock = DockStyle.Fill };
             panel.Controls.Add(_txtBaseUrl, 1, row++);
 
             panel.Controls.Add(new Label { Text = "模型型号", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
-            _cmbModel = new ComboBox { Width = 260, DropDownStyle = ComboBoxStyle.DropDown };
+            _cmbModel = new ComboBox { Width = 260, DropDownWidth = 340, Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDown };
             panel.Controls.Add(_cmbModel, 1, row++);
 
             panel.Controls.Add(new Label { Text = Strings.LblApiKey, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
@@ -696,9 +697,10 @@ namespace Vcad.Plugin.UI
             panel.Controls.Add(_numTimeout, 1, row++);
 
             panel.Controls.Add(new Label { Text = "执行模式", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
-            _cmbExecutionMode = new ComboBox { Width = 220, DropDownStyle = ComboBoxStyle.DropDownList };
+            _cmbExecutionMode = new ComboBox { Width = 220, DropDownWidth = 260, Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
             _cmbExecutionMode.Items.AddRange(new object[] { "确认后执行", "完全授权自动执行" });
             _cmbExecutionMode.SelectedIndex = 0;
+            SetComboDropDownWidth(_cmbExecutionMode, 260);
             panel.Controls.Add(_cmbExecutionMode, 1, row++);
 
             panel.Controls.Add(new Label { Text = "学习记忆", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
@@ -1777,6 +1779,7 @@ namespace Vcad.Plugin.UI
             var currentAttachments = attachments ?? new JArray();
             var currentObservation = cadObservation;
             var anyToolFailed = false;
+            var lastToolFailure = "";
 
             for (var turn = 1; turn <= 8; turn++)
             {
@@ -1796,6 +1799,15 @@ namespace Vcad.Plugin.UI
 
                 if (turnResult.NeedsClarification)
                 {
+                    if (anyToolFailed && IsGenericInitialClarification(turnResult.Clarification))
+                    {
+                        AddAssistantCard("CAD 助手",
+                            "上一步工具调用失败，我不会跳回初始意图选项。\r\n\r\n失败原因：" +
+                            (string.IsNullOrWhiteSpace(lastToolFailure) ? "工具参数或执行环境不正确。" : lastToolFailure) +
+                            "\r\n\r\n请直接补充缺少参数，或重新发送更具体的绘图要求。");
+                        SetChatStatus("工具失败，等待你补充具体参数。", CadOrange);
+                        return;
+                    }
                     AddClarificationCard(turnResult.Clarification, message);
                     SetChatStatus("需要补充信息，等待你选择。", CadOrange);
                     return;
@@ -1819,6 +1831,7 @@ namespace Vcad.Plugin.UI
                     if (result.Value<bool?>("success") != true)
                     {
                         anyToolFailed = true;
+                        lastToolFailure = ExtractToolFailure(result);
                     }
                 }
 
@@ -1827,6 +1840,32 @@ namespace Vcad.Plugin.UI
 
             AddAssistantCard("CAD 助手", "Agent 工具循环已达到 8 轮上限。当前不再继续自动执行，避免无限循环。");
             SetChatStatus("Agent 循环达到上限。", CadOrange);
+        }
+
+        private static bool IsGenericInitialClarification(JObject clarification)
+        {
+            var options = clarification?["options"] as JArray;
+            if (options == null || options.Count < 2) return false;
+            var text = string.Join(" ", options.Values<string>()).ToLowerInvariant();
+            return text.Contains("6000x4000") ||
+                (text.Contains("rectangle") && text.Contains("cancel")) ||
+                (text.Contains("snapshot") && text.Contains("cancel")) ||
+                (text.Contains("读取") && text.Contains("取消")) ||
+                (text.Contains("图纸") && text.Contains("取消"));
+        }
+
+        private static string ExtractToolFailure(JObject result)
+        {
+            if (result == null) return "";
+            var error = result.Value<string>("error");
+            if (!string.IsNullOrWhiteSpace(error)) return error;
+            var nested = result["result"] as JObject;
+            if (nested != null)
+            {
+                error = nested.Value<string>("message") ?? nested.Value<string>("error");
+                if (!string.IsNullOrWhiteSpace(error)) return error;
+            }
+            return result.ToString(Formatting.None);
         }
 
         private async Task<AgentTurnResult> WaitForAgentTurnAsync(Task<AgentTurnResult> turnTask)
@@ -2236,7 +2275,7 @@ namespace Vcad.Plugin.UI
         private static readonly Dictionary<string, (string BaseUrl, string Model)> ProviderDefaults =
             new Dictionary<string, (string, string)>(StringComparer.OrdinalIgnoreCase)
             {
-                { "openai",    ("https://api.openai.com", "gpt-5.5") },
+                { "openai",    ("https://api.openai.com", "gpt-5") },
                 { "deepseek",  ("https://api.deepseek.com", "deepseek-v4-flash") },
                 { "anthropic", ("https://api.anthropic.com", "claude-fable-5") },
                 { "gemini",    ("https://generativelanguage.googleapis.com", "gemini-3.5-flash") },
@@ -2247,7 +2286,7 @@ namespace Vcad.Plugin.UI
         private static readonly Dictionary<string, string[]> ProviderModels =
             new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
             {
-                { "openai", new[] { "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5", "gpt-4.1", "gpt-4o" } },
+                { "openai", new[] { "gpt-5", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-4.1", "gpt-4o" } },
                 { "deepseek", new[] { "deepseek-v4-flash", "deepseek-v4-pro" } },
                 { "anthropic", new[] { "claude-fable-5", "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5" } },
                 { "gemini", new[] { "gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite", "gemini-2.5-flash" } },
@@ -2258,7 +2297,7 @@ namespace Vcad.Plugin.UI
         private static readonly Dictionary<string, string[]> LegacyDefaultModels =
             new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
             {
-                { "openai", new[] { "gpt-4o-mini" } },
+                { "openai", new[] { "gpt-5.5", "gpt-4o-mini" } },
                 { "anthropic", new[] { "claude-3-5-haiku-latest", "claude-3-5-sonnet-latest" } },
                 { "gemini", new[] { "gemini-1.5-flash", "gemini-1.5-pro" } },
                 { "deepseek", new[] { "deepseek-chat", "deepseek-reasoner" } },
@@ -2371,6 +2410,23 @@ namespace Vcad.Plugin.UI
             {
                 _cmbModel.Text = current;
             }
+            SetComboDropDownWidth(_cmbModel, 340);
+        }
+
+        private static void SetComboDropDownWidth(ComboBox combo, int minWidth)
+        {
+            if (combo == null) return;
+            var width = Math.Max(minWidth, combo.Width);
+            using (var g = combo.CreateGraphics())
+            {
+                foreach (var item in combo.Items)
+                {
+                    var text = Convert.ToString(item) ?? "";
+                    var measured = (int)Math.Ceiling(g.MeasureString(text, combo.Font).Width) + 36;
+                    if (measured > width) width = measured;
+                }
+            }
+            combo.DropDownWidth = width;
         }
 
         private void LoadProfilesIntoUi()
@@ -2387,6 +2443,7 @@ namespace Vcad.Plugin.UI
                 AgentConfigStore.SaveAll(store);
                 _cmbProfile.Items.Add("default");
             }
+            SetComboDropDownWidth(_cmbProfile, 260);
             _cmbProfile.SelectedItem = store.ActiveProfileName ?? _cmbProfile.Items[0];
             ApplyProfileToUi(store.GetActiveOrFirst());
         }

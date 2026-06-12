@@ -2,6 +2,7 @@
 
 using System;
 using System.Diagnostics;
+using System.Globalization;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.Colors;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -173,7 +174,7 @@ namespace Vcad.Plugin.Execution
             var name = RequiredString(args, "name");
             ValidateLayerName(name);
             var layer = EnsureLayer(db, tr, name);
-            var color = OptionalInt(args, "color");
+            var color = OptionalColor(args, "color");
             if (color.HasValue)
             {
                 ValidateColor(color.Value);
@@ -310,7 +311,7 @@ namespace Vcad.Plugin.Execution
 
         private static void ApplyEntityColor(Entity entity, JObject args)
         {
-            var color = OptionalInt(args, "color");
+            var color = OptionalColor(args, "color");
             if (!color.HasValue) return;
             ValidateColor(color.Value);
             entity.Color = Color.FromColorIndex(ColorMethod.ByAci, (short)color.Value);
@@ -393,10 +394,78 @@ namespace Vcad.Plugin.Execution
             return token == null || token.Type == JTokenType.Null ? fallback : token.Value<double>();
         }
 
-        private static int? OptionalInt(JObject args, string name)
+        private static int? OptionalColor(JObject args, string name)
         {
             var token = args[name];
-            return token == null || token.Type == JTokenType.Null ? (int?)null : token.Value<int>();
+            if (token == null || token.Type == JTokenType.Null)
+            {
+                return null;
+            }
+
+            if (token.Type == JTokenType.Integer || token.Type == JTokenType.Float)
+            {
+                return NormalizeColorIndex(token.Value<int>());
+            }
+
+            var value = token.Value<string>();
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            var normalized = value.Trim()
+                .Replace(" ", "")
+                .Replace("_", "")
+                .Replace("-", "")
+                .ToLowerInvariant();
+            if (normalized == "bylayer" || normalized == "byblock" || normalized == "layer")
+            {
+                return null;
+            }
+            if (normalized.StartsWith("aci", StringComparison.Ordinal))
+            {
+                normalized = normalized.Substring(3);
+            }
+
+            int color;
+            if (int.TryParse(normalized, NumberStyles.Integer, CultureInfo.InvariantCulture, out color))
+            {
+                return NormalizeColorIndex(color);
+            }
+
+            switch (normalized)
+            {
+                case "red":
+                    return 1;
+                case "yellow":
+                    return 2;
+                case "green":
+                    return 3;
+                case "cyan":
+                    return 4;
+                case "blue":
+                    return 5;
+                case "magenta":
+                case "purple":
+                    return 6;
+                case "white":
+                case "black":
+                    return 7;
+                case "gray":
+                case "grey":
+                    return 8;
+                default:
+                    throw new InvalidOperationException("'color' must be an AutoCAD ACI number, ByLayer, or a known color name.");
+            }
+        }
+
+        private static int? NormalizeColorIndex(int color)
+        {
+            if (color == 0 || color == 256)
+            {
+                return null;
+            }
+            return color;
         }
 
         private static void ValidateLayerName(string name)
