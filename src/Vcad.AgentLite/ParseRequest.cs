@@ -8,6 +8,7 @@ public class ParseRequest
     public ParseOptions? options { get; set; }
     public ProviderConfig? provider { get; set; }
     public List<ParseAttachment> attachments { get; set; } = new();
+    public System.Text.Json.Nodes.JsonObject? cad_state { get; set; }
 }
 
 public class ParseAttachment

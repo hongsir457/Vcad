@@ -8,6 +8,7 @@
 // AutoCAD.
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
@@ -172,11 +173,13 @@ namespace Autodesk.AutoCAD.DatabaseServices
         public void TransformBy(Autodesk.AutoCAD.Geometry.Matrix3d m) { }
     }
 
-    public class SymbolTable : DBObject
+    public class SymbolTable : DBObject, IEnumerable<ObjectId>
     {
         public bool Has(string name) => false;
         public ObjectId this[string name] => default(ObjectId);
         public ObjectId Add(SymbolTableRecord record) => default(ObjectId);
+        public IEnumerator<ObjectId> GetEnumerator() { yield break; }
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     public class SymbolTableRecord : DBObject
@@ -186,11 +189,13 @@ namespace Autodesk.AutoCAD.DatabaseServices
 
     public class BlockTable : SymbolTable { }
 
-    public class BlockTableRecord : SymbolTableRecord
+    public class BlockTableRecord : SymbolTableRecord, IEnumerable<ObjectId>
     {
         public const string ModelSpace = "*MODEL_SPACE";
         public const string PaperSpace = "*PAPER_SPACE";
         public ObjectId AppendEntity(Entity ent) => default(ObjectId);
+        public IEnumerator<ObjectId> GetEnumerator() { yield break; }
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     public class LayerTable : SymbolTable { }
@@ -235,6 +240,17 @@ namespace Autodesk.AutoCAD.DatabaseServices
         public TextVerticalMode VerticalMode { get; set; }
     }
 
+    public class DBObjectCollection : List<DBObject> { }
+
+    public class BlockReference : Entity
+    {
+        public string Name { get; set; }
+        public string BlockName { get; set; }
+        public Autodesk.AutoCAD.Geometry.Point3d Position { get; set; }
+        public double Rotation { get; set; }
+        public void Explode(DBObjectCollection collection) { }
+    }
+
     public class Transaction : DisposableWrapper
     {
         public DBObject GetObject(ObjectId id, OpenMode mode) => null;
@@ -255,6 +271,7 @@ namespace Autodesk.AutoCAD.DatabaseServices
         public ObjectId LinetypeTableId => default(ObjectId);
         public ObjectId TextStyleTableId => default(ObjectId);
         public TransactionManager TransactionManager { get; } = new TransactionManager();
+        public string Filename { get; set; }
     }
 }
 
@@ -277,6 +294,7 @@ namespace Autodesk.AutoCAD.ApplicationServices
 
     public class Document
     {
+        public string Name { get; set; }
         public DatabaseServices.Database Database { get; } = new DatabaseServices.Database();
         public Autodesk.AutoCAD.EditorInput.Editor Editor { get; } = new Autodesk.AutoCAD.EditorInput.Editor();
         public DocumentLock LockDocument() => new DocumentLock();

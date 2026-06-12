@@ -21,6 +21,7 @@ namespace Vcad.Plugin.Pipeline
         public JObject CadIr { get; set; }
         public JObject Preview { get; set; }
         public SafetyReport Safety { get; set; }
+        public JObject CadState { get; set; }
         public string InterpreterDsl { get; set; }
         public CadSessionContext Session { get; set; }
         public CadTaskRecord TaskRecord { get; set; }
@@ -183,13 +184,18 @@ namespace Vcad.Plugin.Pipeline
 
         public static CadPipelineCandidate Interpret(string naturalLanguage, string adapterDraftDsl)
         {
+            return Interpret(naturalLanguage, adapterDraftDsl, null);
+        }
+
+        public static CadPipelineCandidate Interpret(string naturalLanguage, string adapterDraftDsl, JObject cadState)
+        {
             var now = DateTime.UtcNow;
             var taskId = "task_" + now.ToString("yyyyMMddHHmmssfff");
             var parsed = TryParseObject(adapterDraftDsl);
             var dslValidation = DslValidator.ParseAndValidate(adapterDraftDsl);
             var session = CreateSessionContext(now);
-            var intent = BuildIntent(naturalLanguage, parsed, session);
-            var taskPlan = BuildTaskPlan(naturalLanguage, parsed);
+            var intent = BuildIntent(naturalLanguage, parsed, session, cadState);
+            var taskPlan = BuildTaskPlan(naturalLanguage, parsed, cadState);
             var cadIr = BuildCadIr(naturalLanguage, parsed, session);
 
             var candidate = new CadPipelineCandidate
@@ -201,6 +207,7 @@ namespace Vcad.Plugin.Pipeline
                 Intent = intent,
                 TaskPlan = taskPlan,
                 CadIr = cadIr,
+                CadState = cadState,
             };
 
             var validationBlocks = ValidateCadIrForTask(cadIr, session, dslValidation).ToList();
@@ -443,11 +450,18 @@ namespace Vcad.Plugin.Pipeline
             var stepText = steps == null
                 ? ""
                 : string.Join("\r\n", steps.Select(s => "- " + (s["description"]?.Value<string>() ?? s["name"]?.Value<string>())));
+            var state = candidate.TaskPlan["drawing_state"] as JObject;
+            var stateText = state == null
+                ? ""
+                : "\r\nDWG 状态: 图元 " + (state["entity_count"]?.Value<int>() ?? 0) +
+                  "，块内展开 " + (state["exploded_entity_count"]?.Value<int>() ?? 0) +
+                  "，图层 " + (state["layer_count"]?.Value<int>() ?? 0) +
+                  "，截断 " + ((state["truncated"]?.Value<bool>() ?? false) ? "是" : "否");
             return "Task Plan: " + candidate.TaskType + "\r\n" +
                    "状态机: " + candidate.TaskRecord.Status + "\r\n" +
                    "Static Risk: " + candidate.TaskRecord.StaticRisk["decision"]?["risk_level"]?.Value<string>() + "\r\n" +
                    "Dynamic Risk: " + candidate.TaskRecord.DynamicRisk["decision"]?["risk_level"]?.Value<string>() + "\r\n" +
-                   stepText;
+                   stepText + stateText;
         }
 
         public static string FormatPreview(CadPipelineCandidate candidate)
@@ -516,7 +530,7 @@ namespace Vcad.Plugin.Pipeline
             }
         }
 
-        private static JObject BuildIntent(string nl, JObject dsl, CadSessionContext session)
+        private static JObject BuildIntent(string nl, JObject dsl, CadSessionContext session, JObject cadState)
         {
             return new JObject
             {
@@ -524,6 +538,7 @@ namespace Vcad.Plugin.Pipeline
                 ["intent"] = ResolveIntent(nl, dsl),
                 ["source"] = "natural_language",
                 ["utterance"] = nl,
+                ["drawing_state"] = SummarizeCadState(cadState),
                 ["target"] = new JObject
                 {
                     ["space"] = session.ActiveSpace,
@@ -544,15 +559,17 @@ namespace Vcad.Plugin.Pipeline
             };
         }
 
-        private static JObject BuildTaskPlan(string nl, JObject dsl)
+        private static JObject BuildTaskPlan(string nl, JObject dsl, JObject cadState)
         {
             return new JObject
             {
                 ["schema"] = "cad_task_plan_v1",
                 ["task_type"] = ResolveAction(nl, dsl),
+                ["drawing_state"] = SummarizeCadState(cadState),
                 ["steps"] = new JArray
                 {
                     Step("intent", "parse_intent", "解析自然语言并生成结构化 Intent"),
+                    Step("inspect", "inspect_dwg_memory", "读取当前打开 DWG 的图层、图元、块引用，并展开块内图元作为只读上下文"),
                     Step("clarify", "clarification_gate", "检查图层、范围、对象类型、单位和操作目标是否明确"),
                     Step("plan", "build_task_plan", "生成可展示的 Task Plan"),
                     Step("ir", "generate_cad_ir", "生成不可变 CAD-IR"),
@@ -564,6 +581,35 @@ namespace Vcad.Plugin.Pipeline
                     Step("execute", "execute_with_preflight", "执行前重新 Dry Run 防 TOCTOU，再交给 AdapterCommand"),
                     Step("audit", "write_audit_log", "记录关键状态变更"),
                 },
+            };
+        }
+
+        private static JObject SummarizeCadState(JObject cadState)
+        {
+            var summary = cadState?["summary"] as JObject;
+            if (summary == null)
+            {
+                return new JObject
+                {
+                    ["available"] = false,
+                    ["entity_count"] = 0,
+                    ["top_level_entity_count"] = 0,
+                    ["exploded_entity_count"] = 0,
+                    ["block_reference_count"] = 0,
+                    ["layer_count"] = 0,
+                    ["truncated"] = false,
+                };
+            }
+
+            return new JObject
+            {
+                ["available"] = true,
+                ["entity_count"] = summary["entity_count"]?.Value<int>() ?? 0,
+                ["top_level_entity_count"] = summary["top_level_entity_count"]?.Value<int>() ?? 0,
+                ["exploded_entity_count"] = summary["exploded_entity_count"]?.Value<int>() ?? 0,
+                ["block_reference_count"] = summary["block_reference_count"]?.Value<int>() ?? 0,
+                ["layer_count"] = summary["layer_count"]?.Value<int>() ?? 0,
+                ["truncated"] = summary["truncated"]?.Value<bool>() ?? false,
             };
         }
 

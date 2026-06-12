@@ -19,6 +19,10 @@ Schema (vcad_dsl_v1):
 }
 
 Rules:
+- The user prompt may include a Current DWG memory snapshot. Treat it as
+  read-only CAD state from the open drawing, including block references expanded
+  in memory. Use it to understand existing layers/entities/blocks before
+  drafting commands.
 - Only emit command types from this list: create_layer, draw_line, draw_rectangle, draw_text.
 - Coordinates and dimensions are in millimeters.
 - Every command must have a unique 'id' within this request.

@@ -5,6 +5,7 @@ namespace Vcad.AgentLite.Providers;
 internal static class AttachmentPromptBuilder
 {
     private const int MaxAttachmentTextChars = 16000;
+    private const int MaxCadStateChars = 32000;
     private const int MaxPromptChars = 48000;
 
     public static string BuildUserPrompt(ParseRequest req)
@@ -21,6 +22,18 @@ internal static class AttachmentPromptBuilder
             {
                 AppendAttachment(sb, attachment);
             }
+        }
+
+        if (req.cad_state != null)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Current DWG memory snapshot (read-only CAD state, including expanded block entities when available):");
+            var cadState = req.cad_state.ToJsonString();
+            if (cadState.Length > MaxCadStateChars)
+            {
+                cadState = cadState.Substring(0, MaxCadStateChars) + "\n...[cad_state truncated]";
+            }
+            sb.AppendLine(cadState);
         }
 
         var prompt = sb.ToString().Trim();

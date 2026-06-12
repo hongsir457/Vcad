@@ -96,6 +96,32 @@ public class HttpEndpointTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task Parse_accepts_cad_state_snapshot()
+    {
+        var client = _factory.CreateClient();
+        var req = new
+        {
+            request_id = "req-cad-state-1",
+            text = "label the open drawing",
+            cad_state = new
+            {
+                schema = "cad_drawing_snapshot_v1",
+                summary = new
+                {
+                    entity_count = 3,
+                    top_level_entity_count = 2,
+                    exploded_entity_count = 1,
+                    block_reference_count = 1,
+                    layer_count = 2,
+                    truncated = false,
+                },
+            },
+        };
+        var resp = await client.PostAsJsonAsync("/parse", req);
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+    }
+
+    [Fact]
     public async Task Parse_rejects_oversize_body()
     {
         var client = _factory.CreateClient();

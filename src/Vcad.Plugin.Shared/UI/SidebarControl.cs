@@ -17,6 +17,7 @@ using Newtonsoft.Json.Linq;
 using UglyToad.PdfPig;
 using Vcad.Core.Results;
 using Vcad.Plugin.Config;
+using Vcad.Plugin.Context;
 using Vcad.Plugin.Execution;
 using Vcad.Plugin.Net;
 using Vcad.Plugin.Pipeline;
@@ -1490,7 +1491,6 @@ namespace Vcad.Plugin.UI
                 var attachmentPayloads = BuildAttachmentPayloads(attachmentWarnings);
                 var prompt = BuildPromptWithAttachments(text);
                 var displayText = BuildDisplayTextWithAttachments(text);
-                _attachedFiles.Clear();
 
 #if NETFRAMEWORK
                 StopVoiceInputSilently();
@@ -1498,18 +1498,24 @@ namespace Vcad.Plugin.UI
                 _btnUseAgent.Enabled = false;
                 if (_btnAttachFile != null) _btnAttachFile.Enabled = false;
                 if (_btnVoiceInput != null) _btnVoiceInput.Enabled = false;
+                SetChatStatus("正在读取当前 DWG 内存状态...", CadCyan);
+                System.Windows.Forms.Application.DoEvents();
+                var cadState = DrawingSnapshotCollector.CaptureActive();
+                _attachedFiles.Clear();
+
                 _txtNaturalLanguage.Text = "";
                 AddUserCard(displayText);
                 if (attachmentWarnings.Count > 0)
                 {
                     AddAssistantCard("附件处理", string.Join("\r\n", attachmentWarnings));
                 }
+                AddAssistantCard("DWG Memory Snapshot", DrawingSnapshotCollector.FormatSummary(cadState));
                 SetChatStatus("正在理解意图...", CadCyan);
                 System.Windows.Forms.Application.DoEvents();
 
                 var settings = AgentConfigStore.LoadActive();
                 var client = new AgentLiteClient(settings);
-                var dsl = await client.ParseAsync(prompt, attachmentPayloads);
+                var dsl = await client.ParseAsync(prompt, attachmentPayloads, cadState);
 
                 if (dsl == null)
                 {
@@ -1522,7 +1528,7 @@ namespace Vcad.Plugin.UI
                 }
 
                 SetChatStatus("正在生成 Intent / Task Plan / CAD-IR...", CadCyan);
-                _pendingCandidate = CadAgentPipeline.Interpret(prompt, dsl);
+                _pendingCandidate = CadAgentPipeline.Interpret(prompt, dsl, cadState);
                 AddPipelineCards(_pendingCandidate);
                 SetChatStatus(_pendingCandidate.Safety.IsAllowed
                     ? "Preview 已生成，等待确认后执行。"

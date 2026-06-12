@@ -123,6 +123,32 @@ public class CadAgentPipelineTests
         Assert.Single(candidate.TaskRecord.ExecuteKeys);
     }
 
+    [Fact]
+    public void Cad_state_snapshot_is_included_in_intent_and_plan()
+    {
+        var cadState = JObject.Parse("""
+        {
+          "schema": "cad_drawing_snapshot_v1",
+          "summary": {
+            "entity_count": 12,
+            "top_level_entity_count": 8,
+            "exploded_entity_count": 4,
+            "block_reference_count": 2,
+            "layer_count": 3,
+            "truncated": false
+          }
+        }
+        """);
+
+        var candidate = CadAgentPipeline.Interpret("annotate existing plan", ValidRectangleDsl(), cadState);
+
+        Assert.True(candidate.Intent["drawing_state"]!["available"]!.Value<bool>());
+        Assert.Equal(12, candidate.Intent["drawing_state"]!["entity_count"]!.Value<int>());
+        Assert.Equal(4, candidate.TaskPlan["drawing_state"]!["exploded_entity_count"]!.Value<int>());
+        Assert.Contains(candidate.TaskPlan["steps"]!.Children(), s => s["name"]!.Value<string>() == "inspect_dwg_memory");
+        Assert.Contains("块内展开 4", CadAgentPipeline.FormatPlan(candidate));
+    }
+
     private static JProperty? FindProperty(JToken token, string name)
     {
         if (token is JObject obj)

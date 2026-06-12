@@ -42,10 +42,15 @@ namespace Vcad.Plugin.Net
 
         public Task<string> ParseAsync(string naturalLanguage)
         {
-            return ParseAsync(naturalLanguage, null);
+            return ParseAsync(naturalLanguage, null, null);
         }
 
         public async Task<string> ParseAsync(string naturalLanguage, JArray attachments)
+        {
+            return await ParseAsync(naturalLanguage, attachments, null).ConfigureAwait(false);
+        }
+
+        public async Task<string> ParseAsync(string naturalLanguage, JArray attachments, JObject cadState)
         {
             if (string.IsNullOrWhiteSpace(naturalLanguage)) return null;
 
@@ -60,6 +65,10 @@ namespace Vcad.Plugin.Net
             if (attachments != null && attachments.Count > 0)
             {
                 payload["attachments"] = attachments;
+            }
+            if (cadState != null)
+            {
+                payload["cad_state"] = cadState;
             }
 
             using (var client = NewClient())

@@ -28,8 +28,16 @@ voice or typed natural-language requests into a validated CAD task pipeline.
   - **Usage** — view local session request and success/failure counters.
 - Voice input uses Windows local speech recognition when available; audio is
   not uploaded by the plugin.
+- Before model parsing, the plugin captures a read-only in-memory snapshot of
+  the open DWG: layers, top-level entities, block references, and entities
+  produced by exploding block references in memory. This gives the agent drawing
+  state for intent understanding and planning without granting execution
+  access.
 - Execution goes through the CAD agent pipeline: Intent → Task Plan → CAD-IR →
   Validator/Risk Policy → Preview/Confirm → AdapterCommand → Result/Audit.
+- AutoCAD execution still has one controlled route: CAD-IR is adapted into the
+  VCAD DSL whitelist, then the local AutoCAD .NET executor runs it after
+  Preview/Confirm. The model cannot directly invoke arbitrary AutoCAD commands.
 - Each request runs inside one `LockDocument` + one `Transaction` + one Undo
   group, so a single `Ctrl+Z` rolls back the whole batch.
 - Returns a `vcad_result_v1` JSON including `dsl_id ↔ Handle/ObjectId`
