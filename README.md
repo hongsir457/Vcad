@@ -89,8 +89,20 @@ AutoCAD LT is not supported (it has no managed plugin host).
 1. Install the bundle that matches your AutoCAD version (`bundle/Acad2017` or
    `bundle/Acad2025`) to one of:
 
-   - `%APPDATA%\Autodesk\ApplicationPlugins\VCAD.bundle` (current user)
-   - `%PROGRAMDATA%\Autodesk\ApplicationPlugins\VCAD.bundle` (all users)
+   - `%APPDATA%\Autodesk\ApplicationPlugins\VCAD-Acad2017.bundle` (current user)
+   - `%PROGRAMDATA%\Autodesk\ApplicationPlugins\VCAD-Acad2017.bundle` (all users)
+
+   Stop AutoCAD and any bundled Agent Lite process before replacing an
+   installed bundle:
+
+   ```powershell
+   $dest = "$env:APPDATA\Autodesk\ApplicationPlugins\VCAD-Acad2017.bundle"
+   Get-Process -Name Vcad.AgentLite -ErrorAction SilentlyContinue |
+     Where-Object { $_.Path -like "$dest*" } |
+     Stop-Process -Force
+   if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+   Copy-Item bundle\Acad2017 $dest -Recurse -Force
+   ```
 
 2. Start AutoCAD. Type `VCAD` to open the sidebar.
 

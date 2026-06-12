@@ -43,11 +43,40 @@ $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..')
 Set-Location $root
 
+function Stop-AgentLiteUnderPath {
+  param(
+    [string]$PathPrefix,
+    [string]$Reason
+  )
+
+  if ([string]::IsNullOrWhiteSpace($PathPrefix) -or -not (Test-Path $PathPrefix)) {
+    return
+  }
+
+  $prefix = [System.IO.Path]::GetFullPath($PathPrefix).TrimEnd('\')
+  $agents = Get-Process -Name Vcad.AgentLite -ErrorAction SilentlyContinue | Where-Object {
+    $_.Path -and [System.IO.Path]::GetFullPath($_.Path).StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)
+  }
+  if ($agents) {
+    Write-Host "[deploy] stopping $($agents.Count) Vcad.AgentLite process(es) for $Reason" -ForegroundColor Yellow
+    $agents | Stop-Process -Force
+    Start-Sleep -Seconds 1
+  }
+}
+
+function Stop-InstalledAgentLite {
+  foreach ($pluginRoot in @("$env:APPDATA\Autodesk\ApplicationPlugins",
+                           "$env:PROGRAMDATA\Autodesk\ApplicationPlugins")) {
+    Stop-AgentLiteUnderPath -PathPrefix $pluginRoot -Reason $pluginRoot
+  }
+}
+
 function Publish-AgentLite {
   param([string]$Contents)
 
   $agentProj = "src\Vcad.AgentLite\Vcad.AgentLite.csproj"
   $agentOut = Join-Path $Contents "AgentLite"
+  Stop-AgentLiteUnderPath -PathPrefix $agentOut -Reason $agentOut
   if (Test-Path $agentOut) {
     Remove-Item $agentOut -Recurse -Force
   }
@@ -170,6 +199,10 @@ function Deploy-One {
 
   $bundle  = "bundle\$Name"
   $dest    = Join-Path $env:APPDATA "Autodesk\ApplicationPlugins\VCAD-$Name.bundle"
+
+  # Agent Lite is started from inside Contents\AgentLite and keeps those
+  # binaries locked even after AutoCAD exits.
+  Stop-InstalledAgentLite
 
   # Kill any running AutoCAD so its loaded DLL handle is released.
   $acad = Get-Process -Name acad -ErrorAction SilentlyContinue

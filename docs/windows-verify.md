@@ -96,8 +96,11 @@ Easiest — current user, no admin rights:
 
 ```powershell
 $dest = "$env:APPDATA\Autodesk\ApplicationPlugins\VCAD-Acad2017.bundle"
+Get-Process -Name Vcad.AgentLite -ErrorAction SilentlyContinue |
+  Where-Object { $_.Path -like "$dest*" } |
+  Stop-Process -Force
 if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
-Copy-Item bundle\Acad2017 $dest -Recurse
+Copy-Item bundle\Acad2017 $dest -Recurse -Force
 ```
 
 This path is in AutoCAD's default `TRUSTEDPATHS`, so `SECURELOAD` won't
