@@ -84,6 +84,32 @@ public class CadAgentPipelineTests
     }
 
     [Fact]
+    public void Assistant_reply_text_is_rejected_before_execution()
+    {
+        var assistantTextDsl = """
+        {
+          "version": "vcad_dsl_v1",
+          "commands": [
+            {
+              "type": "draw_text",
+              "id": "T-ASSISTANT",
+              "text": "我可以创建图层、画直线和矩形，并放置文字标注（单位mm，WCS）。请告诉我要画什么。",
+              "position": [0, 0],
+              "height": 250,
+              "layer": "T-TEXT"
+            }
+          ]
+        }
+        """;
+
+        var candidate = CadAgentPipeline.Interpret("draw a car", assistantTextDsl);
+
+        Assert.False(candidate.Safety.IsAllowed);
+        Assert.Equal("rejected", candidate.TaskRecord.Status);
+        Assert.Contains(candidate.Safety.Blocks, b => b.Contains("assistant/UI reply", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void Execute_preflight_marks_task_stale_when_preview_snapshot_changes()
     {
         var candidate = CadAgentPipeline.Interpret("draw a rectangle", ValidRectangleDsl());

@@ -678,6 +678,11 @@ namespace Vcad.Plugin.Pipeline
             {
                 yield return error;
             }
+
+            foreach (var error in ValidateStructuredCommandContent(cadIr))
+            {
+                yield return error;
+            }
         }
 
         private static void ValidateCadIr(JObject cadIr, CadSessionContext session)
@@ -746,6 +751,56 @@ namespace Vcad.Plugin.Pipeline
             {
                 ValidateExportOperation(cadIr, session);
             }
+        }
+
+        private static IEnumerable<string> ValidateStructuredCommandContent(JObject cadIr)
+        {
+            foreach (var command in StructuredCommands(cadIr))
+            {
+                var type = command.Value<string>("type");
+                if (string.Equals(type, "draw_text", StringComparison.OrdinalIgnoreCase))
+                {
+                    var text = command.Value<string>("text");
+                    if (LooksLikeAssistantReplyText(text))
+                    {
+                        yield return "draw_text contains assistant/UI reply text; conversational replies must stay in the chat panel.";
+                    }
+                }
+            }
+        }
+
+        private static bool LooksLikeAssistantReplyText(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            var compact = text.Trim();
+            if (compact.Length < 12) return false;
+
+            var lower = compact.ToLowerInvariant();
+            var suspiciousFragments = new[]
+            {
+                "voicecad",
+                "cad 助手",
+                "agent 进度",
+                "技术原因",
+                "没有修改当前图纸",
+                "确认前不会修改图纸",
+                "我已读取当前 dwg",
+                "我会先读取当前图纸",
+                "模型仍在生成",
+                "正在调用模型",
+                "请告诉我要画什么",
+                "可以打字",
+                "麦克风",
+                "我可以创建图层",
+                "可以创建图层",
+                "画直线和矩形",
+                "放置文字标注",
+            };
+            foreach (var fragment in suspiciousFragments)
+            {
+                if (lower.Contains(fragment.ToLowerInvariant())) return true;
+            }
+            return false;
         }
 
         private static void ValidateExportOperation(JObject cadIr, CadSessionContext session)

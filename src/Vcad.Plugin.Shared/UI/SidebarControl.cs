@@ -689,7 +689,7 @@ namespace Vcad.Plugin.UI
             panel.Controls.Add(_chkStrictJson, 1, row++);
 
             panel.Controls.Add(new Label { Text = Strings.LblTimeoutSec, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
-            _numTimeout = new NumericUpDown { Minimum = 5, Maximum = 600, Value = 30, Width = 90 };
+            _numTimeout = new NumericUpDown { Minimum = 5, Maximum = 1800, Value = 300, Width = 90 };
             panel.Controls.Add(_numTimeout, 1, row++);
 
             panel.Controls.Add(new Label { Text = Strings.LblAutoRun, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
@@ -1595,7 +1595,8 @@ namespace Vcad.Plugin.UI
                 }
 
                 var client = new AgentLiteClient(settings);
-                var dsl = await client.ParseAsync(prompt, attachmentPayloads, cadState);
+                AddAssistantCard("Agent 进度", "正在调用模型生成结构化 CAD 草案。复杂图形会先被拆成基础线段、矩形和文字；当前图纸还不会被修改。");
+                var dsl = await WaitForModelDraftAsync(client.ParseAsync(prompt, attachmentPayloads, cadState));
 
                 if (dsl == null)
                 {
@@ -1609,6 +1610,7 @@ namespace Vcad.Plugin.UI
                 }
 
                 SetChatStatus("正在生成 Intent / Task Plan / CAD-IR...", CadCyan);
+                AddAssistantCard("Agent 进度", "模型草案已返回。现在开始生成 Intent、Task Plan、CAD-IR，并执行安全检查。");
                 _pendingCandidate = CadAgentPipeline.Interpret(prompt, dsl, cadState);
                 AddAssistantCard("CAD 助手", BuildNaturalPreviewReply(_pendingCandidate));
                 AddPipelineCards(_pendingCandidate);
@@ -1641,6 +1643,31 @@ namespace Vcad.Plugin.UI
                 if (r.Entities != null) count += r.Entities.Count;
             }
             return count;
+        }
+
+        private async Task<string> WaitForModelDraftAsync(Task<string> parseTask)
+        {
+            var checkpoints = new[]
+            {
+                new { DelayMs = 15000, Message = "模型仍在生成 CAD 草案。复杂对象会被拆成当前执行器支持的基础图元；图纸仍未修改。" },
+                new { DelayMs = 30000, Message = "还在等待模型返回结构化结果。你可以继续等待；如果经常超过 1 分钟，建议换更快模型或提高超时时间。" },
+                new { DelayMs = 45000, Message = "任务还在进行中。Agent 会在模型返回后继续生成 Intent、Task Plan、CAD-IR 和安全预览。" },
+                new { DelayMs = 90000, Message = "这是一个长任务。当前仍只是在规划阶段，没有对 AutoCAD 图纸做任何修改。" },
+            };
+
+            foreach (var checkpoint in checkpoints)
+            {
+                var completed = await Task.WhenAny(parseTask, Task.Delay(checkpoint.DelayMs)).ConfigureAwait(true);
+                if (completed == parseTask)
+                {
+                    return await parseTask.ConfigureAwait(true);
+                }
+                AddAssistantCard("Agent 进度", checkpoint.Message);
+                SetChatStatus("模型仍在生成 CAD 草案...", CadOrange);
+                System.Windows.Forms.Application.DoEvents();
+            }
+
+            return await parseTask.ConfigureAwait(true);
         }
 
         private static string FirstError(VcadResult result)
@@ -1747,6 +1774,11 @@ namespace Vcad.Plugin.UI
                 return "我理解了你的请求，但模型没有返回有效的 CAD 命令列表，所以没有修改当前图纸。\r\n\r\n" +
                        "这通常是因为请求太开放，或当前执行器还不能把复杂对象自动拆成线段、文字等基础图元。你可以补充尺寸、位置和构成方式后重试。\r\n\r\n" +
                        "技术原因：" + msg;
+            }
+            if (lower.Contains("assistant/ui reply") || lower.Contains("conversational replies"))
+            {
+                return "模型返回的是对话说明文字，而不是应该写入图纸的标注内容，所以我已阻止执行。\r\n\r\n" +
+                       "对话回复只会显示在右侧面板里，不会再被当作 CAD 文字画到图纸上。\r\n\r\n技术原因：" + msg;
             }
             if (lower.Contains("task was canceled") || lower.Contains("已取消一个任务") || lower.Contains("timeout"))
             {
@@ -2156,7 +2188,7 @@ namespace Vcad.Plugin.UI
                 _txtApiKey.Text = s.ApiKeyPlain ?? "";
                 _numPort.Value = s.AgentPort == 0 ? 8765 : s.AgentPort;
                 _chkStrictJson.Checked = s.StrictJson;
-                _numTimeout.Value = s.TimeoutSeconds == 0 ? 30 : s.TimeoutSeconds;
+                _numTimeout.Value = s.TimeoutSeconds <= 120 ? 300 : s.TimeoutSeconds;
                 _chkAutoRun.Checked = s.AutoRunAfterParse;
             }
             finally

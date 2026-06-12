@@ -173,9 +173,10 @@ namespace Vcad.Plugin.Net
 
         private HttpClient NewClient()
         {
+            var timeoutSeconds = _settings.TimeoutSeconds <= 120 ? 300 : _settings.TimeoutSeconds;
             var client = new HttpClient
             {
-                Timeout = TimeSpan.FromSeconds(_settings.TimeoutSeconds == 0 ? 30 : _settings.TimeoutSeconds),
+                Timeout = TimeSpan.FromSeconds(timeoutSeconds),
             };
             client.DefaultRequestHeaders.Add("X-VCAD-Agent-Token", AgentTokenStore.GetOrCreate());
             return client;

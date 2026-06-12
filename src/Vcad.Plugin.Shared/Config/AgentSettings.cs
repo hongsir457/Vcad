@@ -33,7 +33,7 @@ namespace Vcad.Plugin.Config
         public bool StrictJson { get; set; } = true;
 
         [JsonProperty("timeout_seconds")]
-        public int TimeoutSeconds { get; set; } = 30;
+        public int TimeoutSeconds { get; set; } = 300;
 
         [JsonProperty("auto_run_after_parse")]
         public bool AutoRunAfterParse { get; set; } = false;

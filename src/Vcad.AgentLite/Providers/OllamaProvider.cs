@@ -6,7 +6,7 @@ namespace Vcad.AgentLite.Providers;
 
 public class OllamaProvider : IProvider
 {
-    private static readonly HttpClient _client = new() { Timeout = TimeSpan.FromSeconds(120) };
+    private static readonly HttpClient _client = new() { Timeout = TimeSpan.FromSeconds(300) };
 
     public async Task<JsonNode> ParseAsync(ParseRequest req)
     {
