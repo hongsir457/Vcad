@@ -144,6 +144,8 @@ Plugin-hosted CAD tools:
 - `cad.read_dwg_snapshot`
 - `cad.create_layer`
 - `cad.draw_line`
+- `cad.draw_polyline`
+- `cad.draw_circle`
 - `cad.draw_rectangle`
 - `cad.draw_text`
 

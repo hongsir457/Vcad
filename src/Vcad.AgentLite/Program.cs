@@ -160,6 +160,88 @@ app.MapPost("/agent/turn", async (HttpContext ctx, AgentTurnService agent) =>
     }
 });
 
+app.MapPost("/agent/turn/stream", async (HttpContext ctx, AgentTurnService agent) =>
+{
+    using var reader = new StreamReader(ctx.Request.Body);
+    var body = await reader.ReadToEndAsync();
+    if (string.IsNullOrWhiteSpace(body))
+    {
+        return Results.BadRequest(new { error = "Empty request body." });
+    }
+
+    AgentTurnRequest? req;
+    try
+    {
+        req = System.Text.Json.JsonSerializer.Deserialize<AgentTurnRequest>(body);
+    }
+    catch (System.Text.Json.JsonException ex)
+    {
+        return Results.BadRequest(new { error = "Invalid JSON: " + ex.Message });
+    }
+
+    if (req == null || (string.IsNullOrWhiteSpace(req.message) &&
+        (req.tool_results == null || req.tool_results.Count == 0)))
+    {
+        return Results.BadRequest(new { error = "'message' or 'tool_results' is required." });
+    }
+    if ((req.message ?? "").Length > MaxTextChars)
+    {
+        return Results.BadRequest(new { error = "'message' exceeds 32000 character limit." });
+    }
+
+    req.attachments ??= new List<AgentAttachment>();
+    if (req.attachments.Count > MaxAttachmentCount)
+    {
+        return Results.BadRequest(new { error = "'attachments' exceeds 12 item limit." });
+    }
+    foreach (var attachment in req.attachments)
+    {
+        if (!string.IsNullOrEmpty(attachment.data_base64) &&
+            attachment.data_base64.Length > MaxInlineAttachmentBase64Chars)
+        {
+            return Results.BadRequest(new { error = "An inline attachment exceeds 6 MB base64 limit." });
+        }
+    }
+
+    ctx.Response.ContentType = "application/x-ndjson; charset=utf-8";
+
+    async Task WriteEvent(string eventName, object payload)
+    {
+        await ctx.Response.WriteAsync(System.Text.Json.JsonSerializer.Serialize(new
+        {
+            @event = eventName,
+            data = payload,
+        }));
+        await ctx.Response.WriteAsync("\n");
+        await ctx.Response.Body.FlushAsync();
+    }
+
+    try
+    {
+        var result = await agent.RunStreamingAsync(req, delta => WriteEvent("delta", new { text = delta }));
+        await WriteEvent("final", new { response = result });
+    }
+    catch (ProviderRequestException ex)
+    {
+        await WriteEvent("error", new
+        {
+            error = ex.Message,
+            provider = ex.Provider,
+            upstream_status = ex.StatusCode,
+            upstream_body = ex.ResponseBody,
+        });
+    }
+    catch (Exception ex)
+    {
+        await WriteEvent("error", new
+        {
+            error = SecretRedactor.Redact(ex.Message),
+        });
+    }
+
+    return Results.Empty;
+});
+
 app.Run();
 
 public partial class Program { }

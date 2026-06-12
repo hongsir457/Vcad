@@ -47,6 +47,8 @@ namespace Vcad.Plugin.Execution
             return string.Equals(name, "cad.read_dwg_snapshot", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(name, "cad.create_layer", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(name, "cad.draw_line", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(name, "cad.draw_polyline", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(name, "cad.draw_circle", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(name, "cad.draw_rectangle", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(name, "cad.draw_text", StringComparison.OrdinalIgnoreCase);
         }
@@ -55,6 +57,8 @@ namespace Vcad.Plugin.Execution
         {
             return string.Equals(name, "cad.create_layer", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(name, "cad.draw_line", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(name, "cad.draw_polyline", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(name, "cad.draw_circle", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(name, "cad.draw_rectangle", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(name, "cad.draw_text", StringComparison.OrdinalIgnoreCase);
         }
@@ -77,6 +81,14 @@ namespace Vcad.Plugin.Execution
                 else if (string.Equals(name, "cad.draw_line", StringComparison.OrdinalIgnoreCase))
                 {
                     result = RunWrite(callId, name, args, DrawLine);
+                }
+                else if (string.Equals(name, "cad.draw_polyline", StringComparison.OrdinalIgnoreCase))
+                {
+                    result = RunWrite(callId, name, args, DrawPolyline);
+                }
+                else if (string.Equals(name, "cad.draw_circle", StringComparison.OrdinalIgnoreCase))
+                {
+                    result = RunWrite(callId, name, args, DrawCircle);
                 }
                 else if (string.Equals(name, "cad.draw_rectangle", StringComparison.OrdinalIgnoreCase))
                 {
@@ -201,6 +213,64 @@ namespace Vcad.Plugin.Execution
             ApplyEntityColor(line, args);
             AppendToModelSpace(db, tr, line);
             return EntityResult("Line", line, layer);
+        }
+
+        private static JObject DrawPolyline(Database db, Transaction tr, JObject args)
+        {
+            var layer = OptionalString(args, "layer", "0");
+            ValidateLayerName(layer);
+            var points = args["points"] as JArray;
+            if (points == null || points.Count < 2)
+            {
+                throw new InvalidOperationException("'points' must contain at least two points.");
+            }
+            if (points.Count > 1000)
+            {
+                throw new InvalidOperationException("'points' contains too many vertices.");
+            }
+
+            EnsureLayer(db, tr, layer);
+            var pl = new Polyline(points.Count);
+            for (int i = 0; i < points.Count; i++)
+            {
+                var point = ReadPointToken(points[i], "points[" + i + "]");
+                pl.AddVertexAt(i, new Point2d(point.X, point.Y), 0, 0, 0);
+            }
+
+            pl.Closed = OptionalBool(args, "closed", false);
+            var width = OptionalDouble(args, "constant_width", 0);
+            if (width > 0)
+            {
+                ValidatePositiveDimension(width, "constant_width");
+                pl.ConstantWidth = width;
+            }
+            pl.Layer = layer;
+            ApplyEntityColor(pl, args);
+            AppendToModelSpace(db, tr, pl);
+
+            var data = EntityResult("Polyline", pl, layer);
+            data["point_count"] = points.Count;
+            data["closed"] = pl.Closed;
+            if (width > 0) data["constant_width"] = width;
+            return data;
+        }
+
+        private static JObject DrawCircle(Database db, Transaction tr, JObject args)
+        {
+            var layer = OptionalString(args, "layer", "0");
+            ValidateLayerName(layer);
+            var center = ReadPoint(args, "center", "x", "y");
+            var radius = RequiredDouble(args, "radius");
+            ValidatePositiveDimension(radius, "radius");
+            EnsureLayer(db, tr, layer);
+
+            var circle = new Circle(center, Vector3d.ZAxis, radius) { Layer = layer };
+            ApplyEntityColor(circle, args);
+            AppendToModelSpace(db, tr, circle);
+
+            var data = EntityResult("Circle", circle, layer);
+            data["radius"] = radius;
+            return data;
         }
 
         private static JObject DrawRectangle(Database db, Transaction tr, JObject args)
@@ -362,6 +432,35 @@ namespace Vcad.Plugin.Execution
             return new Point3d(px, py, pz);
         }
 
+        private static Point3d ReadPointToken(JToken token, string name)
+        {
+            var array = token as JArray;
+            if (array != null && array.Count >= 2)
+            {
+                var x = array[0].Value<double>();
+                var y = array[1].Value<double>();
+                var z = array.Count > 2 ? array[2].Value<double>() : 0;
+                ValidateCoordinate(x, name + ".x");
+                ValidateCoordinate(y, name + ".y");
+                ValidateCoordinate(z, name + ".z");
+                return new Point3d(x, y, z);
+            }
+
+            var obj = token as JObject;
+            if (obj != null)
+            {
+                var x = RequiredDouble(obj, "x");
+                var y = RequiredDouble(obj, "y");
+                var z = OptionalDouble(obj, "z", 0);
+                ValidateCoordinate(x, name + ".x");
+                ValidateCoordinate(y, name + ".y");
+                ValidateCoordinate(z, name + ".z");
+                return new Point3d(x, y, z);
+            }
+
+            throw new InvalidOperationException("'" + name + "' must be [x,y] or {x,y}.");
+        }
+
         private static string RequiredString(JObject args, string name)
         {
             var value = args.Value<string>(name);
@@ -392,6 +491,12 @@ namespace Vcad.Plugin.Execution
         {
             var token = args[name];
             return token == null || token.Type == JTokenType.Null ? fallback : token.Value<double>();
+        }
+
+        private static bool OptionalBool(JObject args, string name, bool fallback)
+        {
+            var token = args[name];
+            return token == null || token.Type == JTokenType.Null ? fallback : token.Value<bool>();
         }
 
         private static int? OptionalColor(JObject args, string name)

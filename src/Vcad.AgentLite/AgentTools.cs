@@ -87,6 +87,22 @@ public static class AgentTools
         },
         new()
         {
+            Name = "cad.draw_polyline",
+            Category = "cad_action",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Draw an open or closed polyline from a point array in one tool call.",
+        },
+        new()
+        {
+            Name = "cad.draw_circle",
+            Category = "cad_action",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Draw a circle by center point and radius.",
+        },
+        new()
+        {
             Name = "cad.draw_rectangle",
             Category = "cad_action",
             Effect = "write",

@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -47,24 +48,7 @@ namespace Vcad.Plugin.Net
             JObject cadObservation,
             JArray toolResults)
         {
-            var payload = new JObject
-            {
-                ["session_id"] = string.IsNullOrWhiteSpace(sessionId) ? "session-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff") : sessionId,
-                ["message"] = message ?? "",
-                ["provider"] = BuildProviderPayload(),
-            };
-            if (attachments != null && attachments.Count > 0)
-            {
-                payload["attachments"] = attachments;
-            }
-            if (cadObservation != null)
-            {
-                payload["cad_observation"] = cadObservation;
-            }
-            if (toolResults != null && toolResults.Count > 0)
-            {
-                payload["tool_results"] = toolResults;
-            }
+            var payload = BuildAgentTurnPayload(sessionId, message, attachments, cadObservation, toolResults);
 
             using (var client = NewClient())
             using (var content = new StringContent(payload.ToString(), Encoding.UTF8, "application/json"))
@@ -83,6 +67,71 @@ namespace Vcad.Plugin.Net
                     throw new InvalidOperationException("Agent response is missing 'response'.");
                 }
                 return AgentTurnResult.FromJson(response);
+            }
+        }
+
+        public async Task<AgentTurnResult> AgentTurnStreamingAsync(
+            string sessionId,
+            string message,
+            JArray attachments,
+            JObject cadObservation,
+            JArray toolResults,
+            Func<string, Task> onDelta)
+        {
+            var payload = BuildAgentTurnPayload(sessionId, message, attachments, cadObservation, toolResults);
+            using (var client = NewClient())
+            using (var req = new HttpRequestMessage(HttpMethod.Post, BuildUrl("/agent/turn/stream")))
+            {
+                req.Content = new StringContent(payload.ToString(), Encoding.UTF8, "application/json");
+                using (var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false))
+                {
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        var errorBody = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                        throw new InvalidOperationException(FormatAgentTurnFailure((int)resp.StatusCode, errorBody));
+                    }
+
+                    AgentTurnResult final = null;
+                    using (var stream = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                    using (var reader = new StreamReader(stream, Encoding.UTF8))
+                    {
+                        while (!reader.EndOfStream)
+                        {
+                            var line = await reader.ReadLineAsync().ConfigureAwait(false);
+                            if (string.IsNullOrWhiteSpace(line)) continue;
+
+                            var envelope = JObject.Parse(line);
+                            var eventName = envelope.Value<string>("event");
+                            var data = envelope["data"] as JObject;
+                            if (string.Equals(eventName, "delta", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var text = data?.Value<string>("text");
+                                if (!string.IsNullOrEmpty(text) && onDelta != null)
+                                {
+                                    await onDelta(text).ConfigureAwait(false);
+                                }
+                            }
+                            else if (string.Equals(eventName, "final", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var response = data?["response"] as JObject;
+                                if (response != null)
+                                {
+                                    final = AgentTurnResult.FromJson(response);
+                                }
+                            }
+                            else if (string.Equals(eventName, "error", StringComparison.OrdinalIgnoreCase))
+                            {
+                                throw new InvalidOperationException(FormatAgentTurnFailure(200, data?.ToString(Formatting.None)));
+                            }
+                        }
+                    }
+
+                    if (final == null)
+                    {
+                        throw new InvalidOperationException("Agent stream ended without a final response.");
+                    }
+                    return final;
+                }
             }
         }
 
@@ -111,6 +160,34 @@ namespace Vcad.Plugin.Net
         {
             var port = _settings.AgentPort == 0 ? 8765 : _settings.AgentPort;
             return "http://127.0.0.1:" + port + path;
+        }
+
+        private JObject BuildAgentTurnPayload(
+            string sessionId,
+            string message,
+            JArray attachments,
+            JObject cadObservation,
+            JArray toolResults)
+        {
+            var payload = new JObject
+            {
+                ["session_id"] = string.IsNullOrWhiteSpace(sessionId) ? "session-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff") : sessionId,
+                ["message"] = message ?? "",
+                ["provider"] = BuildProviderPayload(),
+            };
+            if (attachments != null && attachments.Count > 0)
+            {
+                payload["attachments"] = attachments;
+            }
+            if (cadObservation != null)
+            {
+                payload["cad_observation"] = cadObservation;
+            }
+            if (toolResults != null && toolResults.Count > 0)
+            {
+                payload["tool_results"] = toolResults;
+            }
+            return payload;
         }
 
         private static string FormatAgentTurnFailure(int localStatus, string body)

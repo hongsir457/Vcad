@@ -49,6 +49,9 @@ namespace Vcad.Plugin.UI
         private SpeechRecognitionEngine _speechEngine;
         private bool _voiceListening;
 #endif
+        private bool _agentRunning;
+        private readonly List<string> _pendingSupplements = new List<string>();
+        private readonly object _pendingSupplementsLock = new object();
 
         // Settings Tab controls
         private ComboBox _cmbProvider;
@@ -100,6 +103,7 @@ namespace Vcad.Plugin.UI
         private const int MaxAttachmentCount = 12;
         private const long MaxInlineImageBytes = 4 * 1024 * 1024;
         private const long MaxInlineImageBytesTotal = 5 * 1024 * 1024;
+        private const int MaxLiveStreamChars = 1800;
 
         public SidebarControl()
         {
@@ -528,6 +532,124 @@ namespace Vcad.Plugin.UI
             AddChatCard(title, text, true);
         }
 
+        private Label AddLiveStreamCard(string title)
+        {
+            if (_chatList == null) return null;
+            var width = GetChatCardWidth();
+            var label = new Label
+            {
+                Text = title + "\r\n正在接收模型流式输出...",
+                ForeColor = CadText,
+                Font = MonoFont,
+                AutoSize = false,
+                Width = width - 20,
+                Left = 10,
+                Top = 8,
+            };
+            label.Height = 52;
+            var card = new Panel
+            {
+                Width = width,
+                Height = label.Height + 16,
+                BackColor = CadPanel,
+                Margin = new Padding(0, 0, 0, 10),
+                Padding = new Padding(8),
+                Tag = "live-stream",
+            };
+            card.Paint += (s, e) =>
+            {
+                using (var pen = new Pen(CadCyan))
+                {
+                    e.Graphics.DrawRectangle(pen, 0, 0, card.Width - 1, card.Height - 1);
+                }
+            };
+            card.Controls.Add(label);
+            _chatList.Controls.Add(card);
+            _chatList.ScrollControlIntoView(card);
+            return label;
+        }
+
+        private void AddCollapsibleAssistantCard(string title, string summary, string details)
+        {
+            if (_chatList == null) return;
+            var width = GetChatCardWidth();
+            var card = new Panel
+            {
+                Width = width,
+                BackColor = CadPanel,
+                Margin = new Padding(0, 0, 0, 10),
+                Padding = new Padding(8),
+                Tag = "collapsible-collapsed",
+            };
+            card.Paint += (s, e) =>
+            {
+                using (var pen = new Pen(CadBorder))
+                {
+                    e.Graphics.DrawRectangle(pen, 0, 0, card.Width - 1, card.Height - 1);
+                }
+            };
+
+            var header = new Label
+            {
+                Text = title + "  [+]",
+                ForeColor = CadCyan,
+                Font = UiFontBold,
+                Left = 10,
+                Top = 8,
+                Width = width - 20,
+                Height = 20,
+                Cursor = Cursors.Hand,
+            };
+            var body = new Label
+            {
+                Text = summary,
+                ForeColor = CadText,
+                Font = UiFont,
+                AutoSize = false,
+                Left = 10,
+                Top = header.Bottom + 4,
+                Width = width - 20,
+            };
+            var detail = new Label
+            {
+                Text = details,
+                ForeColor = CadMuted,
+                Font = MonoFont,
+                AutoSize = false,
+                Left = 10,
+                Top = body.Bottom + 8,
+                Width = width - 20,
+                Visible = false,
+            };
+            Action resize = () =>
+            {
+                body.Width = card.Width - 20;
+                var bodyPreferred = body.GetPreferredSize(new Size(body.Width, 0));
+                body.Height = Math.Max(26, bodyPreferred.Height + 4);
+                detail.Top = body.Bottom + 8;
+                detail.Width = body.Width;
+                var detailPreferred = detail.GetPreferredSize(new Size(detail.Width, 0));
+                detail.Height = detail.Visible ? Math.Min(260, Math.Max(34, detailPreferred.Height + 4)) : 0;
+                card.Height = detail.Visible ? detail.Bottom + 10 : body.Bottom + 10;
+            };
+            EventHandler toggle = (s, e) =>
+            {
+                detail.Visible = !detail.Visible;
+                card.Tag = detail.Visible ? "collapsible-expanded" : "collapsible-collapsed";
+                header.Text = title + (detail.Visible ? "  [-]" : "  [+]");
+                resize();
+                _chatList.ScrollControlIntoView(card);
+            };
+            header.Click += toggle;
+            body.Click += toggle;
+            card.Controls.Add(header);
+            card.Controls.Add(body);
+            card.Controls.Add(detail);
+            resize();
+            _chatList.Controls.Add(card);
+            _chatList.ScrollControlIntoView(card);
+        }
+
         private void AddChatCard(string title, string text, bool assistant)
         {
             if (_chatList == null) return;
@@ -565,6 +687,29 @@ namespace Vcad.Plugin.UI
             _chatList.ScrollControlIntoView(card);
         }
 
+        private void AppendLiveStreamText(Label label, StringBuilder buffer, string delta)
+        {
+            if (label == null || buffer == null || string.IsNullOrEmpty(delta)) return;
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action(() => AppendLiveStreamText(label, buffer, delta)));
+                return;
+            }
+
+            buffer.Append(delta);
+            var text = buffer.ToString();
+            if (text.Length > MaxLiveStreamChars)
+            {
+                text = "...[前文省略]\r\n" + text.Substring(text.Length - MaxLiveStreamChars);
+            }
+            label.Text = "模型流式输出\r\n" + text;
+            label.Width = Math.Max(120, label.Parent.Width - 20);
+            var preferred = label.GetPreferredSize(new Size(label.Width, 0));
+            label.Height = Math.Min(260, Math.Max(52, preferred.Height + 4));
+            label.Parent.Height = label.Height + 16;
+            _chatList.ScrollControlIntoView(label.Parent);
+        }
+
         private void ResizeChatCards()
         {
             if (_chatList == null) return;
@@ -572,6 +717,13 @@ namespace Vcad.Plugin.UI
             foreach (Control card in _chatList.Controls)
             {
                 card.Width = width;
+                var tagText = card.Tag as string;
+                if (!string.IsNullOrEmpty(tagText) &&
+                    (tagText.StartsWith("collapsible", StringComparison.Ordinal) ||
+                     tagText == "clarification"))
+                {
+                    continue;
+                }
                 if (card.Controls.Count > 0)
                 {
                     var label = card.Controls[0] as Label;
@@ -1686,6 +1838,12 @@ namespace Vcad.Plugin.UI
 
         private async Task OnUseAgentAsync()
         {
+            if (_agentRunning)
+            {
+                QueueSupplementalRequirement();
+                return;
+            }
+
             var text = _txtNaturalLanguage.Text;
             if (text == "询问 CAD 助手...") text = "";
             if (string.IsNullOrWhiteSpace(text) && _attachedFiles.Count == 0)
@@ -1711,7 +1869,7 @@ namespace Vcad.Plugin.UI
 #if NETFRAMEWORK
                 StopVoiceInputSilently();
 #endif
-                _btnUseAgent.Enabled = false;
+                SetAgentRunningState(true);
                 if (_btnAttachFile != null) _btnAttachFile.Enabled = false;
                 if (_btnVoiceInput != null) _btnVoiceInput.Enabled = false;
                 SetChatStatus("正在读取当前 DWG 内存状态...", CadCyan);
@@ -1731,7 +1889,6 @@ namespace Vcad.Plugin.UI
                 {
                     AddAssistantCard("附件处理", string.Join("\r\n", attachmentWarnings));
                 }
-                AddAssistantCard("CAD 助手", BuildDwgContextReply(cadState));
                 SetChatStatus("正在理解意图...", CadCyan);
                 System.Windows.Forms.Application.DoEvents();
 
@@ -1747,7 +1904,7 @@ namespace Vcad.Plugin.UI
                 }
 
                 var client = new AgentLiteClient(settings);
-                AddAssistantCard("Agent 进度", "正在调用模型理解意图、读取上下文并选择工具；确认前不会修改当前图纸。");
+                SetChatStatus("正在调用模型理解意图...", CadCyan);
                 var sessionId = "session-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff");
                 await RunAgentToolLoopAsync(client, settings, sessionId, prompt, attachmentPayloads, cadState);
             }
@@ -1760,10 +1917,39 @@ namespace Vcad.Plugin.UI
             }
             finally
             {
-                _btnUseAgent.Enabled = true;
+                SetAgentRunningState(false);
                 if (_btnAttachFile != null) _btnAttachFile.Enabled = true;
                 if (_btnVoiceInput != null) _btnVoiceInput.Enabled = true;
             }
+        }
+
+        private void SetAgentRunningState(bool running)
+        {
+            _agentRunning = running;
+            if (_btnUseAgent == null) return;
+            _btnUseAgent.Text = running ? "Ⅱ" : "▶";
+            _toolTip?.SetToolTip(_btnUseAgent, running ? "模型处理中：输入补充后点这里加入下一轮规划" : "发送");
+            _btnUseAgent.Invalidate();
+        }
+
+        private void QueueSupplementalRequirement()
+        {
+            var text = _txtNaturalLanguage == null ? "" : _txtNaturalLanguage.Text;
+            if (text == "询问 CAD 助手...") text = "";
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                SetChatStatus("模型处理中。可以输入补充需求后点暂停键加入下一轮规划。", CadOrange);
+                return;
+            }
+
+            text = text.Trim();
+            lock (_pendingSupplementsLock)
+            {
+                _pendingSupplements.Add(text);
+            }
+            _txtNaturalLanguage.Text = "";
+            AddUserCard("补充需求：\r\n" + text);
+            SetChatStatus("已加入补充需求，不中断当前模型处理。", CadCyan);
         }
 
         private async Task RunAgentToolLoopAsync(
@@ -1785,13 +1971,35 @@ namespace Vcad.Plugin.UI
             {
                 SetChatStatus(turn == 1 ? "正在调用模型..." : "正在把工具结果交给模型继续判断...", CadCyan);
                 var sw = Stopwatch.StartNew();
+                var liveBuffer = new StringBuilder();
+                var liveLabel = AddLiveStreamCard("模型流式输出");
                 var turnResult = await WaitForAgentTurnAsync(
-                    client.AgentTurnAsync(sessionId, currentMessage, currentAttachments, currentObservation, toolResults))
+                    client.AgentTurnStreamingAsync(
+                        sessionId,
+                        currentMessage,
+                        currentAttachments,
+                        currentObservation,
+                        toolResults,
+                        delta =>
+                        {
+                            AppendLiveStreamText(liveLabel, liveBuffer, delta);
+                            return Task.FromResult(0);
+                        }))
                     .ConfigureAwait(true);
                 sw.Stop();
                 RecordModelUsage(turnResult, settings, true, sw.ElapsedMilliseconds);
 
-                AddAgentTraceCards(turnResult.Trace);
+                var supplement = TakePendingSupplementText();
+                if (!string.IsNullOrWhiteSpace(supplement))
+                {
+                    AddAssistantCard("CAD 助手", "已收到补充需求，先重新规划，不执行上一轮可能过时的工具方案。");
+                    toolResults = new JArray();
+                    currentMessage = "用户在模型处理过程中补充了需求：\r\n" + supplement;
+                    currentAttachments = new JArray();
+                    currentObservation = DrawingSnapshotCollector.CaptureActive();
+                    continue;
+                }
+
                 if (!string.IsNullOrWhiteSpace(turnResult.AssistantMessage))
                 {
                     AddAssistantCard("CAD 助手", turnResult.AssistantMessage);
@@ -1842,6 +2050,17 @@ namespace Vcad.Plugin.UI
             SetChatStatus("Agent 循环达到上限。", CadOrange);
         }
 
+        private string TakePendingSupplementText()
+        {
+            lock (_pendingSupplementsLock)
+            {
+                if (_pendingSupplements.Count == 0) return "";
+                var text = string.Join("\r\n", _pendingSupplements);
+                _pendingSupplements.Clear();
+                return text;
+            }
+        }
+
         private static bool IsGenericInitialClarification(JObject clarification)
         {
             var options = clarification?["options"] as JArray;
@@ -1885,8 +2104,7 @@ namespace Vcad.Plugin.UI
                 {
                     return await turnTask.ConfigureAwait(true);
                 }
-                AddAssistantCard("Agent 进度", checkpoint.Message);
-                SetChatStatus("模型仍在处理...", CadOrange);
+                SetChatStatus(checkpoint.Message, CadOrange);
                 System.Windows.Forms.Application.DoEvents();
             }
 
@@ -1976,13 +2194,21 @@ namespace Vcad.Plugin.UI
             {
                 var answer = optionToken.Value<string>();
                 if (string.IsNullOrWhiteSpace(answer)) continue;
+                var buttonWidth = Math.Max(120, width - 20);
+                var wrapped = WrapOptionText(answer, Math.Max(10, (buttonWidth - 28) / 8));
+                var buttonHeight = Math.Max(34, TextRenderer.MeasureText(
+                    wrapped,
+                    UiFontBold,
+                    new Size(buttonWidth - 12, 0),
+                    TextFormatFlags.WordBreak).Height + 14);
                 var button = new Button
                 {
-                    Text = answer,
+                    Text = wrapped,
                     Left = 10,
                     Top = top,
-                    Width = Math.Max(120, width - 20),
-                    Height = 30,
+                    Width = buttonWidth,
+                    Height = buttonHeight,
+                    TextAlign = ContentAlignment.MiddleLeft,
                 };
                 StyleGhostButton(button);
                 button.Click += async (s, e) =>
@@ -1996,12 +2222,81 @@ namespace Vcad.Plugin.UI
                     await OnUseAgentAsync();
                 };
                 card.Controls.Add(button);
-                top += 36;
+                top += button.Height + 6;
             }
 
-            card.Height = top + 8;
+            var customBox = new TextBox
+            {
+                Left = 10,
+                Top = top + 4,
+                Width = Math.Max(120, width - 86),
+                Height = 24,
+                BackColor = CadInput,
+                ForeColor = CadText,
+                BorderStyle = BorderStyle.FixedSingle,
+                Text = "其他补充...",
+            };
+            customBox.GotFocus += (s, e) =>
+            {
+                if (customBox.Text == "其他补充...") customBox.Text = "";
+            };
+            var customButton = new Button
+            {
+                Text = "补充",
+                Left = customBox.Right + 6,
+                Top = customBox.Top,
+                Width = 60,
+                Height = 24,
+            };
+            StylePrimaryButton(customButton);
+            customButton.Click += async (s, e) =>
+            {
+                var custom = customBox.Text == "其他补充..." ? "" : customBox.Text.Trim();
+                if (string.IsNullOrWhiteSpace(custom))
+                {
+                    SetChatStatus("请输入补充内容。", CadOrange);
+                    return;
+                }
+                foreach (Control child in card.Controls)
+                {
+                    if (child is Button b) b.Enabled = false;
+                    if (child is TextBox tb) tb.Enabled = false;
+                }
+                _txtNaturalLanguage.Text = (originalText ?? "").Trim() + "\r\n补充：" + custom;
+                AddAssistantCard("CAD 助手", "已收到补充信息：" + custom + "\r\n我会基于这个补充继续规划。");
+                await OnUseAgentAsync();
+            };
+            card.Controls.Add(customBox);
+            card.Controls.Add(customButton);
+
+            card.Height = customBox.Bottom + 12;
             _chatList.Controls.Add(card);
             _chatList.ScrollControlIntoView(card);
+        }
+
+        private static string WrapOptionText(string text, int maxCharsPerLine)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return "";
+            maxCharsPerLine = Math.Max(8, maxCharsPerLine);
+            var sb = new StringBuilder();
+            var count = 0;
+            foreach (var ch in text.Trim())
+            {
+                if (count >= maxCharsPerLine && (char.IsWhiteSpace(ch) || ch == '，' || ch == '、' || ch == ',' || ch == ';' || ch == '；' || ch == ')' || ch == '）'))
+                {
+                    sb.Append("\r\n");
+                    count = 0;
+                    if (char.IsWhiteSpace(ch)) continue;
+                }
+                sb.Append(ch);
+                count++;
+                if (count >= maxCharsPerLine + 6)
+                {
+                    sb.Append("\r\n");
+                    count = 0;
+                }
+            }
+            return sb.ToString();
         }
 
         private static string ShortStatus(string message)
@@ -2076,7 +2371,7 @@ namespace Vcad.Plugin.UI
             if (string.IsNullOrWhiteSpace(callId)) callId = "call-" + DateTime.UtcNow.ToString("HHmmssfff");
             var name = call.Value<string>("name") ?? "";
             var args = call["args"] as JObject ?? new JObject();
-            AddAssistantCard("工具调用", FormatToolCall(name, args));
+            AddCollapsibleAssistantCard("工具调用", name, FormatToolCall(name, args));
 
             var writeTool = CadToolHost.IsWriteTool(name) || IsAgentLiteWriteTool(name);
             if (writeTool && !IsTrustedExecutionMode(settings))
@@ -2101,7 +2396,9 @@ namespace Vcad.Plugin.UI
                 SetChatStatus(CadToolHost.IsWriteTool(name) ? "正在执行 AutoCAD 工具..." : "正在读取 DWG 上下文...", CadCyan);
                 System.Windows.Forms.Application.DoEvents();
                 var result = CadToolHost.Execute(callId, name, args);
-                AddAssistantCard(result.Success ? "工具结果" : "工具失败", FormatCadToolResult(result));
+                AddCollapsibleAssistantCard(result.Success ? "工具结果" : "工具失败",
+                    SummarizeCadToolResult(result),
+                    FormatCadToolResult(result));
                 SetChatStatus(result.Success ? "工具完成，用时 " + result.ElapsedMs + " ms。" : "工具失败：" + result.Error,
                     result.Success ? CadGreen : CadOrange);
                 return result.ToAgentToolResult();
@@ -2115,7 +2412,9 @@ namespace Vcad.Plugin.UI
                 var remote = await client.RunToolAsync(name, args).ConfigureAwait(true);
                 sw.Stop();
                 var success = remote.Value<bool?>("success") ?? false;
-                AddAssistantCard(success ? "工具结果" : "工具失败", FormatRemoteToolResult(name, remote, sw.ElapsedMilliseconds));
+                AddCollapsibleAssistantCard(success ? "工具结果" : "工具失败",
+                    SummarizeRemoteToolResult(name, remote, sw.ElapsedMilliseconds),
+                    FormatRemoteToolResult(name, remote, sw.ElapsedMilliseconds));
                 SetChatStatus(success ? "工具完成，用时 " + sw.ElapsedMilliseconds + " ms。" : "工具失败。", success ? CadGreen : CadOrange);
                 return new JObject
                 {
@@ -2129,7 +2428,7 @@ namespace Vcad.Plugin.UI
             catch (System.Exception ex)
             {
                 var msg = SecretRedactor.Redact(ex.Message);
-                AddAssistantCard("工具失败", msg);
+                AddCollapsibleAssistantCard("工具失败", name, msg);
                 SetChatStatus("工具失败：" + msg, CadOrange);
                 return new JObject
                 {
@@ -2229,6 +2528,29 @@ namespace Vcad.Plugin.UI
         private static bool IsAgentLiteWriteTool(string name)
         {
             return string.Equals(name, "workspace.write_file", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string SummarizeCadToolResult(CadToolExecutionResult result)
+        {
+            if (result == null) return "无结果";
+            var status = result.Success ? "成功" : "失败";
+            var entity = result.Data?["entity_type"]?.Value<string>();
+            var layer = result.Data?["layer"]?.Value<string>();
+            var summary = status + "，用时 " + result.ElapsedMs + " ms";
+            if (!string.IsNullOrWhiteSpace(entity)) summary += "，对象 " + entity;
+            if (!string.IsNullOrWhiteSpace(layer)) summary += "，图层 " + layer;
+            if (!string.IsNullOrWhiteSpace(result.Error)) summary += "，原因：" + result.Error;
+            return summary;
+        }
+
+        private static string SummarizeRemoteToolResult(string name, JObject result, long elapsedMs)
+        {
+            var success = result?.Value<bool?>("success") ?? false;
+            var status = success ? "成功" : "失败";
+            var text = status + "，用时 " + elapsedMs + " ms，" + name;
+            var message = result?.Value<string>("message") ?? result?.Value<string>("error");
+            if (!string.IsNullOrWhiteSpace(message)) text += "：" + message;
+            return text;
         }
 
         private static string FormatToolCall(string name, JObject args)

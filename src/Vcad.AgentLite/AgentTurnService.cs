@@ -21,6 +21,23 @@ public sealed class AgentTurnService
         };
     }
 
+    public async Task<AgentTurnResponse> RunStreamingAsync(AgentTurnRequest req, Func<string, Task> onDelta)
+    {
+        var options = ProviderRequestOptions.From(req.provider);
+        var provider = string.IsNullOrWhiteSpace(options.Name) ? "echo" : options.Name.ToLowerInvariant();
+        if (provider is "openai" or "deepseek" or "custom")
+        {
+            return await RunOpenAiCompatibleStreamingAsync(req, options, onDelta);
+        }
+
+        var response = await RunAsync(req);
+        if (!string.IsNullOrWhiteSpace(response.assistant_message) && onDelta != null)
+        {
+            await onDelta(response.assistant_message);
+        }
+        return response;
+    }
+
     private static async Task<AgentTurnResponse> RunOpenAiCompatibleAsync(AgentTurnRequest req, ProviderRequestOptions options)
     {
         if (string.IsNullOrWhiteSpace(options.ApiKey))
@@ -66,6 +83,97 @@ public sealed class AgentTurnService
 
         var response = ParseAgentResponse(content, req);
         response.usage = ExtractOpenAiUsage(parsed, options, parsed?["model"]?.GetValue<string>() ?? model, req, content);
+        return response;
+    }
+
+    private static async Task<AgentTurnResponse> RunOpenAiCompatibleStreamingAsync(
+        AgentTurnRequest req,
+        ProviderRequestOptions options,
+        Func<string, Task> onDelta)
+    {
+        if (string.IsNullOrWhiteSpace(options.ApiKey))
+        {
+            throw new InvalidOperationException("VCAD_AGENT_API_KEY is not set.");
+        }
+
+        var isDeepSeek = string.Equals(options.Name, "deepseek", StringComparison.OrdinalIgnoreCase);
+        var baseUrl = string.IsNullOrWhiteSpace(options.BaseUrl)
+            ? (isDeepSeek ? "https://api.deepseek.com" : "https://api.openai.com")
+            : options.BaseUrl;
+        var model = string.IsNullOrWhiteSpace(options.Model)
+            ? (isDeepSeek ? "deepseek-v4-flash" : "gpt-5")
+            : options.Model;
+
+        var payload = new
+        {
+            model,
+            messages = new object[]
+            {
+                new { role = "system", content = AgentSystemPrompt() },
+                new { role = "user", content = BuildAgentUserPrompt(req) },
+            },
+            response_format = new { type = "json_object" },
+            stream = true,
+            stream_options = new { include_usage = true },
+        };
+
+        using var http = new HttpRequestMessage(HttpMethod.Post, BuildChatCompletionsUrl(baseUrl, isDeepSeek));
+        http.Headers.Authorization = new AuthenticationHeaderValue("Bearer", options.ApiKey);
+        http.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        using var resp = await Http.SendAsync(http, HttpCompletionOption.ResponseHeadersRead);
+        using var stream = await resp.Content.ReadAsStreamAsync();
+        using var reader = new StreamReader(stream);
+        if (!resp.IsSuccessStatusCode)
+        {
+            var errorBody = await reader.ReadToEndAsync();
+            throw new ProviderRequestException("OpenAI-compatible", (int)resp.StatusCode, SecretRedactor.Redact(errorBody));
+        }
+
+        var content = new StringBuilder();
+        JsonNode? usageNode = null;
+        var responseModel = model;
+        while (!reader.EndOfStream)
+        {
+            var line = await reader.ReadLineAsync();
+            if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var data = line.Substring(5).Trim();
+            if (data == "[DONE]") break;
+
+            JsonNode? chunk;
+            try
+            {
+                chunk = JsonNode.Parse(data);
+            }
+            catch (JsonException)
+            {
+                continue;
+            }
+
+            responseModel = chunk?["model"]?.GetValue<string>() ?? responseModel;
+            usageNode = chunk?["usage"] ?? usageNode;
+            var delta = chunk?["choices"]?[0]?["delta"]?["content"]?.GetValue<string>();
+            if (string.IsNullOrEmpty(delta)) continue;
+            content.Append(delta);
+            if (onDelta != null)
+            {
+                await onDelta(delta);
+            }
+        }
+
+        var raw = content.ToString();
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            throw new InvalidOperationException("Agent model returned empty streamed content.");
+        }
+
+        var response = ParseAgentResponse(raw, req);
+        response.usage = usageNode == null
+            ? EstimateUsage(options, responseModel, req, raw)
+            : ExtractOpenAiUsageFromNode(usageNode, options, responseModel);
         return response;
     }
 
@@ -244,16 +352,31 @@ Available CAD tools:
 - cad.read_dwg_snapshot { limit }
 - cad.create_layer { name, color }
 - cad.draw_line { layer, color, x1, y1, x2, y2 }
+- cad.draw_polyline { layer, color, points:[[x,y],...], closed, constant_width }
+- cad.draw_circle { layer, color, x, y, radius }
 - cad.draw_rectangle { layer, color, x, y, width, height }
 - cad.draw_text { layer, color, x, y, text, height }
 
+Available context/action tools:
+- web.search { query }
+- web.fetch_url { url }
+- workspace.read_file { path }
+- workspace.write_file { path, content }
+- Uploaded attachments are already included in Attachment context. PDF text excerpts, image metadata/base64, and text file excerpts should be used directly before asking the user to repeat the content.
+
 Rules:
 - Use tool_calls for CAD work. Do not emit AutoLISP, scripts, or command text unless a specific tool supports it.
+- Use web.search/web.fetch_url when the user asks for external facts, standards, product information, or current web context.
+- Use workspace.read_file/workspace.write_file when the user asks to inspect or save files under the configured workspace root. Write only when the user asked to create/update a file or the execution mode authorizes it.
+- Do not ask generic questions when a safe, reversible, or previewable next step can be inferred. Make a reasonable plan, call read/context tools when useful, and ask only specific missing parameters.
+- Prefer cad.draw_polyline for multi-segment contours and outlines instead of many separate cad.draw_line calls.
 - Assistant replies, progress messages, status, errors, or explanations must stay in assistant_message, never cad.draw_text.
+- Reply in the user's language. If the user writes Chinese, assistant_message, trace summaries, and clarification options should be Chinese.
 - Use cad.draw_text only when the user explicitly asks for a drawing label, annotation, title, dimension, or note.
 - For CAD tool color args, use an AutoCAD ACI integer from 1 to 255 only. Omit color or use null for ByLayer. Do not send strings like "By Layer".
 - If a previous tool_result failed because of invalid args, correct the args and retry the tool instead of asking the initial intent question again.
 - If information is missing, ask a clarification in the panel.
+- After successful CAD execution, do not ask the generic initial intent question again. Ask a specific follow-up about likely adjustments to the current result, such as changing size, moving position, changing layer/color, adding labels, continuing with another object, or finishing.
 - Prefer observe -> small action -> observe loops.
 - Safety matters: avoid destructive or global edits unless the user clearly asks.
 """;
@@ -309,6 +432,11 @@ Rules:
     {
         var usage = parsed?["usage"];
         if (usage == null) return EstimateUsage(options, model, req, content);
+        return ExtractOpenAiUsageFromNode(usage, options, model);
+    }
+
+    private static ProviderUsage ExtractOpenAiUsageFromNode(JsonNode usage, ProviderRequestOptions options, string model)
+    {
         var input = usage["prompt_tokens"]?.GetValue<int>() ?? 0;
         var output = usage["completion_tokens"]?.GetValue<int>() ?? 0;
         var total = usage["total_tokens"]?.GetValue<int>() ?? input + output;
