@@ -58,6 +58,7 @@ namespace Vcad.Plugin.UI
 #if NETFRAMEWORK
         private SpeechRecognitionEngine _speechEngine;
         private bool _voiceListening;
+        private string _speechRecognizerName;
 #endif
         private bool _agentRunning;
         private readonly List<string> _pendingSupplements = new List<string>();
@@ -789,6 +790,7 @@ $dest = ""$env:APPDATA\Autodesk\ApplicationPlugins\VCAD-Acad2017.bundle""
 if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
 Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
 
+首次打开 AutoCAD 时如果出现“未签名的可执行文件”安全提示，确认路径是 VCAD-Acad2017.bundle 后点击“加载一次”或“始终加载”。
 如果删除失败，先关闭 AutoCAD 和 AgentLite。";
         }
 
@@ -1860,7 +1862,7 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
             _speechEngine.RecognizeAsync(RecognizeMode.Multiple);
             _voiceListening = true;
             if (_btnVoiceInput != null) _btnVoiceInput.Invalidate();
-            SetChatStatus("正在听写，说出要执行的 CAD 操作。", CadCyan);
+            SetChatStatus("正在听写，说出要执行的 CAD 操作。识别器：" + FirstNonEmpty(_speechRecognizerName, "Windows 默认"), CadCyan);
         }
 
         private SpeechRecognitionEngine CreateSpeechEngine()
@@ -1891,8 +1893,12 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
             }
 
             var engine = new SpeechRecognitionEngine(selected);
+            _speechRecognizerName = selected.Name + " / " + selected.Culture.Name;
             engine.LoadGrammar(new DictationGrammar());
             engine.SetInputToDefaultAudioDevice();
+            engine.InitialSilenceTimeout = TimeSpan.FromSeconds(8);
+            engine.BabbleTimeout = TimeSpan.FromSeconds(6);
+            engine.EndSilenceTimeout = TimeSpan.FromSeconds(1);
             engine.SpeechRecognized += OnSpeechRecognized;
             engine.SpeechRecognitionRejected += OnSpeechRecognitionRejected;
             engine.RecognizeCompleted += OnSpeechRecognizeCompleted;
@@ -1901,7 +1907,7 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
 
         private void OnSpeechRecognized(object sender, SpeechRecognizedEventArgs e)
         {
-            if (e.Result == null || string.IsNullOrWhiteSpace(e.Result.Text) || e.Result.Confidence < 0.22F)
+            if (e.Result == null || string.IsNullOrWhiteSpace(e.Result.Text))
             {
                 return;
             }
@@ -1912,7 +1918,7 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
         private void OnSpeechRecognitionRejected(object sender, SpeechRecognitionRejectedEventArgs e)
         {
             if (IsDisposed) return;
-            BeginInvoke((Action)(() => SetChatStatus("没有听清，请再说一遍。", CadOrange)));
+            BeginInvoke((Action)(() => SetChatStatus("没有识别到文字。请检查麦克风权限/输入设备，或在 Windows 安装中文语音识别包。", CadOrange)));
         }
 
         private void OnSpeechRecognizeCompleted(object sender, RecognizeCompletedEventArgs e)
@@ -1940,7 +1946,7 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                 _txtNaturalLanguage.AppendText(" ");
             }
             _txtNaturalLanguage.AppendText(text);
-            SetChatStatus("识别到语音：" + text + " (" + confidence.ToString("0.00") + ")", CadCyan);
+            SetChatStatus("识别到语音：" + text + " (" + confidence.ToString("0.00") + ")", confidence < 0.18F ? CadOrange : CadCyan);
         }
 
         private void StopVoiceInput(string message)
@@ -2382,7 +2388,7 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
         private static string BuildCapabilityReply(string text)
         {
             return "当前已接入的工具分三类：\r\n\r\n" +
-                   "1. CAD 执行工具：create_layer、draw_line、draw_polyline、draw_circle、draw_rectangle、draw_text。它们只能通过 CAD-IR、Safety、Preview/Confirm 后进入 AutoCAD。\r\n\r\n" +
+                   "1. CAD 执行工具：create_layer、draw_line、draw_polyline、draw_circle、draw_rectangle、draw_stair、draw_text。它们只能通过 CAD-IR、Safety、Preview/Confirm 后进入 AutoCAD。\r\n\r\n" +
                    "2. CAD 上下文/验证工具：读取当前打开 DWG 的图层、图元、块引用，并在内存里展开块内图元；也能测量对象包围盒，校验图层、对象数量、类型和警告。\r\n\r\n" +
                    "3. 附件上下文工具：PDF 会先抽取可复制文字；图片会内联给支持视觉的模型；文本、DXF、LSP、CSV、JSON 会抽取文本片段。扫描版 PDF 目前只能识别为“需要 OCR”，不会凭空读出内容。\r\n\r\n" +
                    "AgentLite 工具层：web.search、web.fetch_url、workspace.read_file、workspace.write_file 已有受限端点。读工具默认只读；写文件和 CAD 执行都受“确认后执行/完全授权自动执行”模式控制。\r\n\r\n" +
@@ -2566,6 +2572,17 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                         "模型给出了 CAD-IR 但漏掉 tool_calls，已转换为 " + synthesizedCalls.Count + " 个可执行工具。",
                         synthesizedCalls.ToString(Formatting.Indented));
                 }
+                if ((turnResult.ToolCalls == null || turnResult.ToolCalls.Count == 0) &&
+                    TryBuildLocalFallbackToolCalls(originalUserText, currentMessage, turnResult, out var localCalls))
+                {
+                    turnResult.ToolCalls = localCalls;
+                    turnResult.RequiresUserInput = false;
+                    turnResult.Clarification = null;
+                    AddCollapsibleAssistantCard(
+                        "本地 CAD 工具兜底",
+                        "模型仍未给出工具调用，已按可识别的 CAD 任务生成 " + localCalls.Count + " 个工具调用。",
+                        localCalls.ToString(Formatting.Indented));
+                }
 
                 var supplement = TakePendingSupplementText();
                 if (!string.IsNullOrWhiteSpace(supplement))
@@ -2592,6 +2609,14 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
 
                 if (turnResult.NeedsClarification)
                 {
+                    if (LooksLikeCadWriteRequest(originalUserText) && IsVagueClarification(turnResult.Clarification, turnResult.AssistantMessage))
+                    {
+                        currentMessage = BuildForceToolCallPrompt(originalUserText, turnResult);
+                        currentAttachments = attachments == null ? new JArray() : (JArray)attachments.DeepClone();
+                        currentObservation = DrawingSnapshotCollector.CaptureActive();
+                        SetChatStatus("模型只要求补充信息，正在强制转为工具调用...", CadOrange);
+                        continue;
+                    }
                     if (anyToolFailed && IsGenericInitialClarification(turnResult.Clarification))
                     {
                         AddAssistantCard("CAD 助手",
@@ -2608,6 +2633,14 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
 
                 if (turnResult.ToolCalls == null || turnResult.ToolCalls.Count == 0)
                 {
+                    if (LooksLikeCadWriteRequest(originalUserText) && turn < 8)
+                    {
+                        currentMessage = BuildForceToolCallPrompt(originalUserText, turnResult);
+                        currentAttachments = attachments == null ? new JArray() : (JArray)attachments.DeepClone();
+                        currentObservation = DrawingSnapshotCollector.CaptureActive();
+                        SetChatStatus("模型只返回了说明，正在要求它返回可执行工具调用...", CadOrange);
+                        continue;
+                    }
                     SetChatStatus(anyToolFailed ? "已完成，但有工具失败。" : "已完成。", anyToolFailed ? CadOrange : CadGreen);
                     return;
                 }
@@ -2883,6 +2916,15 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                 case "draw_rectangle":
                 case "rectangle":
                     return "cad.draw_rectangle";
+                case "draw_stair":
+                case "stair":
+                case "stairs":
+                case "stair_u":
+                case "u_stair":
+                case "double_run_stair":
+                case "楼梯":
+                case "双跑楼梯":
+                    return "cad.draw_stair";
                 case "draw_text":
                 case "text":
                 case "annotation":
@@ -2902,6 +2944,128 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                 return CadToolHost.IsCadTool(trimmed) ? trimmed : "";
             }
             return CadIrActionToToolName(trimmed);
+        }
+
+        private static bool TryBuildLocalFallbackToolCalls(string originalUserText, string currentMessage, AgentTurnResult result, out JArray calls)
+        {
+            calls = new JArray();
+            var text = (originalUserText ?? "") + "\n" + (currentMessage ?? "") + "\n" + (result?.AssistantMessage ?? "");
+            if (!LooksLikeStairRequest(text)) return false;
+
+            var args = new JObject
+            {
+                ["layer"] = "STAIR",
+                ["x"] = 0,
+                ["y"] = 0,
+                ["width"] = ExtractCadDimension(text, new[] { "宽度", "净宽", "楼梯宽", "stair width", "width" }, 1200),
+                ["tread_depth"] = ExtractCadDimension(text, new[] { "踏步", "踏面", "进深", "tread" }, 250),
+                ["riser_height"] = ExtractCadDimension(text, new[] { "踢步", "高度", "riser" }, 150),
+                ["floor_height"] = ExtractCadDimension(text, new[] { "层高", "floor height" }, 3900),
+                ["platform_depth"] = ExtractCadDimension(text, new[] { "平台", "休息平台", "landing", "platform" }, 1200),
+                ["color"] = 7,
+            };
+            calls.Add(new JObject
+            {
+                ["id"] = "local-stair-" + DateTime.UtcNow.ToString("HHmmssfff"),
+                ["name"] = "cad.draw_stair",
+                ["args"] = args,
+            });
+            return true;
+        }
+
+        private static bool LooksLikeStairRequest(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            var s = text.ToLowerInvariant();
+            return s.Contains("楼梯") || s.Contains("stair");
+        }
+
+        private static bool LooksLikeCadWriteRequest(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            var s = text.ToLowerInvariant();
+            return s.Contains("画") ||
+                   s.Contains("绘制") ||
+                   s.Contains("生成") ||
+                   s.Contains("创建") ||
+                   s.Contains("新建") ||
+                   s.Contains("复制") ||
+                   s.Contains("移动") ||
+                   s.Contains("draw") ||
+                   s.Contains("create") ||
+                   s.Contains("copy") ||
+                   s.Contains("move") ||
+                   LooksLikeStairRequest(s);
+        }
+
+        private static bool IsVagueClarification(JObject clarification, string assistantMessage)
+        {
+            var text = (assistantMessage ?? "") + " " + (clarification?.Value<string>("question") ?? "") + " " +
+                       string.Join(" ", (clarification?["options"] as JArray)?.Values<string>() ?? Enumerable.Empty<string>());
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            return text.Contains("补充缺失") ||
+                   text.Contains("缺失的信息") ||
+                   text.Contains("需要补充") ||
+                   text.Contains("请选择") ||
+                   text.Contains("missing") ||
+                   text.Contains("clarify");
+        }
+
+        private static string BuildForceToolCallPrompt(string originalUserText, AgentTurnResult previous)
+        {
+            var response = new JObject
+            {
+                ["assistant_message"] = previous?.AssistantMessage,
+                ["cad_brief"] = previous?.CadBrief,
+                ["task_plan"] = previous?.TaskPlan,
+                ["cad_ir"] = previous?.CadIr,
+                ["safety"] = previous?.Safety,
+                ["validation"] = previous?.Validation,
+                ["clarification"] = previous?.Clarification,
+            };
+            return "同一个 CAD 任务继续。用户已经要求不要反复追问，必须按合理默认值调用工具执行。\r\n" +
+                   "原始用户请求：\r\n" + (originalUserText ?? "") + "\r\n\r\n" +
+                   "你上一轮只返回了说明/澄清，没有实际 tool_calls。现在只返回可执行 JSON：必须包含 tool_calls。\r\n" +
+                   "如果是楼梯，优先使用 cad.draw_stair；否则把 CAD-IR 分解为 cad.create_layer/cad.draw_polyline/cad.draw_line/cad.draw_rectangle/cad.draw_text 等工具。\r\n" +
+                   "上一轮结构化结果：\r\n" + response.ToString(Formatting.None);
+        }
+
+        private static double ExtractCadDimension(string text, string[] keywords, double fallback)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return fallback;
+            foreach (var keyword in keywords)
+            {
+                var value = ExtractNumberNearKeyword(text, keyword);
+                if (value.HasValue) return value.Value;
+            }
+
+            return ExtractCommonChineseDimension(text) ?? fallback;
+        }
+
+        private static double? ExtractNumberNearKeyword(string text, string keyword)
+        {
+            var index = text.IndexOf(keyword, StringComparison.OrdinalIgnoreCase);
+            if (index < 0) return null;
+            var start = Math.Max(0, index - 12);
+            var length = Math.Min(text.Length - start, keyword.Length + 36);
+            var window = text.Substring(start, length);
+            var match = System.Text.RegularExpressions.Regex.Match(window, @"(\d+(?:\.\d+)?)\s*(毫米|mm|米|m)?", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (!match.Success) return ExtractCommonChineseDimension(window);
+            var value = double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+            var unit = match.Groups[2].Value.ToLowerInvariant();
+            if (unit == "米" || unit == "m") return value * 1000;
+            if (string.IsNullOrWhiteSpace(unit) && value <= 20) return value * 1000;
+            return value;
+        }
+
+        private static double? ExtractCommonChineseDimension(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return null;
+            if (text.Contains("三米九")) return 3900;
+            if (text.Contains("一米二")) return 1200;
+            if (text.Contains("两百五") || text.Contains("二百五")) return 250;
+            if (text.Contains("一百五")) return 150;
+            return null;
         }
 
         private void AddClarificationCard(JObject clarification, string originalText)

@@ -15,6 +15,14 @@ If it is `1` or `2`, load the plugin from a trusted path:
 
 Do not set `SECURELOAD=0` just to make it load.
 
+## AutoCAD Shows An Unsigned Executable Warning
+
+Local development builds are not code-signed. If AutoCAD prompts for
+`Vcad.Plugin.Acad2017.dll`, verify the path is the installed VCAD bundle, then
+choose **Load Once** for testing or **Always Load** for this trusted local build.
+If you choose **Do Not Load**, the `VCAD` command and agent panel will not be
+available in that AutoCAD session.
+
 ## Could Not Load File Or Assembly
 
 For AutoCAD 2017, make sure .NET Framework 4.7 or later is installed:

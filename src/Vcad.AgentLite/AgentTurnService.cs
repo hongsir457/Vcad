@@ -272,7 +272,33 @@ public sealed class AgentTurnService
             summary = "离线 echo agent 根据关键词选择一个 CAD 工具调用。",
         });
 
-        if (ContainsAny(text, "矩形", "rectangle", "房间", "room"))
+        if (ContainsAny(text, "楼梯", "stair", "stairs"))
+        {
+            response.tool_calls.Add(new AgentToolCall
+            {
+                id = "call-" + DateTime.UtcNow.ToString("HHmmssfff"),
+                name = "cad.draw_stair",
+                args = new JsonObject
+                {
+                    ["layer"] = "STAIR",
+                    ["x"] = 0,
+                    ["y"] = 0,
+                    ["width"] = 1200,
+                    ["tread_depth"] = 250,
+                    ["riser_height"] = 150,
+                    ["floor_height"] = 3900,
+                    ["platform_depth"] = 1200,
+                    ["color"] = 7,
+                },
+            });
+            response.cad_ir = new JsonObject
+            {
+                ["intent"] = "draw_stair",
+                ["target_layer"] = "STAIR",
+                ["expected_bounds"] = new JsonObject { ["width"] = 3600, ["height"] = 4450 },
+            };
+        }
+        else if (ContainsAny(text, "矩形", "rectangle", "房间", "room"))
         {
             response.tool_calls.Add(new AgentToolCall
             {
@@ -456,6 +482,7 @@ Available CAD tools:
 - cad.draw_polyline { layer, color, points:[[x,y],...], closed, constant_width }
 - cad.draw_circle { layer, color, x, y, radius }
 - cad.draw_rectangle { layer, color, x, y, width, height }
+- cad.draw_stair { layer, color, x, y, width, tread_depth, riser_height, floor_height, platform_depth, total_risers }
 - cad.draw_text { layer, color, x, y, text, height }
 
 Available context/action tools:
@@ -478,6 +505,7 @@ Rules:
 - Use workspace.read_file/workspace.write_file when the user asks to inspect or save files under the configured workspace root. Write only when the user asked to create/update a file or the execution mode authorizes it.
 - Do not ask generic questions when a safe, reversible, or previewable next step can be inferred. Make a reasonable plan, call read/context tools when useful, and ask only specific missing parameters.
 - Prefer cad.draw_polyline for multi-segment contours and outlines instead of many separate cad.draw_line calls.
+- Prefer cad.draw_stair for common U-shaped/double-run stair requests instead of only describing a stair plan.
 - Assistant replies, progress messages, status, errors, or explanations must stay in assistant_message, never cad.draw_text.
 - Reply in the user's language. If the user writes Chinese, assistant_message, trace summaries, and clarification options should be Chinese.
 - Use cad.draw_text only when the user explicitly asks for a drawing label, annotation, title, dimension, or note.

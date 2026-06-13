@@ -78,6 +78,11 @@ if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
 Copy-Item bundle\Acad2017 $dest -Recurse -Force
 ```
 
+On the first launch after installing a local unsigned build, AutoCAD may show a
+security prompt for `Vcad.Plugin.Acad2017.dll`. Verify the path is under
+`VCAD-Acad2017.bundle`, then choose **Load Once** for that session or
+**Always Load** if you trust this local build.
+
 Start AutoCAD, type `VCAD`, open **配置**, set provider/model/API key, save, and
 click **测试连接**. Then use **对话**:
 
@@ -154,6 +159,7 @@ Plugin-hosted CAD tools:
 - `cad.draw_polyline`
 - `cad.draw_circle`
 - `cad.draw_rectangle`
+- `cad.draw_stair`
 - `cad.draw_text`
 
 AgentLite-hosted context tools:

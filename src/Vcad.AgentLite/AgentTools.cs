@@ -167,6 +167,14 @@ public static class AgentTools
         },
         new()
         {
+            Name = "cad.draw_stair",
+            Category = "cad_action",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Draw a U-shaped double-run stair using width, tread depth, riser height, floor height, and platform depth.",
+        },
+        new()
+        {
             Name = "cad.draw_text",
             Category = "cad_action",
             Effect = "write",

@@ -77,6 +77,25 @@ public class HttpEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.layer_diff");
         Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.before_after_diff");
         Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.validate_dwg_state");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.draw_stair");
+    }
+
+    [Fact]
+    public async Task Benchmark_stair_uses_high_level_cad_tool()
+    {
+        var client = _factory.CreateClient();
+        var req = new
+        {
+            session_id = "bench-stair-1",
+            message = "画一个U型双跑楼梯，宽度一米二，踏步两百五，踢步一百五，层高三米九",
+        };
+        var resp = await client.PostAsJsonAsync("/agent/turn", req);
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+
+        var body = await resp.Content.ReadAsStringAsync();
+        var jo = JsonNode.Parse(body)!.AsObject();
+        var response = jo["response"]!.AsObject();
+        Assert.Contains(response["tool_calls"]!.AsArray(), t => t!["name"]!.GetValue<string>() == "cad.draw_stair");
     }
 
     [Fact]

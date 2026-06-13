@@ -43,12 +43,18 @@ inside the VCAD panel.
    - Expect: preserve or request a previous snapshot, then use
      `cad.before_after_diff` or `cad.layer_diff`.
 
+9. U-shaped double-run stair
+   - Prompt: `画一个U型双跑楼梯，宽度1200，踏步250，踢步150，层高3900`
+   - Expect: `cad.draw_stair` with a bounded plan, no assistant explanation text
+     written into the DWG, and a post-write snapshot/summary.
+
 ## Automated Coverage
 
 Current tests cover:
 
 - `/tools` exposes the expanded CAD and context tool manifest.
 - Echo rectangle requests include `cad.preview_plan` and `cad.draw_rectangle`.
+- Stair requests include the high-level `cad.draw_stair` tool.
 - Inspect requests call `cad.read_dwg_snapshot`.
 - Greeting requests do not call `cad.draw_text`.
 

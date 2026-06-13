@@ -67,6 +67,11 @@ VCAD
 The sidebar opens with **对话 / 配置 / 用量** tabs. The plugin starts bundled
 AgentLite automatically from `Contents\AgentLite`.
 
+For a local unsigned build, AutoCAD can show a security prompt for
+`Vcad.Plugin.Acad2017.dll` on first load. Verify the file is inside
+`VCAD-Acad2017.bundle\Contents`, then choose **Load Once** for a one-time test or
+**Always Load** if you trust this local build. Do not disable `SECURELOAD`.
+
 ## 5. Configure A Model
 
 Open **配置**:

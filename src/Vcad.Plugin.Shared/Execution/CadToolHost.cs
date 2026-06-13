@@ -74,6 +74,7 @@ namespace Vcad.Plugin.Execution
                 { "cad.draw_polyline", new ToolDefinition("cad.draw_polyline", true, (id, name, args) => RunWrite(id, name, args, DrawPolyline)) },
                 { "cad.draw_circle", new ToolDefinition("cad.draw_circle", true, (id, name, args) => RunWrite(id, name, args, DrawCircle)) },
                 { "cad.draw_rectangle", new ToolDefinition("cad.draw_rectangle", true, (id, name, args) => RunWrite(id, name, args, DrawRectangle)) },
+                { "cad.draw_stair", new ToolDefinition("cad.draw_stair", true, (id, name, args) => RunWrite(id, name, args, DrawStair)) },
                 { "cad.draw_text", new ToolDefinition("cad.draw_text", true, (id, name, args) => RunWrite(id, name, args, DrawText)) },
             };
 
@@ -917,6 +918,96 @@ namespace Vcad.Plugin.Execution
             var data = EntityResult("DBText", dbText, layer);
             data["text"] = text;
             return data;
+        }
+
+        private static JObject DrawStair(Database db, Transaction tr, JObject args)
+        {
+            var layer = OptionalString(args, "layer", "STAIR");
+            ValidateLayerName(layer);
+            var x = OptionalDouble(args, "x", 0);
+            var y = OptionalDouble(args, "y", 0);
+            var width = OptionalDouble(args, "width", OptionalDouble(args, "stair_width", 1200));
+            var treadDepth = OptionalDouble(args, "tread_depth", 250);
+            var riserHeight = OptionalDouble(args, "riser_height", 150);
+            var floorHeight = OptionalDouble(args, "floor_height", 3900);
+            var platformDepth = OptionalDouble(args, "platform_depth", width);
+            var totalRisersArg = args.Value<int?>("total_risers");
+            ValidateCoordinate(x, "x");
+            ValidateCoordinate(y, "y");
+            ValidatePositiveDimension(width, "width");
+            ValidatePositiveDimension(treadDepth, "tread_depth");
+            ValidatePositiveDimension(riserHeight, "riser_height");
+            ValidatePositiveDimension(floorHeight, "floor_height");
+            ValidatePositiveDimension(platformDepth, "platform_depth");
+
+            var totalRisers = totalRisersArg.HasValue && totalRisersArg.Value > 0
+                ? totalRisersArg.Value
+                : (int)Math.Round(floorHeight / riserHeight);
+            if (totalRisers < 2) totalRisers = 2;
+            var risersPerRun = (int)Math.Ceiling(totalRisers / 2.0);
+            var runLength = risersPerRun * treadDepth;
+            var rightX = x + width + platformDepth;
+            var topY = y + runLength;
+            var totalWidth = width * 2 + platformDepth;
+            var totalHeight = runLength + platformDepth;
+
+            EnsureLayer(db, tr, layer);
+            var handles = new JArray();
+            handles.Add(AppendRectangleEntity(db, tr, args, layer, x, y, width, runLength).Handle.ToString());
+            handles.Add(AppendRectangleEntity(db, tr, args, layer, rightX, y, width, runLength).Handle.ToString());
+            handles.Add(AppendRectangleEntity(db, tr, args, layer, x, topY, totalWidth, platformDepth).Handle.ToString());
+
+            for (var i = 1; i < risersPerRun; i++)
+            {
+                var ty = y + i * treadDepth;
+                handles.Add(AppendLineEntity(db, tr, args, layer, new Point3d(x, ty, 0), new Point3d(x + width, ty, 0)).Handle.ToString());
+                handles.Add(AppendLineEntity(db, tr, args, layer, new Point3d(rightX, ty, 0), new Point3d(rightX + width, ty, 0)).Handle.ToString());
+            }
+
+            return new JObject
+            {
+                ["entity_type"] = "StairU",
+                ["layer"] = layer,
+                ["handles"] = handles,
+                ["object_count"] = handles.Count,
+                ["layout"] = "u_double_run",
+                ["width"] = width,
+                ["tread_depth"] = treadDepth,
+                ["riser_height"] = riserHeight,
+                ["floor_height"] = floorHeight,
+                ["total_risers"] = totalRisers,
+                ["risers_per_run"] = risersPerRun,
+                ["platform_depth"] = platformDepth,
+                ["bounds"] = new JObject
+                {
+                    ["min"] = new JArray(x, y, 0),
+                    ["max"] = new JArray(x + totalWidth, y + totalHeight, 0),
+                    ["width"] = totalWidth,
+                    ["height"] = totalHeight,
+                },
+            };
+        }
+
+        private static Polyline AppendRectangleEntity(Database db, Transaction tr, JObject args, string layer, double x, double y, double width, double height)
+        {
+            var pl = new Polyline(4);
+            pl.AddVertexAt(0, new Point2d(x, y), 0, 0, 0);
+            pl.AddVertexAt(1, new Point2d(x + width, y), 0, 0, 0);
+            pl.AddVertexAt(2, new Point2d(x + width, y + height), 0, 0, 0);
+            pl.AddVertexAt(3, new Point2d(x, y + height), 0, 0, 0);
+            pl.Closed = true;
+            pl.Layer = layer;
+            ApplyEntityColor(pl, args);
+            AppendToModelSpace(db, tr, pl);
+            return pl;
+        }
+
+        private static Line AppendLineEntity(Database db, Transaction tr, JObject args, string layer, Point3d start, Point3d end)
+        {
+            var line = new Line(start, end) { Layer = layer };
+            ApplyEntityColor(line, args);
+            AppendToModelSpace(db, tr, line);
+            return line;
         }
 
         private static LayerTableRecord EnsureLayer(Database db, Transaction tr, string name)
