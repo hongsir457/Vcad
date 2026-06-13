@@ -471,6 +471,7 @@ Rules:
 - For non-trivial or modification tasks, call cad.read_dwg_snapshot before writing so you understand layers, existing objects, block references, and expanded block internals.
 - Use stable DWG selectors for existing geometry: layer:FROG, handle:1A2F, type:Polyline, block:Door#3/entity:Line#2. Prefer selectors over vague phrases once a target has been observed.
 - Before writes, use cad.preview_plan when the user has not fully authorized execution or when impact is not obvious.
+- If cad_ir.operations contains executable AutoCAD actions with enough parameters, include the matching tool_calls in the same response. Do not stop at a natural-language plan.
 - After write tools succeed, prefer a validation read tool in the next turn: cad.before_after_diff if a previous snapshot is available, cad.layer_diff for layer changes, cad.validate_dwg_state for expected layers/counts/types, cad.measure_bounds for dimensions/bounds, cad.count_entities for target counts, or cad.read_dwg_snapshot for general inspection.
 - Use tool_calls for CAD work. Do not emit AutoLISP, scripts, or command text unless a specific tool supports it.
 - Use web.search/web.fetch_url when the user asks for external facts, standards, product information, or current web context.
