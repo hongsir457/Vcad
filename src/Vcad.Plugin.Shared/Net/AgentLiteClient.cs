@@ -366,6 +366,11 @@ namespace Vcad.Plugin.Net
     {
         public string SessionId { get; set; }
         public string AssistantMessage { get; set; }
+        public JObject CadBrief { get; set; }
+        public JObject TaskPlan { get; set; }
+        public JObject CadIr { get; set; }
+        public JObject Safety { get; set; }
+        public JObject Validation { get; set; }
         public JArray Trace { get; set; }
         public JArray ToolCalls { get; set; }
         public JObject Clarification { get; set; }
@@ -383,6 +388,11 @@ namespace Vcad.Plugin.Net
             {
                 SessionId = Value(obj, "session_id", "SessionId"),
                 AssistantMessage = Value(obj, "assistant_message", "AssistantMessage"),
+                CadBrief = obj["cad_brief"] as JObject,
+                TaskPlan = obj["task_plan"] as JObject,
+                CadIr = obj["cad_ir"] as JObject,
+                Safety = obj["safety"] as JObject,
+                Validation = obj["validation"] as JObject,
                 Trace = obj["trace"] as JArray ?? new JArray(),
                 ToolCalls = obj["tool_calls"] as JArray ?? new JArray(),
                 Clarification = obj["clarification"] as JObject,

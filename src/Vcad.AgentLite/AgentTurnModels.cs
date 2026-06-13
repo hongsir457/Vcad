@@ -16,6 +16,11 @@ public sealed class AgentTurnResponse
 {
     public string session_id { get; set; } = "";
     public string assistant_message { get; set; } = "";
+    public JsonObject? cad_brief { get; set; }
+    public JsonObject? task_plan { get; set; }
+    public JsonObject? cad_ir { get; set; }
+    public JsonObject? safety { get; set; }
+    public JsonObject? validation { get; set; }
     public List<AgentTraceEvent> trace { get; set; } = new();
     public List<AgentToolCall> tool_calls { get; set; } = new();
     public bool requires_user_input { get; set; }

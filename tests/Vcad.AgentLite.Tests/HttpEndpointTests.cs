@@ -49,6 +49,11 @@ public class HttpEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         var response = jo["response"]!.AsObject();
         Assert.NotNull(response["tool_calls"]);
         Assert.Contains(response["tool_calls"]!.AsArray(), t => t!["name"]!.GetValue<string>() == "cad.draw_rectangle");
+        Assert.Equal("active AutoCAD DWG", response["cad_brief"]!["primary_artifact"]!.GetValue<string>());
+        Assert.NotNull(response["task_plan"]);
+        Assert.NotNull(response["cad_ir"]);
+        Assert.NotNull(response["safety"]);
+        Assert.NotNull(response["validation"]);
         Assert.NotNull(response["usage"]);
         Assert.True(response["usage"]!["totalTokens"]!.GetValue<int>() > 0);
     }
@@ -64,6 +69,8 @@ public class HttpEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         var tools = jo["tools"]!.AsArray();
         Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "web.fetch_url");
         Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "workspace.read_file");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.measure_bounds");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.validate_dwg_state");
     }
 
     [Fact]

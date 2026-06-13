@@ -132,6 +132,7 @@ public sealed class AgentTurnService
         var content = new StringBuilder();
         JsonNode? usageNode = null;
         var responseModel = model;
+        var visibleChars = 0;
         while (!reader.EndOfStream)
         {
             var line = await reader.ReadLineAsync();
@@ -155,12 +156,23 @@ public sealed class AgentTurnService
 
             responseModel = chunk?["model"]?.GetValue<string>() ?? responseModel;
             usageNode = chunk?["usage"] ?? usageNode;
-            var delta = chunk?["choices"]?[0]?["delta"]?["content"]?.GetValue<string>();
+            var choices = chunk?["choices"] as JsonArray;
+            if (choices == null || choices.Count == 0)
+            {
+                continue;
+            }
+
+            var delta = choices[0]?["delta"]?["content"]?.GetValue<string>();
             if (string.IsNullOrEmpty(delta)) continue;
             content.Append(delta);
             if (onDelta != null)
             {
-                await onDelta(delta);
+                var visible = ExtractPartialJsonString(content.ToString(), "assistant_message");
+                if (visible.Length > visibleChars)
+                {
+                    await onDelta(visible.Substring(visibleChars));
+                    visibleChars = visible.Length;
+                }
             }
         }
 
@@ -171,6 +183,10 @@ public sealed class AgentTurnService
         }
 
         var response = ParseAgentResponse(raw, req);
+        if (onDelta != null && visibleChars == 0 && !string.IsNullOrWhiteSpace(response.assistant_message))
+        {
+            await onDelta(response.assistant_message);
+        }
         response.usage = usageNode == null
             ? EstimateUsage(options, responseModel, req, raw)
             : ExtractOpenAiUsageFromNode(usageNode, options, responseModel);
@@ -229,6 +245,26 @@ public sealed class AgentTurnService
             assistant_message = "我会以智能体工具调用方式处理当前 CAD 请求。",
             done = false,
             usage = EstimateUsage(options, string.IsNullOrWhiteSpace(options.Model) ? "echo-agent" : options.Model, req, "echo"),
+            cad_brief = new JsonObject
+            {
+                ["task_type"] = "dwg_action",
+                ["objective"] = text,
+                ["primary_artifact"] = "active AutoCAD DWG",
+                ["units"] = "millimeters unless the drawing context or user says otherwise",
+            },
+            task_plan = new JsonObject
+            {
+                ["steps"] = new JsonArray("read current DWG context", "perform the requested CAD operation", "validate the changed DWG state"),
+            },
+            safety = new JsonObject
+            {
+                ["mode"] = "non_destructive_additive",
+                ["confirmation"] = "plugin policy decides whether write tools require confirmation",
+            },
+            validation = new JsonObject
+            {
+                ["planned_checks"] = new JsonArray("cad.read_dwg_snapshot", "cad.validate_dwg_state"),
+            },
         };
         response.trace.Add(new AgentTraceEvent
         {
@@ -252,6 +288,12 @@ public sealed class AgentTurnService
                     ["color"] = 7,
                 },
             });
+            response.cad_ir = new JsonObject
+            {
+                ["intent"] = "draw_rectangle",
+                ["target_layer"] = "A-WALL",
+                ["expected_bounds"] = new JsonObject { ["width"] = 6000, ["height"] = 4000 },
+            };
         }
         else if (ContainsAny(text, "看", "读取", "图纸", "snapshot", "inspect"))
         {
@@ -287,6 +329,11 @@ public sealed class AgentTurnService
         {
             session_id = FirstNonEmpty(node["session_id"]?.GetValue<string>(), req.session_id, "agent-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff")),
             assistant_message = node["assistant_message"]?.GetValue<string>() ?? "",
+            cad_brief = node["cad_brief"] as JsonObject,
+            task_plan = node["task_plan"] as JsonObject,
+            cad_ir = node["cad_ir"] as JsonObject,
+            safety = node["safety"] as JsonObject,
+            validation = node["validation"] as JsonObject,
             requires_user_input = node["requires_user_input"]?.GetValue<bool>() ?? false,
             done = node["done"]?.GetValue<bool>() ?? false,
         };
@@ -341,6 +388,33 @@ You run as a tool-calling CAD agent inside a docked AutoCAD panel.
 Return JSON only:
 {
   "assistant_message": "Natural-language reply for the panel. Never put this text into the drawing.",
+  "cad_brief": {
+    "task_type": "new_geometry|modify_geometry|inspect|annotation|file_context|web_context|conversation",
+    "objective": "what the user wants in the active DWG",
+    "primary_artifact": "active AutoCAD DWG",
+    "units": "mm|drawing_units|unknown",
+    "assumptions": ["explicit assumptions when proceeding without asking"],
+    "validation_targets": ["dimensions, layers, counts, object types, or relationships to check"]
+  },
+  "task_plan": {
+    "steps": ["observe DWG", "prepare CAD-IR", "safety check", "preview/confirm if required", "execute via tools", "validate result"],
+    "next_step": "the immediate next action"
+  },
+  "cad_ir": {
+    "operations": [{"action":"draw_rectangle|draw_polyline|draw_circle|draw_line|draw_text|create_layer|inspect|validate","target_layer":"...", "parameters":{}}],
+    "expected_effect": {"layers":[], "object_types":[], "bounds":{}}
+  },
+  "safety": {
+    "risk_level": "low|medium|high",
+    "writes_dwg": true,
+    "destructive": false,
+    "requires_confirmation": true,
+    "reason": "why this is safe or what needs confirmation"
+  },
+  "validation": {
+    "planned_checks": ["cad.validate_dwg_state", "cad.measure_bounds", "cad.read_dwg_snapshot"],
+    "success_criteria": ["what must be true after tool execution"]
+  },
   "trace": [{"title":"short step","summary":"brief visible reasoning, no hidden chain-of-thought"}],
   "tool_calls": [{"id":"call-1","name":"cad.read_dwg_snapshot","args":{"limit":300}}],
   "requires_user_input": false,
@@ -350,6 +424,8 @@ Return JSON only:
 
 Available CAD tools:
 - cad.read_dwg_snapshot { limit }
+- cad.measure_bounds { layer, type, handle, include_exploded }
+- cad.validate_dwg_state { expected_layers, expected_min_entities, expected_types, expected_layer_entity_counts, max_warnings }
 - cad.create_layer { name, color }
 - cad.draw_line { layer, color, x1, y1, x2, y2 }
 - cad.draw_polyline { layer, color, points:[[x,y],...], closed, constant_width }
@@ -365,6 +441,10 @@ Available context/action tools:
 - Uploaded attachments are already included in Attachment context. PDF text excerpts, image metadata/base64, and text file excerpts should be used directly before asking the user to repeat the content.
 
 Rules:
+- Keep the entry point and primary artifact DWG-first: you are inside AutoCAD, and the current active DWG is the source of truth. Do not switch to STEP/build123d workflows unless the user explicitly asks to export/import such files.
+- Every CAD task should follow this engineering loop at the right depth: Intent -> CAD brief -> task plan -> CAD-IR -> safety -> preview/confirm policy -> AutoCAD tool adapter -> validation -> result.
+- For non-trivial or modification tasks, call cad.read_dwg_snapshot before writing so you understand layers, existing objects, block references, and expanded block internals.
+- After write tools succeed, prefer a validation read tool in the next turn: cad.validate_dwg_state for expected layers/counts/types, cad.measure_bounds for dimensions/bounds, or cad.read_dwg_snapshot for general inspection.
 - Use tool_calls for CAD work. Do not emit AutoLISP, scripts, or command text unless a specific tool supports it.
 - Use web.search/web.fetch_url when the user asks for external facts, standards, product information, or current web context.
 - Use workspace.read_file/workspace.write_file when the user asks to inspect or save files under the configured workspace root. Write only when the user asked to create/update a file or the execution mode authorizes it.
@@ -379,6 +459,7 @@ Rules:
 - After successful CAD execution, do not ask the generic initial intent question again. Ask a specific follow-up about likely adjustments to the current result, such as changing size, moving position, changing layer/color, adding labels, continuing with another object, or finishing.
 - Prefer observe -> small action -> observe loops.
 - Safety matters: avoid destructive or global edits unless the user clearly asks.
+- Do not expose hidden chain-of-thought. The trace/cad_brief/task_plan fields should be short, auditable engineering summaries.
 """;
 
     private static string BuildAgentUserPrompt(AgentTurnRequest req)
@@ -475,6 +556,81 @@ Rules:
         if (nl > 0) stripped = stripped.Substring(nl + 1);
         if (stripped.EndsWith("```", StringComparison.Ordinal)) stripped = stripped.Substring(0, stripped.Length - 3);
         return stripped.Trim();
+    }
+
+    private static string ExtractPartialJsonString(string json, string propertyName)
+    {
+        if (string.IsNullOrEmpty(json) || string.IsNullOrEmpty(propertyName)) return "";
+        var marker = "\"" + propertyName + "\"";
+        var markerIndex = json.IndexOf(marker, StringComparison.Ordinal);
+        if (markerIndex < 0) return "";
+        var colonIndex = json.IndexOf(':', markerIndex + marker.Length);
+        if (colonIndex < 0) return "";
+
+        var i = colonIndex + 1;
+        while (i < json.Length && char.IsWhiteSpace(json[i])) i++;
+        if (i >= json.Length || json[i] != '"') return "";
+        i++;
+
+        var sb = new StringBuilder();
+        while (i < json.Length)
+        {
+            var ch = json[i++];
+            if (ch == '"') break;
+            if (ch != '\\')
+            {
+                sb.Append(ch);
+                continue;
+            }
+
+            if (i >= json.Length) break;
+            var esc = json[i++];
+            switch (esc)
+            {
+                case '"':
+                    sb.Append('"');
+                    break;
+                case '\\':
+                    sb.Append('\\');
+                    break;
+                case '/':
+                    sb.Append('/');
+                    break;
+                case 'b':
+                    sb.Append('\b');
+                    break;
+                case 'f':
+                    sb.Append('\f');
+                    break;
+                case 'n':
+                    sb.Append('\n');
+                    break;
+                case 'r':
+                    sb.Append('\r');
+                    break;
+                case 't':
+                    sb.Append('\t');
+                    break;
+                case 'u':
+                    if (i + 4 > json.Length) return sb.ToString();
+                    var hex = json.Substring(i, 4);
+                    try
+                    {
+                        sb.Append((char)Convert.ToInt32(hex, 16));
+                    }
+                    catch
+                    {
+                        return sb.ToString();
+                    }
+                    i += 4;
+                    break;
+                default:
+                    sb.Append(esc);
+                    break;
+            }
+        }
+
+        return sb.ToString();
     }
 
     private static bool ContainsAny(string haystack, params string[] needles)

@@ -113,6 +113,18 @@ namespace Vcad.Plugin.Config
             }
         }
 
+        public static void ClearToday()
+        {
+            try
+            {
+                if (File.Exists(TodayPath)) File.Delete(TodayPath);
+            }
+            catch
+            {
+                // Usage reset is best-effort and must not block CAD operations.
+            }
+        }
+
         public static UsageSummary LoadTodaySummary()
         {
             var records = LoadRecords();
@@ -126,7 +138,7 @@ namespace Vcad.Plugin.Config
                 TotalTokens = records.Sum(r => r.TotalTokens),
                 CostUsd = records.Sum(r => r.CostUsd),
                 TotalMs = records.Sum(r => r.ElapsedMs),
-                Recent = records.OrderByDescending(r => r.TimestampUtc).Take(8).ToList(),
+                Recent = records.OrderByDescending(r => r.TimestampUtc).Take(50).ToList(),
             };
         }
 

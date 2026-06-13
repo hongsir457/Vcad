@@ -23,6 +23,22 @@ public static class AgentTools
         },
         new()
         {
+            Name = "cad.measure_bounds",
+            Category = "cad_validation",
+            Effect = "read",
+            Status = "available_in_plugin",
+            Description = "Measure aggregate bounds, width, height, and entity count for matching DWG entities by layer, type, or handle.",
+        },
+        new()
+        {
+            Name = "cad.validate_dwg_state",
+            Category = "cad_validation",
+            Effect = "read",
+            Status = "available_in_plugin",
+            Description = "Validate expected DWG state such as layers, entity counts, object types, warning count, and layer-specific minimum counts.",
+        },
+        new()
+        {
             Name = "attachment.read_pdf_text",
             Category = "document_context",
             Effect = "read",

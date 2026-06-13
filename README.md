@@ -176,6 +176,7 @@ It builds a bounded context payload:
 - [Install guide](docs/install.md)
 - [Windows + AutoCAD 2017 verification](docs/windows-verify.md)
 - [Agent panel architecture](docs/plugin-agent-panel.md)
+- [DWG-first agent engineering workflow](docs/agent-engineering-workflow.md)
 - [Claude Code AutoCAD COM development bridge](docs/claude-code-autocad-com.md)
 - [Troubleshooting](docs/troubleshooting.md)
 

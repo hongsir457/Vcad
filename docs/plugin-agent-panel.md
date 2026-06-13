@@ -60,6 +60,33 @@ Response:
 {
   "session_id": "cad-session-id",
   "assistant_message": "I need to inspect the current drawing layers first.",
+  "cad_brief": {
+    "task_type": "inspect",
+    "objective": "Understand active DWG layers before writing",
+    "primary_artifact": "active AutoCAD DWG",
+    "units": "drawing_units",
+    "assumptions": [],
+    "validation_targets": ["layer list", "entity counts"]
+  },
+  "task_plan": {
+    "steps": ["observe DWG", "prepare CAD-IR", "validate result"],
+    "next_step": "read active DWG snapshot"
+  },
+  "cad_ir": {
+    "operations": [
+      { "action": "inspect", "parameters": { "limit": 500 } }
+    ]
+  },
+  "safety": {
+    "risk_level": "low",
+    "writes_dwg": false,
+    "destructive": false,
+    "requires_confirmation": false
+  },
+  "validation": {
+    "planned_checks": ["cad.read_dwg_snapshot"],
+    "success_criteria": ["DWG context available"]
+  },
   "trace": [
     { "title": "Read drawing", "summary": "Inspecting active DWG before writing." }
   ],
@@ -80,8 +107,12 @@ access to the drawing. It calls `/agent/turn` again with the tool results.
 Plugin-hosted CAD tools:
 
 - `cad.read_dwg_snapshot`
+- `cad.measure_bounds`
+- `cad.validate_dwg_state`
 - `cad.create_layer`
 - `cad.draw_line`
+- `cad.draw_polyline`
+- `cad.draw_circle`
 - `cad.draw_rectangle`
 - `cad.draw_text`
 

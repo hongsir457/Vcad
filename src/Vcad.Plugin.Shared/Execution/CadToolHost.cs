@@ -3,6 +3,7 @@
 using System;
 using System.Diagnostics;
 using System.Globalization;
+using System.Linq;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.Colors;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -45,6 +46,8 @@ namespace Vcad.Plugin.Execution
         public static bool IsCadTool(string name)
         {
             return string.Equals(name, "cad.read_dwg_snapshot", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(name, "cad.measure_bounds", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(name, "cad.validate_dwg_state", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(name, "cad.create_layer", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(name, "cad.draw_line", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(name, "cad.draw_polyline", StringComparison.OrdinalIgnoreCase) ||
@@ -73,6 +76,14 @@ namespace Vcad.Plugin.Execution
                 if (string.Equals(name, "cad.read_dwg_snapshot", StringComparison.OrdinalIgnoreCase))
                 {
                     result = ReadSnapshot(callId, name);
+                }
+                else if (string.Equals(name, "cad.measure_bounds", StringComparison.OrdinalIgnoreCase))
+                {
+                    result = MeasureBounds(callId, name, args);
+                }
+                else if (string.Equals(name, "cad.validate_dwg_state", StringComparison.OrdinalIgnoreCase))
+                {
+                    result = ValidateDwgState(callId, name, args);
                 }
                 else if (string.Equals(name, "cad.create_layer", StringComparison.OrdinalIgnoreCase))
                 {
@@ -150,6 +161,184 @@ namespace Vcad.Plugin.Execution
                     ["snapshot"] = snapshot,
                     ["summary_text"] = DrawingSnapshotCollector.FormatSummary(snapshot),
                 },
+            };
+        }
+
+        private static CadToolExecutionResult MeasureBounds(string callId, string name, JObject args)
+        {
+            var snapshot = DrawingSnapshotCollector.CaptureActive();
+            var entities = snapshot["entities"] as JArray ?? new JArray();
+            var layer = args.Value<string>("layer");
+            var type = args.Value<string>("type");
+            var handle = args.Value<string>("handle");
+            var includeExploded = args.Value<bool?>("include_exploded") ?? true;
+            var selected = new JArray();
+            double? minX = null;
+            double? minY = null;
+            double? minZ = null;
+            double? maxX = null;
+            double? maxY = null;
+            double? maxZ = null;
+
+            foreach (var token in entities)
+            {
+                var entity = token as JObject;
+                if (entity == null) continue;
+                if (!includeExploded && entity["source"]?["from_block_explode"]?.Value<bool>() == true) continue;
+                if (!string.IsNullOrWhiteSpace(layer) &&
+                    !string.Equals(entity.Value<string>("layer"), layer, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!string.IsNullOrWhiteSpace(type) &&
+                    !string.Equals(entity.Value<string>("type"), type, StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(entity["geometry"]?["entity_type"]?.Value<string>(), type, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!string.IsNullOrWhiteSpace(handle) &&
+                    !string.Equals(entity.Value<string>("handle"), handle, StringComparison.OrdinalIgnoreCase)) continue;
+
+                var bounds = entity["bounds"] as JObject;
+                var min = bounds?["min"] as JArray;
+                var max = bounds?["max"] as JArray;
+                if (min == null || max == null || min.Count < 2 || max.Count < 2) continue;
+
+                var eMinX = min[0].Value<double>();
+                var eMinY = min[1].Value<double>();
+                var eMinZ = min.Count > 2 ? min[2].Value<double>() : 0;
+                var eMaxX = max[0].Value<double>();
+                var eMaxY = max[1].Value<double>();
+                var eMaxZ = max.Count > 2 ? max[2].Value<double>() : 0;
+                minX = !minX.HasValue ? eMinX : Math.Min(minX.Value, eMinX);
+                minY = !minY.HasValue ? eMinY : Math.Min(minY.Value, eMinY);
+                minZ = !minZ.HasValue ? eMinZ : Math.Min(minZ.Value, eMinZ);
+                maxX = !maxX.HasValue ? eMaxX : Math.Max(maxX.Value, eMaxX);
+                maxY = !maxY.HasValue ? eMaxY : Math.Max(maxY.Value, eMaxY);
+                maxZ = !maxZ.HasValue ? eMaxZ : Math.Max(maxZ.Value, eMaxZ);
+                selected.Add(new JObject
+                {
+                    ["handle"] = entity.Value<string>("handle"),
+                    ["type"] = entity.Value<string>("type"),
+                    ["layer"] = entity.Value<string>("layer"),
+                });
+            }
+
+            var aggregate = minX.HasValue
+                ? new JObject
+                {
+                    ["min"] = new JArray(minX.Value, minY.Value, minZ.Value),
+                    ["max"] = new JArray(maxX.Value, maxY.Value, maxZ.Value),
+                    ["width"] = maxX.Value - minX.Value,
+                    ["height"] = maxY.Value - minY.Value,
+                    ["depth"] = maxZ.Value - minZ.Value,
+                }
+                : null;
+
+            return new CadToolExecutionResult
+            {
+                CallId = callId,
+                ToolName = name,
+                Success = true,
+                Message = "DWG bounds measured.",
+                Data = new JObject
+                {
+                    ["filter"] = new JObject
+                    {
+                        ["layer"] = string.IsNullOrWhiteSpace(layer) ? null : layer,
+                        ["type"] = string.IsNullOrWhiteSpace(type) ? null : type,
+                        ["handle"] = string.IsNullOrWhiteSpace(handle) ? null : handle,
+                        ["include_exploded"] = includeExploded,
+                    },
+                    ["count"] = selected.Count,
+                    ["bounds"] = aggregate,
+                    ["entities"] = selected,
+                },
+            };
+        }
+
+        private static CadToolExecutionResult ValidateDwgState(string callId, string name, JObject args)
+        {
+            var snapshot = DrawingSnapshotCollector.CaptureActive();
+            var checks = new JArray();
+            var passed = true;
+            var layers = snapshot["layers"] as JArray ?? new JArray();
+            var entities = snapshot["entities"] as JArray ?? new JArray();
+            var warnings = snapshot["warnings"] as JArray ?? new JArray();
+            var expectedLayers = args["expected_layers"] as JArray;
+            if (expectedLayers != null)
+            {
+                foreach (var layerToken in expectedLayers)
+                {
+                    var layerName = layerToken.Value<string>();
+                    var ok = layers.Any(l => string.Equals(l?["name"]?.Value<string>(), layerName, StringComparison.OrdinalIgnoreCase));
+                    checks.Add(CheckResult("layer_exists:" + layerName, ok, ok ? "" : "Missing layer " + layerName));
+                    passed &= ok;
+                }
+            }
+
+            var minEntities = args.Value<int?>("expected_min_entities");
+            if (minEntities.HasValue)
+            {
+                var ok = entities.Count >= minEntities.Value;
+                checks.Add(CheckResult("min_entities", ok, "actual=" + entities.Count + ", expected_min=" + minEntities.Value));
+                passed &= ok;
+            }
+
+            var expectedTypes = args["expected_types"] as JArray;
+            if (expectedTypes != null)
+            {
+                foreach (var typeToken in expectedTypes)
+                {
+                    var expectedType = typeToken.Value<string>();
+                    var count = entities.Count(e =>
+                        string.Equals(e?["type"]?.Value<string>(), expectedType, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(e?["geometry"]?["entity_type"]?.Value<string>(), expectedType, StringComparison.OrdinalIgnoreCase));
+                    var ok = count > 0;
+                    checks.Add(CheckResult("type_exists:" + expectedType, ok, "count=" + count));
+                    passed &= ok;
+                }
+            }
+
+            var expectedLayerCounts = args["expected_layer_entity_counts"] as JObject;
+            if (expectedLayerCounts != null)
+            {
+                foreach (var prop in expectedLayerCounts.Properties())
+                {
+                    var layerName = prop.Name;
+                    var expectedMin = prop.Value.Value<int>();
+                    var count = entities.Count(e => string.Equals(e?["layer"]?.Value<string>(), layerName, StringComparison.OrdinalIgnoreCase));
+                    var ok = count >= expectedMin;
+                    checks.Add(CheckResult("layer_min_count:" + layerName, ok, "actual=" + count + ", expected_min=" + expectedMin));
+                    passed &= ok;
+                }
+            }
+
+            var maxWarnings = args.Value<int?>("max_warnings");
+            if (maxWarnings.HasValue)
+            {
+                var ok = warnings.Count <= maxWarnings.Value;
+                checks.Add(CheckResult("max_warnings", ok, "actual=" + warnings.Count + ", max=" + maxWarnings.Value));
+                passed &= ok;
+            }
+
+            return new CadToolExecutionResult
+            {
+                CallId = callId,
+                ToolName = name,
+                Success = true,
+                Message = passed ? "DWG validation passed." : "DWG validation failed.",
+                Data = new JObject
+                {
+                    ["passed"] = passed,
+                    ["checks"] = checks,
+                    ["summary"] = snapshot["summary"] ?? new JObject(),
+                    ["warnings"] = warnings,
+                },
+            };
+        }
+
+        private static JObject CheckResult(string name, bool passed, string detail)
+        {
+            return new JObject
+            {
+                ["name"] = name,
+                ["passed"] = passed,
+                ["detail"] = detail ?? "",
             };
         }
 

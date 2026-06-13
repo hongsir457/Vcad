@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -9,7 +10,6 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 #if NETFRAMEWORK
-using System.Globalization;
 using System.Speech.Recognition;
 #endif
 using Autodesk.AutoCAD.ApplicationServices;
@@ -30,6 +30,12 @@ namespace Vcad.Plugin.UI
         private TabControl _tabs;
         private Button _btnCollapse;
         private Panel _collapsedStrip;
+        private Panel _headerPanel;
+        private Panel _brandPanel;
+        private Label _lblBrandTitle;
+        private Label _lblHeaderLlmStatus;
+        private Button _btnHeaderMenu;
+        private ContextMenuStrip _headerMenu;
         private TableLayoutPanel _rootLayout;
         private bool _collapsed;
 
@@ -44,6 +50,10 @@ namespace Vcad.Plugin.UI
         private Label _lblChatRequests;
         private Label _lblChatConnection;
         private readonly List<string> _attachedFiles = new List<string>();
+        private readonly List<ConversationMessageRecord> _conversationMessages = new List<ConversationMessageRecord>();
+        private string _currentConversationId = ConversationHistoryStore.NewId();
+        private DateTime _currentConversationStartedUtc = DateTime.UtcNow;
+        private bool _suppressConversationRecording;
         private ToolTip _toolTip;
 #if NETFRAMEWORK
         private SpeechRecognitionEngine _speechEngine;
@@ -80,7 +90,8 @@ namespace Vcad.Plugin.UI
         private Label _lblUsageModel;
         private Label _lblUsageTokens;
         private Label _lblUsageCost;
-        private Label _lblUsageRecent;
+        private TextBox _txtUsageRecent;
+        private Button _btnClearUsage;
         private Label _lblStatus;
 
         private int _chatRequests;
@@ -169,6 +180,7 @@ namespace Vcad.Plugin.UI
         {
             if (disposing)
             {
+                SaveCurrentConversation();
 #if NETFRAMEWORK
                 StopVoiceInputSilently();
                 if (_speechEngine != null)
@@ -202,16 +214,13 @@ namespace Vcad.Plugin.UI
             _rootLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             _rootLayout.Controls.Add(BuildHeader(), 0, 0);
 
-            _tabs = new TabControl
+            _tabs = new HeaderDrivenTabControl
             {
                 Dock = DockStyle.Fill,
-                DrawMode = TabDrawMode.OwnerDrawFixed,
-                Alignment = TabAlignment.Bottom,
-                ItemSize = new Size(140, 42),
+                Appearance = TabAppearance.FlatButtons,
+                ItemSize = new Size(1, 1),
                 SizeMode = TabSizeMode.Fixed,
             };
-            _tabs.DrawItem += OnDrawTab;
-            _tabs.Resize += (s, e) => ResizeTabItems();
 
             var chatTab = new TabPage("对话");
             chatTab.BackColor = CadBg;
@@ -227,6 +236,7 @@ namespace Vcad.Plugin.UI
             usageTab.BackColor = CadBg;
             BuildUsageTab(usageTab);
             _tabs.TabPages.Add(usageTab);
+            _tabs.SelectedIndex = 0;
 
             _rootLayout.Controls.Add(_tabs, 0, 1);
             Controls.Add(_rootLayout);
@@ -234,7 +244,6 @@ namespace Vcad.Plugin.UI
             _collapsedStrip = BuildCollapsedStrip();
             _collapsedStrip.Visible = false;
             Controls.Add(_collapsedStrip);
-            ResizeTabItems();
         }
 
         private Control BuildHeader()
@@ -245,32 +254,66 @@ namespace Vcad.Plugin.UI
                 BackColor = CadBg,
                 Padding = new Padding(10, 8, 10, 8),
             };
+            _headerPanel = header;
 
-            var title = new Label
+            _brandPanel = new Panel
             {
-                Text = "VoiceCAD 助手",
-                AutoSize = true,
-                ForeColor = CadCyan,
-                Font = UiFontBold,
-                Location = new Point(12, 13),
+                Left = 10,
+                Top = 8,
+                Width = 150,
+                Height = 28,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left,
             };
             var mark = new Label
             {
-                Text = "▧",
-                AutoSize = true,
+                Text = "V",
+                AutoSize = false,
+                Width = 18,
+                Height = 22,
+                Left = 0,
+                Top = 2,
+                TextAlign = ContentAlignment.MiddleCenter,
                 ForeColor = CadCyan,
-                Font = new Font("Consolas", 13F, FontStyle.Bold),
-                Location = new Point(2, 9),
+                Font = new Font("Consolas", 12F, FontStyle.Bold),
             };
-            var online = new Label
+            _lblBrandTitle = new Label
             {
-                Text = "● ONLINE",
+                Text = "VoiceCAD 助手",
+                AutoSize = false,
+                ForeColor = CadCyan,
+                Font = UiFontBold,
+                Left = 22,
+                Top = 5,
+                Width = 124,
+                Height = 20,
+            };
+            _brandPanel.Controls.Add(mark);
+            _brandPanel.Controls.Add(_lblBrandTitle);
+
+            _lblHeaderLlmStatus = new Label
+            {
+                Text = "● LLM 未测",
                 AutoSize = true,
-                ForeColor = CadGreen,
+                ForeColor = CadMuted,
                 Font = UiFontSmall,
                 Anchor = AnchorStyles.Top | AnchorStyles.Right,
                 Location = new Point(230, 15),
             };
+            _headerMenu = BuildHeaderMenuStrip();
+            _btnHeaderMenu = new Button
+            {
+                Text = "⚙",
+                Width = 24,
+                Height = 24,
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = CadCyan,
+                BackColor = CadBg,
+                Font = new Font("Segoe UI Symbol", 10F, FontStyle.Bold),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            };
+            _btnHeaderMenu.FlatAppearance.BorderColor = CadBorder;
+            _btnHeaderMenu.FlatAppearance.BorderSize = 1;
+            _btnHeaderMenu.Click += (s, e) => _headerMenu.Show(_btnHeaderMenu, new Point(0, _btnHeaderMenu.Height + 2));
             _btnCollapse = new Button
             {
                 Text = "‹",
@@ -285,13 +328,264 @@ namespace Vcad.Plugin.UI
             _btnCollapse.FlatAppearance.BorderColor = CadBorder;
             _btnCollapse.FlatAppearance.BorderSize = 1;
             _btnCollapse.Click += (s, e) => SetCollapsed(!_collapsed);
-            header.Resize += (s, e) => online.Left = Math.Max(160, header.Width - online.Width - 12);
-            header.Resize += (s, e) => _btnCollapse.Left = Math.Max(120, online.Left - _btnCollapse.Width - 8);
-            header.Controls.Add(mark);
-            header.Controls.Add(title);
-            header.Controls.Add(online);
+            header.Resize += (s, e) => LayoutHeader();
+            header.Controls.Add(_brandPanel);
+            header.Controls.Add(_lblHeaderLlmStatus);
+            header.Controls.Add(_btnHeaderMenu);
             header.Controls.Add(_btnCollapse);
+            LayoutHeader();
             return header;
+        }
+
+        private void LayoutHeader()
+        {
+            if (_headerPanel == null || _lblHeaderLlmStatus == null || _btnCollapse == null || _btnHeaderMenu == null) return;
+            _lblHeaderLlmStatus.Left = Math.Max(128, _headerPanel.Width - _lblHeaderLlmStatus.Width - 12);
+            _lblHeaderLlmStatus.Top = 15;
+            _btnHeaderMenu.Left = Math.Max(96, _lblHeaderLlmStatus.Left - _btnHeaderMenu.Width - 8);
+            _btnHeaderMenu.Top = 4;
+            _btnCollapse.Left = Math.Max(66, _btnHeaderMenu.Left - _btnCollapse.Width - 6);
+            _btnCollapse.Top = 4;
+            if (_brandPanel != null)
+            {
+                _brandPanel.Width = Math.Max(74, _btnCollapse.Left - _brandPanel.Left - 8);
+            }
+            if (_lblBrandTitle != null && _brandPanel != null)
+            {
+                _lblBrandTitle.Width = Math.Max(48, _brandPanel.Width - _lblBrandTitle.Left);
+            }
+        }
+
+        private ContextMenuStrip BuildHeaderMenuStrip()
+        {
+            var menu = new ContextMenuStrip
+            {
+                BackColor = CadPanel,
+                ForeColor = CadText,
+                Font = UiFont,
+                ShowImageMargin = false,
+            };
+            menu.Items.Add(HeaderMenuItem("新建对话", -1));
+            menu.Items.Add(HeaderMenuItem("清空对话", -2));
+            menu.Items.Add(HeaderMenuItem("历史对话", -3));
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(HeaderMenuItem("对话", 0));
+            menu.Items.Add(HeaderMenuItem("配置", 1));
+            menu.Items.Add(HeaderMenuItem("用量", 2));
+            return menu;
+        }
+
+        private ToolStripMenuItem HeaderMenuItem(string text, int tabIndex)
+        {
+            var item = new ToolStripMenuItem(text);
+            item.Click += (s, e) => SelectMainTab(tabIndex);
+            return item;
+        }
+
+        private void SelectMainTab(int tabIndex)
+        {
+            if (tabIndex == -1)
+            {
+                StartNewConversation(true);
+                return;
+            }
+            if (tabIndex == -2)
+            {
+                ClearConversation(true);
+                return;
+            }
+            if (tabIndex == -3)
+            {
+                ShowConversationHistoryDialog();
+                return;
+            }
+            if (_tabs == null || tabIndex < 0 || tabIndex >= _tabs.TabPages.Count) return;
+            _tabs.SelectedIndex = tabIndex;
+            if (tabIndex == 2) RefreshUsage();
+        }
+
+        private void StartNewConversation(bool showNotice)
+        {
+            SaveCurrentConversation();
+            _conversationMessages.Clear();
+            _attachedFiles.Clear();
+            _currentConversationId = ConversationHistoryStore.NewId();
+            _currentConversationStartedUtc = DateTime.UtcNow;
+            _chatRequests = 0;
+            if (_chatList != null)
+            {
+                _chatList.Controls.Clear();
+                AddStartupCards();
+            }
+            if (_txtNaturalLanguage != null) _txtNaturalLanguage.Text = "询问 CAD 助手...";
+            RefreshUsage();
+            SelectMainTab(0);
+            if (showNotice) SetChatStatus("已新建对话，上下文从空白开始。", CadGreen);
+        }
+
+        private void ClearConversation(bool confirm)
+        {
+            if (confirm)
+            {
+                var result = MessageBox.Show(
+                    "清空当前对话内容和上下文？历史记录不会删除。",
+                    "清空对话",
+                    MessageBoxButtons.OKCancel,
+                    MessageBoxIcon.Question);
+                if (result != DialogResult.OK) return;
+            }
+            _conversationMessages.Clear();
+            _attachedFiles.Clear();
+            _currentConversationId = ConversationHistoryStore.NewId();
+            _currentConversationStartedUtc = DateTime.UtcNow;
+            _chatRequests = 0;
+            if (_chatList != null)
+            {
+                _chatList.Controls.Clear();
+                AddStartupCards();
+            }
+            if (_txtNaturalLanguage != null) _txtNaturalLanguage.Text = "询问 CAD 助手...";
+            RefreshUsage();
+            SelectMainTab(0);
+            SetChatStatus("当前对话已清空。", CadGreen);
+        }
+
+        private void ShowConversationHistoryDialog()
+        {
+            SaveCurrentConversation();
+            var records = ConversationHistoryStore.LoadAll();
+            if (records.Count == 0)
+            {
+                MessageBox.Show("还没有历史对话。", "历史对话", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using (var form = new Form())
+            using (var list = new ListBox())
+            using (var open = new Button())
+            using (var cancel = new Button())
+            {
+                form.Text = "历史对话";
+                form.StartPosition = FormStartPosition.CenterParent;
+                form.FormBorderStyle = FormBorderStyle.FixedDialog;
+                form.MinimizeBox = false;
+                form.MaximizeBox = false;
+                form.ClientSize = new Size(420, 320);
+                form.BackColor = CadBg;
+                form.ForeColor = CadText;
+                form.Font = UiFont;
+
+                list.Left = 10;
+                list.Top = 10;
+                list.Width = 400;
+                list.Height = 250;
+                list.BackColor = CadInput;
+                list.ForeColor = CadText;
+                list.Font = UiFont;
+                foreach (var record in records)
+                {
+                    list.Items.Add(record.UpdatedUtc.ToLocalTime().ToString("MM-dd HH:mm") + "  " +
+                        FirstNonEmpty(record.Title, "未命名对话"));
+                }
+                if (list.Items.Count > 0) list.SelectedIndex = 0;
+
+                open.Text = "打开";
+                open.Left = 250;
+                open.Top = 275;
+                open.Width = 72;
+                open.Height = 28;
+                open.DialogResult = DialogResult.OK;
+                cancel.Text = "取消";
+                cancel.Left = 338;
+                cancel.Top = 275;
+                cancel.Width = 72;
+                cancel.Height = 28;
+                cancel.DialogResult = DialogResult.Cancel;
+                form.Controls.Add(list);
+                form.Controls.Add(open);
+                form.Controls.Add(cancel);
+                form.AcceptButton = open;
+                form.CancelButton = cancel;
+                StylePrimaryButton(open);
+                StyleGhostButton(cancel);
+
+                if (form.ShowDialog() != DialogResult.OK || list.SelectedIndex < 0) return;
+                LoadConversation(records[list.SelectedIndex]);
+            }
+        }
+
+        private void LoadConversation(ConversationHistoryRecord record)
+        {
+            if (record == null) return;
+            _currentConversationId = string.IsNullOrWhiteSpace(record.Id) ? ConversationHistoryStore.NewId() : record.Id;
+            _currentConversationStartedUtc = record.CreatedUtc == default(DateTime) ? DateTime.UtcNow : record.CreatedUtc;
+            _conversationMessages.Clear();
+            _conversationMessages.AddRange(record.Messages ?? new List<ConversationMessageRecord>());
+            _chatRequests = _conversationMessages.Count(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase));
+            if (_chatList != null)
+            {
+                _chatList.Controls.Clear();
+                var old = _suppressConversationRecording;
+                _suppressConversationRecording = true;
+                try
+                {
+                    foreach (var message in _conversationMessages)
+                    {
+                        if (string.Equals(message.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+                        {
+                            AddChatCard("CAD 助手", message.Text, true);
+                        }
+                        else
+                        {
+                            AddChatCard(null, message.Text, false);
+                        }
+                    }
+                }
+                finally
+                {
+                    _suppressConversationRecording = old;
+                }
+            }
+            RefreshUsage();
+            SelectMainTab(0);
+            SetChatStatus("已载入历史对话。", CadGreen);
+        }
+
+        private void RecordConversationMessage(string role, string text)
+        {
+            if (_suppressConversationRecording || string.IsNullOrWhiteSpace(text)) return;
+            _conversationMessages.Add(new ConversationMessageRecord
+            {
+                Role = role,
+                Text = TrimForPrompt(text.Trim(), 4000),
+                TimestampUtc = DateTime.UtcNow,
+            });
+            while (_conversationMessages.Count > 80)
+            {
+                _conversationMessages.RemoveAt(0);
+            }
+            SaveCurrentConversation();
+        }
+
+        private void SaveCurrentConversation()
+        {
+            if (_conversationMessages.Count == 0) return;
+            ConversationHistoryStore.Save(new ConversationHistoryRecord
+            {
+                Id = _currentConversationId,
+                CreatedUtc = _currentConversationStartedUtc,
+                UpdatedUtc = DateTime.UtcNow,
+                Messages = _conversationMessages.ToList(),
+            });
+        }
+
+        private static string FirstNonEmpty(params string[] values)
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value)) return value;
+            }
+            return "";
         }
 
         private Panel BuildCollapsedStrip()
@@ -354,7 +648,7 @@ namespace Vcad.Plugin.UI
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 62));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
 
             layout.Controls.Add(BuildChatMetrics(), 0, 0);
@@ -375,7 +669,7 @@ namespace Vcad.Plugin.UI
             {
                 Dock = DockStyle.Fill,
                 BackColor = CadPanel,
-                Padding = new Padding(8),
+                Padding = new Padding(6),
             };
             _txtNaturalLanguage = new TextBox
             {
@@ -386,8 +680,8 @@ namespace Vcad.Plugin.UI
                 Font = UiFont,
                 Text = "询问 CAD 助手...",
                 Width = 250,
-                Height = 40,
-                Location = new Point(94, 12),
+                Height = 32,
+                Location = new Point(78, 10),
             };
             _txtNaturalLanguage.GotFocus += (s, e) =>
             {
@@ -404,9 +698,9 @@ namespace Vcad.Plugin.UI
             _btnAttachFile = new Button
             {
                 Text = "",
-                Width = 36,
-                Height = 40,
-                Location = new Point(10, 12),
+                Width = 30,
+                Height = 32,
+                Location = new Point(8, 10),
                 Anchor = AnchorStyles.Top | AnchorStyles.Left,
             };
             _btnAttachFile.Click += (s, e) => OnAttachFile();
@@ -416,9 +710,9 @@ namespace Vcad.Plugin.UI
             _btnVoiceInput = new Button
             {
                 Text = "",
-                Width = 36,
-                Height = 40,
-                Location = new Point(50, 12),
+                Width = 30,
+                Height = 32,
+                Location = new Point(42, 10),
                 Anchor = AnchorStyles.Top | AnchorStyles.Left,
             };
             _btnVoiceInput.Click += (s, e) => ToggleVoiceInput();
@@ -435,18 +729,24 @@ namespace Vcad.Plugin.UI
             _btnUseAgent = new Button
             {
                 Text = "▶",
-                Width = 44,
-                Height = 40,
+                Width = 34,
+                Height = 32,
                 Anchor = AnchorStyles.Top | AnchorStyles.Right,
             };
             _btnUseAgent.Click += async (s, e) => await OnUseAgentAsync();
             inputPanel.Resize += (s, e) =>
             {
-                _btnAttachFile.Left = 10;
+                var top = Math.Max(8, (inputPanel.Height - _btnUseAgent.Height) / 2);
+                _btnAttachFile.Left = 8;
+                _btnAttachFile.Top = top;
                 _btnVoiceInput.Left = _btnAttachFile.Right + 4;
-                _btnUseAgent.Left = inputPanel.Width - _btnUseAgent.Width - 10;
+                _btnVoiceInput.Top = top;
+                _btnUseAgent.Left = inputPanel.Width - _btnUseAgent.Width - 8;
+                _btnUseAgent.Top = top;
                 _txtNaturalLanguage.Left = _btnVoiceInput.Right + 8;
-                _txtNaturalLanguage.Width = Math.Max(96, _btnUseAgent.Left - _txtNaturalLanguage.Left - 10);
+                _txtNaturalLanguage.Top = top;
+                _txtNaturalLanguage.Height = _btnUseAgent.Height;
+                _txtNaturalLanguage.Width = Math.Max(150, _btnUseAgent.Left - _txtNaturalLanguage.Left - 8);
             };
             inputPanel.Controls.Add(_btnAttachFile);
             inputPanel.Controls.Add(_btnVoiceInput);
@@ -469,12 +769,27 @@ namespace Vcad.Plugin.UI
             StylePrimaryButton(_btnUseAgent);
             StyleGhostButton(_btnAttachFile);
             StyleGhostButton(_btnVoiceInput);
-            AddAssistantCard("VoiceCAD 核心引擎", "可以打字，也可以点麦克风说出你要画什么。");
-            AddAssistantCard("当前可调用工具",
-                "CAD 执行工具：create_layer、draw_line、draw_rectangle、draw_text。\r\n" +
-                "上下文工具：读取当前 DWG 图层/图元/块内展开图元；读取 PDF 可复制文字；图片可发给支持视觉的模型。\r\n" +
-                "扩展工具：AgentLite 已提供受限 web.search、web.fetch_url、workspace.read_file、workspace.write_file；写文件和执行 CAD 都会受授权模式约束。\r\n" +
-                "安全边界：对话回复、状态说明、PDF 读取失败提示只显示在面板里，不会再写入图纸。");
+            AddStartupCards();
+        }
+
+        private void AddStartupCards()
+        {
+            var old = _suppressConversationRecording;
+            _suppressConversationRecording = true;
+            try
+            {
+                AddAssistantCard("VoiceCAD 核心引擎", "可以打字，也可以点麦克风说出你要画什么。");
+                AddAssistantCard("当前可调用工具",
+                    "CAD 执行工具：create_layer、draw_line、draw_polyline、draw_circle、draw_rectangle、draw_text。\r\n" +
+                    "上下文/验证工具：读取当前 DWG 图层/图元/块内展开图元；测量对象包围盒；校验图层、对象数量、类型和警告。\r\n" +
+                    "附件工具：读取 PDF 可复制文字；图片可发给支持视觉的模型。\r\n" +
+                    "扩展工具：AgentLite 已提供受限 web.search、web.fetch_url、workspace.read_file、workspace.write_file；写文件和执行 CAD 都会受授权模式约束。\r\n" +
+                    "安全边界：对话回复、状态说明、PDF 读取失败提示只显示在面板里，不会再写入图纸。");
+            }
+            finally
+            {
+                _suppressConversationRecording = old;
+            }
         }
 
         private Control BuildChatMetrics()
@@ -491,7 +806,7 @@ namespace Vcad.Plugin.UI
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33));
             panel.Controls.Add(MetricLabel("今日费用", "$0.00", out _lblChatCost), 0, 0);
             panel.Controls.Add(MetricLabel("会话请求", "0", out _lblChatRequests), 1, 0);
-            panel.Controls.Add(MetricLabel("状态", "接口已连接", out _lblChatConnection), 2, 0);
+            panel.Controls.Add(MetricLabel("状态", "未测试", out _lblChatConnection), 2, 0);
             return panel;
         }
 
@@ -524,11 +839,16 @@ namespace Vcad.Plugin.UI
 
         private void AddUserCard(string text)
         {
+            RecordConversationMessage("user", text);
             AddChatCard(null, text, false);
         }
 
         private void AddAssistantCard(string title, string text)
         {
+            if (string.Equals(title, "CAD 助手", StringComparison.OrdinalIgnoreCase))
+            {
+                RecordConversationMessage("assistant", text);
+            }
             AddChatCard(title, text, true);
         }
 
@@ -538,7 +858,7 @@ namespace Vcad.Plugin.UI
             var width = GetChatCardWidth();
             var label = new Label
             {
-                Text = title + "\r\n正在接收模型流式输出...",
+                Text = title + "\r\n模型正在生成回复...",
                 ForeColor = CadText,
                 Font = MonoFont,
                 AutoSize = false,
@@ -906,33 +1226,47 @@ namespace Vcad.Plugin.UI
                 Dock = DockStyle.Fill,
                 BackColor = CadBg,
                 ColumnCount = 1,
-                RowCount = 8,
-                Padding = new Padding(12),
+                RowCount = 7,
+                Padding = new Padding(10, 8, 10, 8),
             };
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 150));
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
             panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
+            var titleRow = new Panel { Dock = DockStyle.Fill, BackColor = CadBg };
             var title = new Label
             {
                 Text = "本次会话用量",
-                Dock = DockStyle.Fill,
+                Left = 0,
+                Top = 7,
+                Width = 180,
+                Height = 26,
                 ForeColor = CadText,
-                Font = new Font("Microsoft YaHei UI", 15F, FontStyle.Bold),
+                Font = new Font("Microsoft YaHei UI", 12F, FontStyle.Bold),
             };
-            panel.Controls.Add(title, 0, 0);
+            _btnClearUsage = new Button
+            {
+                Text = "清零",
+                Width = 58,
+                Height = 26,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            };
+            _btnClearUsage.Click += (s, e) => ClearTodayUsage();
+            titleRow.Resize += (s, e) => _btnClearUsage.Left = Math.Max(120, titleRow.Width - _btnClearUsage.Width);
+            titleRow.Controls.Add(title);
+            titleRow.Controls.Add(_btnClearUsage);
+            panel.Controls.Add(titleRow, 0, 0);
 
             panel.Controls.Add(UsageCard("请求统计", out _lblUsageRequests, out _lblUsageSuccess), 0, 1);
             panel.Controls.Add(UsageCard("失败与耗时", out _lblUsageFailed, out _lblUsageAvg), 0, 2);
             panel.Controls.Add(UsageCard("当前模型", out _lblUsageProvider, out _lblUsageModel), 0, 3);
             panel.Controls.Add(UsageCard("Token 明细", out _lblUsageTokens, out _lblUsageCost), 0, 4);
 
-            var recentCard = UsageTextCard("最近模型请求", out _lblUsageRecent);
+            var recentCard = UsageTextCard("最近模型请求", out _txtUsageRecent);
             panel.Controls.Add(recentCard, 0, 6);
 
             var barCard = new Panel { Dock = DockStyle.Fill, BackColor = CadPanel, Padding = new Padding(10) };
@@ -952,12 +1286,13 @@ namespace Vcad.Plugin.UI
 
             tab.Controls.Add(panel);
             ApplyIndustrialStyle(tab);
+            StyleGhostButton(_btnClearUsage);
             RefreshUsage();
         }
 
         private Control UsageCard(string title, out Label left, out Label right)
         {
-            var panel = new Panel { Dock = DockStyle.Fill, BackColor = CadPanel, Padding = new Padding(10) };
+            var panel = new Panel { Dock = DockStyle.Fill, BackColor = CadPanel, Padding = new Padding(8) };
             panel.Paint += (s, e) =>
             {
                 using (var pen = new Pen(CadBorder))
@@ -968,39 +1303,41 @@ namespace Vcad.Plugin.UI
             panel.Controls.Add(new Label
             {
                 Text = title,
-                Left = 10,
-                Top = 8,
+                Left = 8,
+                Top = 6,
                 Width = 220,
-                Height = 20,
+                Height = 18,
                 ForeColor = CadMuted,
                 Font = UiFontBold,
             });
             left = new Label
             {
-                Left = 10,
-                Top = 38,
-                Width = 150,
-                Height = 28,
+                Left = 8,
+                Top = 29,
+                Width = 145,
+                Height = 24,
                 ForeColor = CadCyan,
-                Font = new Font("Consolas", 14F, FontStyle.Bold),
+                Font = new Font("Consolas", 11F, FontStyle.Bold),
             };
-            right = new Label
+            var rightLabel = new Label
             {
-                Left = 170,
-                Top = 38,
-                Width = 180,
-                Height = 28,
+                Left = 158,
+                Top = 29,
+                Width = 190,
+                Height = 24,
                 ForeColor = CadText,
-                Font = new Font("Consolas", 12F, FontStyle.Bold),
+                Font = new Font("Consolas", 10F, FontStyle.Bold),
             };
+            right = rightLabel;
+            panel.Resize += (s, e) => rightLabel.Width = Math.Max(80, panel.Width - rightLabel.Left - 8);
             panel.Controls.Add(left);
-            panel.Controls.Add(right);
+            panel.Controls.Add(rightLabel);
             return panel;
         }
 
-        private Control UsageTextCard(string title, out Label body)
+        private Control UsageTextCard(string title, out TextBox body)
         {
-            var panel = new Panel { Dock = DockStyle.Fill, BackColor = CadPanel, Padding = new Padding(10) };
+            var panel = new Panel { Dock = DockStyle.Fill, BackColor = CadPanel, Padding = new Padding(8) };
             panel.Paint += (s, e) =>
             {
                 using (var pen = new Pen(CadBorder))
@@ -1011,30 +1348,35 @@ namespace Vcad.Plugin.UI
             panel.Controls.Add(new Label
             {
                 Text = title,
-                Left = 10,
-                Top = 8,
+                Left = 8,
+                Top = 6,
                 Width = 220,
-                Height = 20,
+                Height = 18,
                 ForeColor = CadMuted,
                 Font = UiFontBold,
             });
-            var bodyLabel = new Label
+            var bodyBox = new TextBox
             {
-                Left = 10,
-                Top = 34,
+                Left = 8,
+                Top = 30,
                 Width = 360,
                 Height = 102,
                 ForeColor = CadText,
                 Font = MonoFont,
-                AutoSize = false,
+                BackColor = CadPanel,
+                BorderStyle = BorderStyle.None,
+                Multiline = true,
+                ReadOnly = true,
+                WordWrap = true,
+                ScrollBars = ScrollBars.Vertical,
             };
             panel.Resize += (s, e) =>
             {
-                bodyLabel.Width = Math.Max(120, panel.Width - 20);
-                bodyLabel.Height = Math.Max(70, panel.Height - 42);
+                bodyBox.Width = Math.Max(120, panel.Width - 16);
+                bodyBox.Height = Math.Max(70, panel.Height - 38);
             };
-            panel.Controls.Add(bodyLabel);
-            body = bodyLabel;
+            panel.Controls.Add(bodyBox);
+            body = bodyBox;
             return panel;
         }
 
@@ -1066,10 +1408,23 @@ namespace Vcad.Plugin.UI
             {
                 _lblUsageCost.Text = "total " + today.TotalTokens + "\r\n" + FormatUsd(today.CostUsd);
             }
-            if (_lblUsageRecent != null)
+            if (_txtUsageRecent != null)
             {
-                _lblUsageRecent.Text = FormatRecentUsage(today);
+                _txtUsageRecent.Text = FormatRecentUsage(today);
             }
+        }
+
+        private void ClearTodayUsage()
+        {
+            var confirm = MessageBox.Show(
+                "清零今日真实模型 token 和费用记录？",
+                "清零用量",
+                MessageBoxButtons.OKCancel,
+                MessageBoxIcon.Question);
+            if (confirm != DialogResult.OK) return;
+            UsageLedgerStore.ClearToday();
+            RefreshUsage();
+            SetChatStatus("今日用量已清零。", CadGreen);
         }
 
         private static string FormatUsd(decimal value)
@@ -1085,7 +1440,7 @@ namespace Vcad.Plugin.UI
                 return "暂无真实模型 token 记录";
             }
             var lines = new List<string>();
-            foreach (var r in summary.Recent.Take(5))
+            foreach (var r in summary.Recent)
             {
                 lines.Add(r.TimestampUtc.ToLocalTime().ToString("HH:mm:ss") + " " +
                           r.Provider + "/" + r.Model + " " +
@@ -1096,91 +1451,25 @@ namespace Vcad.Plugin.UI
             return string.Join("\r\n", lines);
         }
 
-        private void OnDrawTab(object sender, DrawItemEventArgs e)
-        {
-            var selected = e.Index == _tabs.SelectedIndex;
-            var rect = e.Bounds;
-            using (var bg = new SolidBrush(selected ? CadPanelHigh : CadBg))
-            using (var border = new Pen(selected ? CadCyan : CadBorder))
-            {
-                e.Graphics.FillRectangle(bg, rect);
-                e.Graphics.DrawRectangle(border, rect.X, rect.Y, rect.Width - 1, rect.Height - 1);
-                var caption = _tabs.TabPages[e.Index].Text;
-                var color = selected ? CadCyan : CadMuted;
-                var textSize = TextRenderer.MeasureText(
-                    e.Graphics,
-                    caption,
-                    UiFontBold,
-                    new Size(Math.Max(20, rect.Width - 24), rect.Height),
-                    TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
-                var iconSize = 14;
-                var textWidth = Math.Min(textSize.Width, Math.Max(20, rect.Width - iconSize - 14));
-                var groupWidth = iconSize + 5 + textWidth;
-                var iconX = rect.X + Math.Max(6, (rect.Width - groupWidth) / 2);
-                var iconRect = new Rectangle(iconX, rect.Y + (rect.Height - iconSize) / 2, iconSize, iconSize);
-                var textRect = new Rectangle(iconRect.Right + 5, rect.Y, rect.Right - iconRect.Right - 7, rect.Height);
-                DrawTabIcon(e.Graphics, e.Index, iconRect, color);
-                TextRenderer.DrawText(
-                    e.Graphics,
-                    caption,
-                    UiFontBold,
-                    textRect,
-                    color,
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-            }
-        }
-
-        private static void DrawTabIcon(Graphics g, int index, Rectangle rect, Color color)
-        {
-            var oldMode = g.SmoothingMode;
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            using (var pen = new Pen(color, 1.7F))
-            using (var brush = new SolidBrush(color))
-            {
-                if (index == 0)
-                {
-                    var bubble = new Rectangle(rect.X + 1, rect.Y + 2, rect.Width - 3, rect.Height - 5);
-                    g.DrawRectangle(pen, bubble);
-                    g.DrawLine(pen, bubble.Left + 3, bubble.Bottom, bubble.Left + 6, bubble.Bottom + 3);
-                    g.DrawLine(pen, bubble.Left + 6, bubble.Bottom + 3, bubble.Left + 8, bubble.Bottom);
-                    g.DrawLine(pen, bubble.Left + 4, bubble.Top + 4, bubble.Right - 4, bubble.Top + 4);
-                }
-                else if (index == 1)
-                {
-                    var x1 = rect.X + 3;
-                    var x2 = rect.X + rect.Width / 2;
-                    var x3 = rect.Right - 3;
-                    g.DrawLine(pen, x1, rect.Top + 2, x1, rect.Bottom - 2);
-                    g.DrawLine(pen, x2, rect.Top + 2, x2, rect.Bottom - 2);
-                    g.DrawLine(pen, x3, rect.Top + 2, x3, rect.Bottom - 2);
-                    g.FillEllipse(brush, x1 - 2, rect.Top + 8, 4, 4);
-                    g.FillEllipse(brush, x2 - 2, rect.Top + 3, 4, 4);
-                    g.FillEllipse(brush, x3 - 2, rect.Top + 10, 4, 4);
-                }
-                else
-                {
-                    g.DrawLine(pen, rect.Left + 1, rect.Bottom - 2, rect.Right - 1, rect.Bottom - 2);
-                    g.DrawLine(pen, rect.Left + 1, rect.Top + 2, rect.Left + 1, rect.Bottom - 2);
-                    g.FillRectangle(brush, rect.Left + 4, rect.Bottom - 6, 2, 4);
-                    g.FillRectangle(brush, rect.Left + 8, rect.Bottom - 9, 2, 7);
-                    g.FillRectangle(brush, rect.Left + 12, rect.Bottom - 12, 2, 10);
-                }
-            }
-            g.SmoothingMode = oldMode;
-        }
-
         private static void DrawPaperclipIcon(Graphics g, Rectangle rect, Color color)
         {
             var oldMode = g.SmoothingMode;
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            using (var pen = new Pen(color, 1.8F))
+            var state = g.Save();
+            g.TranslateTransform(rect.Left + rect.Width / 2F, rect.Top + rect.Height / 2F);
+            g.RotateTransform(-32F);
+            using (var pen = new Pen(color, 1.9F))
             {
-                var x = rect.Left + rect.Width / 2 - 5;
-                var y = rect.Top + 8;
-                g.DrawArc(pen, x + 1, y, 12, 18, 180, 270);
-                g.DrawArc(pen, x + 4, y + 4, 7, 11, 180, 270);
-                g.DrawLine(pen, x + 4, y + 15, x + 10, y + 6);
+                pen.StartCap = System.Drawing.Drawing2D.LineCap.Round;
+                pen.EndCap = System.Drawing.Drawing2D.LineCap.Round;
+                var outer = new RectangleF(-5.5F, -10F, 11F, 20F);
+                var inner = new RectangleF(-2.5F, -6.5F, 5F, 13F);
+                g.DrawArc(pen, outer, 90, 180);
+                g.DrawLine(pen, outer.Right, -4.5F, outer.Right, 4.5F);
+                g.DrawArc(pen, inner, -90, 180);
+                g.DrawLine(pen, inner.Left, 2F, inner.Left, -4F);
             }
+            g.Restore(state);
             g.SmoothingMode = oldMode;
         }
 
@@ -1203,16 +1492,6 @@ namespace Vcad.Plugin.UI
                 g.DrawLine(pen, cx - 6, top + 29, cx + 6, top + 29);
             }
             g.SmoothingMode = oldMode;
-        }
-
-        private void ResizeTabItems()
-        {
-            if (_tabs == null || _tabs.TabCount == 0 || _tabs.Width <= 0) return;
-            var width = Math.Max(72, (_tabs.Width - 6) / _tabs.TabCount);
-            if (_tabs.ItemSize.Width != width)
-            {
-                _tabs.ItemSize = new Size(width, 42);
-            }
         }
 
         private static void ApplyIndustrialStyle(Control root)
@@ -1518,6 +1797,34 @@ namespace Vcad.Plugin.UI
                 }
             }
             return sb.ToString();
+        }
+
+        private string BuildPromptWithConversationContext(string currentPrompt)
+        {
+            if (_conversationMessages.Count == 0) return currentPrompt ?? "";
+            var recent = _conversationMessages
+                .Where(m => !string.IsNullOrWhiteSpace(m.Text))
+                .Skip(Math.Max(0, _conversationMessages.Count - 12))
+                .ToList();
+            if (recent.Count == 0) return currentPrompt ?? "";
+
+            var sb = new StringBuilder();
+            sb.AppendLine("最近对话上下文（用于延续当前 CAD 任务；不要重复询问已经给出的信息）：");
+            foreach (var m in recent)
+            {
+                var role = string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase) ? "助手" : "用户";
+                sb.Append(role).Append(": ").AppendLine(TrimForPrompt(m.Text, 800));
+            }
+            sb.AppendLine();
+            sb.AppendLine("当前用户请求：");
+            sb.Append(currentPrompt ?? "");
+            return sb.ToString();
+        }
+
+        private static string TrimForPrompt(string value, int maxChars)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length <= maxChars) return value ?? "";
+            return value.Substring(0, Math.Max(0, maxChars - 1)) + "…";
         }
 
         private JArray BuildAttachmentPayloads(List<string> warnings)
@@ -1829,8 +2136,8 @@ namespace Vcad.Plugin.UI
         private static string BuildCapabilityReply(string text)
         {
             return "当前已接入的工具分三类：\r\n\r\n" +
-                   "1. CAD 执行工具：create_layer、draw_line、draw_rectangle、draw_text。它们只能通过 CAD-IR、Safety、Preview/Confirm 后进入 AutoCAD。\r\n\r\n" +
-                   "2. CAD 上下文工具：读取当前打开 DWG 的图层、图元、块引用，并在内存里展开块内图元给 Agent 理解。\r\n\r\n" +
+                   "1. CAD 执行工具：create_layer、draw_line、draw_polyline、draw_circle、draw_rectangle、draw_text。它们只能通过 CAD-IR、Safety、Preview/Confirm 后进入 AutoCAD。\r\n\r\n" +
+                   "2. CAD 上下文/验证工具：读取当前打开 DWG 的图层、图元、块引用，并在内存里展开块内图元；也能测量对象包围盒，校验图层、对象数量、类型和警告。\r\n\r\n" +
                    "3. 附件上下文工具：PDF 会先抽取可复制文字；图片会内联给支持视觉的模型；文本、DXF、LSP、CSV、JSON 会抽取文本片段。扫描版 PDF 目前只能识别为“需要 OCR”，不会凭空读出内容。\r\n\r\n" +
                    "AgentLite 工具层：web.search、web.fetch_url、workspace.read_file、workspace.write_file 已有受限端点。读工具默认只读；写文件和 CAD 执行都受“确认后执行/完全授权自动执行”模式控制。\r\n\r\n" +
                    "对话回复、状态说明、PDF 读取失败提示只会显示在右侧对话框里，不会再作为 draw_text 写进图纸。";
@@ -1861,7 +2168,7 @@ namespace Vcad.Plugin.UI
             {
                 var attachmentWarnings = new List<string>();
                 var attachmentPayloads = BuildAttachmentPayloads(attachmentWarnings);
-                var prompt = BuildPromptWithAttachments(text);
+                var prompt = BuildPromptWithConversationContext(BuildPromptWithAttachments(text));
                 var displayText = BuildDisplayTextWithAttachments(text);
                 var settings = AgentConfigStore.LoadActive();
                 NormalizeRuntimeSettings(settings);
@@ -1896,6 +2203,7 @@ namespace Vcad.Plugin.UI
                 if (!startResult.Success)
                 {
                     RefreshUsage();
+                    SetLlmConnectionStatus("● LLM 未连", CadOrange);
                     AddAssistantCard("CAD 助手", "我还不能处理这条请求，因为本地 Agent Lite 没有启动成功。\r\n\r\n" +
                         "没有修改当前图纸。请重新打开 VCAD 面板，或检查 `%APPDATA%\\VCAD\\logs` 后再点发送。\r\n\r\n" +
                         "技术原因：" + startResult.Message);
@@ -1905,13 +2213,14 @@ namespace Vcad.Plugin.UI
 
                 var client = new AgentLiteClient(settings);
                 SetChatStatus("正在调用模型理解意图...", CadCyan);
-                var sessionId = "session-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff");
+                var sessionId = _currentConversationId;
                 await RunAgentToolLoopAsync(client, settings, sessionId, prompt, attachmentPayloads, cadState);
             }
             catch (System.Exception ex)
             {
                 RefreshUsage();
                 var msg = SecretRedactor.Redact(ex.Message);
+                SetLlmConnectionStatus("● LLM 失败", CadOrange);
                 AddAssistantCard("CAD 助手", BuildFriendlyFailureReply(msg));
                 SetChatStatus("失败：" + msg, CadOrange);
             }
@@ -1973,6 +2282,7 @@ namespace Vcad.Plugin.UI
                 var sw = Stopwatch.StartNew();
                 var liveBuffer = new StringBuilder();
                 var liveLabel = AddLiveStreamCard("模型流式输出");
+                var hadVisibleDelta = false;
                 var turnResult = await WaitForAgentTurnAsync(
                     client.AgentTurnStreamingAsync(
                         sessionId,
@@ -1982,12 +2292,15 @@ namespace Vcad.Plugin.UI
                         toolResults,
                         delta =>
                         {
+                            if (!string.IsNullOrEmpty(delta)) hadVisibleDelta = true;
                             AppendLiveStreamText(liveLabel, liveBuffer, delta);
                             return Task.FromResult(0);
                         }))
                     .ConfigureAwait(true);
                 sw.Stop();
+                SetLlmConnectionStatus("● LLM 在线", CadGreen);
                 RecordModelUsage(turnResult, settings, true, sw.ElapsedMilliseconds);
+                AddEngineeringPlanCard(turnResult);
 
                 var supplement = TakePendingSupplementText();
                 if (!string.IsNullOrWhiteSpace(supplement))
@@ -2000,7 +2313,11 @@ namespace Vcad.Plugin.UI
                     continue;
                 }
 
-                if (!string.IsNullOrWhiteSpace(turnResult.AssistantMessage))
+                if (hadVisibleDelta && !string.IsNullOrWhiteSpace(turnResult.AssistantMessage))
+                {
+                    RecordConversationMessage("assistant", turnResult.AssistantMessage);
+                }
+                else if (!hadVisibleDelta && !string.IsNullOrWhiteSpace(turnResult.AssistantMessage))
                 {
                     AddAssistantCard("CAD 助手", turnResult.AssistantMessage);
                 }
@@ -2139,6 +2456,60 @@ namespace Vcad.Plugin.UI
                 if (string.IsNullOrWhiteSpace(title) && string.IsNullOrWhiteSpace(summary)) continue;
                 AddAssistantCard(string.IsNullOrWhiteSpace(title) ? "Agent 步骤" : title, summary ?? "");
             }
+        }
+
+        private void AddEngineeringPlanCard(AgentTurnResult result)
+        {
+            if (result == null) return;
+            if (result.CadBrief == null && result.TaskPlan == null && result.CadIr == null &&
+                result.Safety == null && result.Validation == null && (result.Trace == null || result.Trace.Count == 0))
+            {
+                return;
+            }
+
+            var summary = new StringBuilder();
+            var objective = result.CadBrief?.Value<string>("objective");
+            var taskType = result.CadBrief?.Value<string>("task_type");
+            var nextStep = result.TaskPlan?.Value<string>("next_step");
+            var risk = result.Safety?.Value<string>("risk_level");
+            var writes = result.Safety?.Value<bool?>("writes_dwg");
+            var confirmation = result.Safety?.Value<bool?>("requires_confirmation");
+            if (!string.IsNullOrWhiteSpace(taskType)) summary.Append("类型: ").AppendLine(taskType);
+            if (!string.IsNullOrWhiteSpace(objective)) summary.Append("目标: ").AppendLine(TrimForPrompt(objective, 120));
+            if (!string.IsNullOrWhiteSpace(nextStep)) summary.Append("下一步: ").AppendLine(TrimForPrompt(nextStep, 120));
+            if (!string.IsNullOrWhiteSpace(risk) || writes.HasValue || confirmation.HasValue)
+            {
+                summary.Append("安全: ")
+                    .Append(string.IsNullOrWhiteSpace(risk) ? "未标注" : risk)
+                    .Append(writes.HasValue ? ", 写DWG=" + (writes.Value ? "是" : "否") : "")
+                    .Append(confirmation.HasValue ? ", 确认=" + (confirmation.Value ? "需要" : "不需要") : "")
+                    .AppendLine();
+            }
+            var operations = result.CadIr?["operations"] as JArray;
+            if (operations != null && operations.Count > 0)
+            {
+                summary.Append("CAD-IR: ").Append(operations.Count).AppendLine(" 个操作");
+            }
+            var checks = result.Validation?["planned_checks"] as JArray;
+            if (checks != null && checks.Count > 0)
+            {
+                summary.Append("验证: ").AppendLine(string.Join(", ", checks.Values<string>()));
+            }
+            if (summary.Length == 0)
+            {
+                summary.Append("模型已返回工程化计划。");
+            }
+
+            var details = new JObject
+            {
+                ["cad_brief"] = result.CadBrief,
+                ["task_plan"] = result.TaskPlan,
+                ["cad_ir"] = result.CadIr,
+                ["safety"] = result.Safety,
+                ["validation"] = result.Validation,
+                ["trace"] = result.Trace,
+            }.ToString(Formatting.Indented);
+            AddCollapsibleAssistantCard("Agent 工程计划", summary.ToString().Trim(), details);
         }
 
         private void AddClarificationCard(JObject clarification, string originalText)
@@ -2525,6 +2896,14 @@ namespace Vcad.Plugin.UI
             }
         }
 
+        private void SetLlmConnectionStatus(string text, Color color)
+        {
+            if (_lblHeaderLlmStatus == null) return;
+            _lblHeaderLlmStatus.Text = text;
+            _lblHeaderLlmStatus.ForeColor = color;
+            LayoutHeader();
+        }
+
         private static bool IsAgentLiteWriteTool(string name)
         {
             return string.Equals(name, "workspace.write_file", StringComparison.OrdinalIgnoreCase);
@@ -2534,6 +2913,24 @@ namespace Vcad.Plugin.UI
         {
             if (result == null) return "无结果";
             var status = result.Success ? "成功" : "失败";
+            if (string.Equals(result.ToolName, "cad.validate_dwg_state", StringComparison.OrdinalIgnoreCase))
+            {
+                var passed = result.Data?.Value<bool?>("passed");
+                var checks = result.Data?["checks"] as JArray;
+                return status + "，用时 " + result.ElapsedMs + " ms，DWG 验证" +
+                    (passed.HasValue ? (passed.Value ? "通过" : "未通过") : "完成") +
+                    (checks == null ? "" : "，检查 " + checks.Count + " 项");
+            }
+            if (string.Equals(result.ToolName, "cad.measure_bounds", StringComparison.OrdinalIgnoreCase))
+            {
+                var count = result.Data?.Value<int?>("count") ?? 0;
+                var bounds = result.Data?["bounds"] as JObject;
+                var size = bounds == null
+                    ? ""
+                    : "，宽 " + FormatNumber(bounds.Value<double?>("width")) +
+                      "，高 " + FormatNumber(bounds.Value<double?>("height"));
+                return status + "，用时 " + result.ElapsedMs + " ms，测量对象 " + count + " 个" + size;
+            }
             var entity = result.Data?["entity_type"]?.Value<string>();
             var layer = result.Data?["layer"]?.Value<string>();
             var summary = status + "，用时 " + result.ElapsedMs + " ms";
@@ -2567,6 +2964,36 @@ namespace Vcad.Plugin.UI
                 return result.Data.Value<string>("summary_text");
             }
             var status = result.Success ? "成功" : "失败";
+            if (string.Equals(result.ToolName, "cad.validate_dwg_state", StringComparison.OrdinalIgnoreCase))
+            {
+                var passed = result.Data?.Value<bool?>("passed");
+                var checks = result.Data?["checks"] as JArray;
+                var textValidation = status + "，用时 " + result.ElapsedMs + " ms。DWG 验证" +
+                    (passed.HasValue ? (passed.Value ? "通过。" : "未通过。") : "完成。");
+                if (checks != null)
+                {
+                    foreach (var check in checks.OfType<JObject>().Take(12))
+                    {
+                        textValidation += "\r\n- " + check.Value<string>("name") + ": " +
+                            ((check.Value<bool?>("passed") ?? false) ? "通过" : "失败") +
+                            " " + check.Value<string>("detail");
+                    }
+                }
+                return textValidation;
+            }
+            if (string.Equals(result.ToolName, "cad.measure_bounds", StringComparison.OrdinalIgnoreCase))
+            {
+                var count = result.Data?.Value<int?>("count") ?? 0;
+                var bounds = result.Data?["bounds"] as JObject;
+                var textBounds = status + "，用时 " + result.ElapsedMs + " ms。测量对象 " + count + " 个。";
+                if (bounds != null)
+                {
+                    textBounds += "\r\n宽: " + FormatNumber(bounds.Value<double?>("width")) +
+                        "，高: " + FormatNumber(bounds.Value<double?>("height")) +
+                        "，深: " + FormatNumber(bounds.Value<double?>("depth"));
+                }
+                return textBounds;
+            }
             var text = status + "，用时 " + result.ElapsedMs + " ms。";
             if (!string.IsNullOrWhiteSpace(result.Error))
             {
@@ -2590,6 +3017,11 @@ namespace Vcad.Plugin.UI
         {
             if (string.IsNullOrEmpty(text) || text.Length <= max) return text ?? "";
             return text.Substring(0, max) + "\r\n...[已截断]";
+        }
+
+        private static string FormatNumber(double? value)
+        {
+            return value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "-";
         }
 
         // --- Settings tab actions ---
@@ -2879,6 +3311,7 @@ namespace Vcad.Plugin.UI
                 var startResult = await AgentLiteProcessManager.EnsureStartedAsync(settings).ConfigureAwait(true);
                 if (!startResult.Success)
                 {
+                    SetLlmConnectionStatus("● LLM 未连", CadOrange);
                     SetSettingsStatus(startResult.Message, CadOrange);
                     return;
                 }
@@ -2889,10 +3322,12 @@ namespace Vcad.Plugin.UI
                 }
                 var client = new AgentLiteClient(settings);
                 var result = await client.TestModelAsync();
+                SetLlmConnectionStatus(result.Success ? "● LLM 在线" : "● LLM 失败", result.Success ? CadGreen : CadOrange);
                 SetSettingsStatus(result.Message, result.Success ? CadGreen : CadOrange);
             }
             catch (System.Exception ex)
             {
+                SetLlmConnectionStatus("● LLM 失败", CadOrange);
                 SetSettingsStatus("测试失败: " + SecretRedactor.Redact(ex.Message), CadOrange);
             }
             finally
@@ -2933,6 +3368,18 @@ namespace Vcad.Plugin.UI
                 f.CancelButton = cancel;
 
                 return f.ShowDialog() == DialogResult.OK ? tb.Text.Trim() : null;
+            }
+        }
+    }
+
+    internal class HeaderDrivenTabControl : TabControl
+    {
+        public override Rectangle DisplayRectangle
+        {
+            get
+            {
+                var rect = base.DisplayRectangle;
+                return new Rectangle(rect.Left - 4, rect.Top - 4, rect.Width + 8, rect.Height + 8);
             }
         }
     }
