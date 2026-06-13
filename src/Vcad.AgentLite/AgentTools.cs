@@ -23,11 +23,51 @@ public static class AgentTools
         },
         new()
         {
+            Name = "cad.preview_plan",
+            Category = "cad_preview",
+            Effect = "read",
+            Status = "available_in_plugin",
+            Description = "Dry-run a CAD-IR plan against the active DWG context and summarize likely impacted selectors before writes.",
+        },
+        new()
+        {
+            Name = "cad.count_entities",
+            Category = "cad_validation",
+            Effect = "read",
+            Status = "available_in_plugin",
+            Description = "Count DWG entities by selector, layer, type, handle, and expanded block inclusion.",
+        },
+        new()
+        {
             Name = "cad.measure_bounds",
             Category = "cad_validation",
             Effect = "read",
             Status = "available_in_plugin",
-            Description = "Measure aggregate bounds, width, height, and entity count for matching DWG entities by layer, type, or handle.",
+            Description = "Measure aggregate bounds, width, height, and entity count for matching DWG entities by selector, layer, type, or handle.",
+        },
+        new()
+        {
+            Name = "cad.measure_distance",
+            Category = "cad_measure",
+            Effect = "read",
+            Status = "available_in_plugin",
+            Description = "Measure distance between explicit points or the centers of selected DWG entity groups.",
+        },
+        new()
+        {
+            Name = "cad.layer_diff",
+            Category = "cad_validation",
+            Effect = "read",
+            Status = "available_in_plugin",
+            Description = "Compare layer entity counts between a previous DWG snapshot and the current drawing.",
+        },
+        new()
+        {
+            Name = "cad.before_after_diff",
+            Category = "cad_validation",
+            Effect = "read",
+            Status = "available_in_plugin",
+            Description = "Compare entity counts, layer/type deltas, and bounds between a previous DWG snapshot and the current drawing.",
         },
         new()
         {

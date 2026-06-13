@@ -2931,6 +2931,28 @@ namespace Vcad.Plugin.UI
                       "，高 " + FormatNumber(bounds.Value<double?>("height"));
                 return status + "，用时 " + result.ElapsedMs + " ms，测量对象 " + count + " 个" + size;
             }
+            if (string.Equals(result.ToolName, "cad.count_entities", StringComparison.OrdinalIgnoreCase))
+            {
+                var count = result.Data?.Value<int?>("count") ?? 0;
+                return status + "，用时 " + result.ElapsedMs + " ms，计数 " + count + " 个对象";
+            }
+            if (string.Equals(result.ToolName, "cad.measure_distance", StringComparison.OrdinalIgnoreCase))
+            {
+                return status + "，用时 " + result.ElapsedMs + " ms，距离 " +
+                    FormatNumber(result.Data?.Value<double?>("distance"));
+            }
+            if (string.Equals(result.ToolName, "cad.layer_diff", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(result.ToolName, "cad.before_after_diff", StringComparison.OrdinalIgnoreCase))
+            {
+                var delta = result.Data?.Value<int?>("delta") ?? 0;
+                return status + "，用时 " + result.ElapsedMs + " ms，图元变化 " + delta;
+            }
+            if (string.Equals(result.ToolName, "cad.preview_plan", StringComparison.OrdinalIgnoreCase))
+            {
+                var ops = result.Data?.Value<int?>("operations_count") ?? 0;
+                var count = result.Data?.Value<int?>("selected_entity_count") ?? 0;
+                return status + "，用时 " + result.ElapsedMs + " ms，预览 " + ops + " 个操作，涉及 " + count + " 个对象";
+            }
             var entity = result.Data?["entity_type"]?.Value<string>();
             var layer = result.Data?["layer"]?.Value<string>();
             var summary = status + "，用时 " + result.ElapsedMs + " ms";
@@ -2993,6 +3015,15 @@ namespace Vcad.Plugin.UI
                         "，深: " + FormatNumber(bounds.Value<double?>("depth"));
                 }
                 return textBounds;
+            }
+            if (string.Equals(result.ToolName, "cad.count_entities", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(result.ToolName, "cad.preview_plan", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(result.ToolName, "cad.layer_diff", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(result.ToolName, "cad.before_after_diff", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(result.ToolName, "cad.measure_distance", StringComparison.OrdinalIgnoreCase))
+            {
+                return status + "，用时 " + result.ElapsedMs + " ms。\r\n" +
+                       TruncateForCard(result.Data?.ToString(Formatting.Indented) ?? "", 1200);
             }
             var text = status + "，用时 " + result.ElapsedMs + " ms。";
             if (!string.IsNullOrWhiteSpace(result.Error))

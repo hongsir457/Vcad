@@ -1,6 +1,7 @@
 #nullable disable
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
@@ -43,27 +44,48 @@ namespace Vcad.Plugin.Execution
         private const double MaxDimension = 1000000000.0;
         private const int MaxTextChars = 2000;
 
+        private sealed class ToolDefinition
+        {
+            public ToolDefinition(string name, bool writesDwg, Func<string, string, JObject, CadToolExecutionResult> execute)
+            {
+                Name = name;
+                WritesDwg = writesDwg;
+                Execute = execute;
+            }
+
+            public string Name { get; private set; }
+            public bool WritesDwg { get; private set; }
+            public Func<string, string, JObject, CadToolExecutionResult> Execute { get; private set; }
+        }
+
+        private static readonly Dictionary<string, ToolDefinition> Tools =
+            new Dictionary<string, ToolDefinition>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "cad.read_dwg_snapshot", new ToolDefinition("cad.read_dwg_snapshot", false, ReadSnapshot) },
+                { "cad.preview_plan", new ToolDefinition("cad.preview_plan", false, PreviewPlan) },
+                { "cad.count_entities", new ToolDefinition("cad.count_entities", false, CountEntities) },
+                { "cad.measure_bounds", new ToolDefinition("cad.measure_bounds", false, MeasureBounds) },
+                { "cad.measure_distance", new ToolDefinition("cad.measure_distance", false, MeasureDistance) },
+                { "cad.layer_diff", new ToolDefinition("cad.layer_diff", false, LayerDiff) },
+                { "cad.before_after_diff", new ToolDefinition("cad.before_after_diff", false, BeforeAfterDiff) },
+                { "cad.validate_dwg_state", new ToolDefinition("cad.validate_dwg_state", false, ValidateDwgState) },
+                { "cad.create_layer", new ToolDefinition("cad.create_layer", true, (id, name, args) => RunWrite(id, name, args, CreateLayer)) },
+                { "cad.draw_line", new ToolDefinition("cad.draw_line", true, (id, name, args) => RunWrite(id, name, args, DrawLine)) },
+                { "cad.draw_polyline", new ToolDefinition("cad.draw_polyline", true, (id, name, args) => RunWrite(id, name, args, DrawPolyline)) },
+                { "cad.draw_circle", new ToolDefinition("cad.draw_circle", true, (id, name, args) => RunWrite(id, name, args, DrawCircle)) },
+                { "cad.draw_rectangle", new ToolDefinition("cad.draw_rectangle", true, (id, name, args) => RunWrite(id, name, args, DrawRectangle)) },
+                { "cad.draw_text", new ToolDefinition("cad.draw_text", true, (id, name, args) => RunWrite(id, name, args, DrawText)) },
+            };
+
         public static bool IsCadTool(string name)
         {
-            return string.Equals(name, "cad.read_dwg_snapshot", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(name, "cad.measure_bounds", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(name, "cad.validate_dwg_state", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(name, "cad.create_layer", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(name, "cad.draw_line", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(name, "cad.draw_polyline", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(name, "cad.draw_circle", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(name, "cad.draw_rectangle", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(name, "cad.draw_text", StringComparison.OrdinalIgnoreCase);
+            return !string.IsNullOrWhiteSpace(name) && Tools.ContainsKey(name);
         }
 
         public static bool IsWriteTool(string name)
         {
-            return string.Equals(name, "cad.create_layer", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(name, "cad.draw_line", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(name, "cad.draw_polyline", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(name, "cad.draw_circle", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(name, "cad.draw_rectangle", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(name, "cad.draw_text", StringComparison.OrdinalIgnoreCase);
+            ToolDefinition tool;
+            return !string.IsNullOrWhiteSpace(name) && Tools.TryGetValue(name, out tool) && tool.WritesDwg;
         }
 
         public static CadToolExecutionResult Execute(string callId, string name, JObject args)
@@ -73,41 +95,10 @@ namespace Vcad.Plugin.Execution
             {
                 args = args ?? new JObject();
                 CadToolExecutionResult result;
-                if (string.Equals(name, "cad.read_dwg_snapshot", StringComparison.OrdinalIgnoreCase))
+                ToolDefinition tool;
+                if (Tools.TryGetValue(name ?? "", out tool))
                 {
-                    result = ReadSnapshot(callId, name);
-                }
-                else if (string.Equals(name, "cad.measure_bounds", StringComparison.OrdinalIgnoreCase))
-                {
-                    result = MeasureBounds(callId, name, args);
-                }
-                else if (string.Equals(name, "cad.validate_dwg_state", StringComparison.OrdinalIgnoreCase))
-                {
-                    result = ValidateDwgState(callId, name, args);
-                }
-                else if (string.Equals(name, "cad.create_layer", StringComparison.OrdinalIgnoreCase))
-                {
-                    result = RunWrite(callId, name, args, CreateLayer);
-                }
-                else if (string.Equals(name, "cad.draw_line", StringComparison.OrdinalIgnoreCase))
-                {
-                    result = RunWrite(callId, name, args, DrawLine);
-                }
-                else if (string.Equals(name, "cad.draw_polyline", StringComparison.OrdinalIgnoreCase))
-                {
-                    result = RunWrite(callId, name, args, DrawPolyline);
-                }
-                else if (string.Equals(name, "cad.draw_circle", StringComparison.OrdinalIgnoreCase))
-                {
-                    result = RunWrite(callId, name, args, DrawCircle);
-                }
-                else if (string.Equals(name, "cad.draw_rectangle", StringComparison.OrdinalIgnoreCase))
-                {
-                    result = RunWrite(callId, name, args, DrawRectangle);
-                }
-                else if (string.Equals(name, "cad.draw_text", StringComparison.OrdinalIgnoreCase))
-                {
-                    result = RunWrite(callId, name, args, DrawText);
+                    result = tool.Execute(callId, name, args);
                 }
                 else
                 {
@@ -147,9 +138,10 @@ namespace Vcad.Plugin.Execution
                    (call["args"] == null ? "{}" : call["args"].ToString(Formatting.None));
         }
 
-        private static CadToolExecutionResult ReadSnapshot(string callId, string name)
+        private static CadToolExecutionResult ReadSnapshot(string callId, string name, JObject args)
         {
             var snapshot = DrawingSnapshotCollector.CaptureActive();
+            ApplySnapshotLimit(snapshot, args.Value<int?>("limit"));
             return new CadToolExecutionResult
             {
                 CallId = callId,
@@ -164,70 +156,65 @@ namespace Vcad.Plugin.Execution
             };
         }
 
+        private static CadToolExecutionResult PreviewPlan(string callId, string name, JObject args)
+        {
+            var snapshot = DrawingSnapshotCollector.CaptureActive();
+            ApplySnapshotLimit(snapshot, args.Value<int?>("limit"));
+            var entities = snapshot["entities"] as JArray ?? new JArray();
+            var selected = SelectMatchingEntities(snapshot, args);
+            var operations = args["operations"] as JArray ?? new JArray();
+            var expectedEffect = args["expected_effect"] as JObject ?? new JObject();
+            var selectors = SelectorSummary(args);
+
+            return new CadToolExecutionResult
+            {
+                CallId = callId,
+                ToolName = name,
+                Success = true,
+                Message = "CAD plan preview prepared.",
+                Data = new JObject
+                {
+                    ["writes_dwg"] = args.Value<bool?>("writes_dwg") ?? true,
+                    ["operations_count"] = operations.Count,
+                    ["selectors"] = selectors,
+                    ["selected_entity_count"] = selected.Count,
+                    ["current_entity_count"] = entities.Count,
+                    ["current_summary"] = snapshot["summary"] ?? new JObject(),
+                    ["expected_effect"] = expectedEffect,
+                    ["selected_entities"] = EntitySummaryArray(selected, 30),
+                },
+            };
+        }
+
+        private static CadToolExecutionResult CountEntities(string callId, string name, JObject args)
+        {
+            var snapshot = DrawingSnapshotCollector.CaptureActive();
+            ApplySnapshotLimit(snapshot, args.Value<int?>("limit"));
+            var selected = SelectMatchingEntities(snapshot, args);
+
+            return new CadToolExecutionResult
+            {
+                CallId = callId,
+                ToolName = name,
+                Success = true,
+                Message = "DWG entities counted.",
+                Data = new JObject
+                {
+                    ["filter"] = FilterSummary(args),
+                    ["count"] = selected.Count,
+                    ["by_layer"] = CountBy(selected, "layer"),
+                    ["by_type"] = CountBy(selected, "type"),
+                    ["entities"] = EntitySummaryArray(selected, 80),
+                },
+            };
+        }
+
         private static CadToolExecutionResult MeasureBounds(string callId, string name, JObject args)
         {
             var snapshot = DrawingSnapshotCollector.CaptureActive();
-            var entities = snapshot["entities"] as JArray ?? new JArray();
-            var layer = args.Value<string>("layer");
-            var type = args.Value<string>("type");
-            var handle = args.Value<string>("handle");
-            var includeExploded = args.Value<bool?>("include_exploded") ?? true;
-            var selected = new JArray();
-            double? minX = null;
-            double? minY = null;
-            double? minZ = null;
-            double? maxX = null;
-            double? maxY = null;
-            double? maxZ = null;
-
-            foreach (var token in entities)
-            {
-                var entity = token as JObject;
-                if (entity == null) continue;
-                if (!includeExploded && entity["source"]?["from_block_explode"]?.Value<bool>() == true) continue;
-                if (!string.IsNullOrWhiteSpace(layer) &&
-                    !string.Equals(entity.Value<string>("layer"), layer, StringComparison.OrdinalIgnoreCase)) continue;
-                if (!string.IsNullOrWhiteSpace(type) &&
-                    !string.Equals(entity.Value<string>("type"), type, StringComparison.OrdinalIgnoreCase) &&
-                    !string.Equals(entity["geometry"]?["entity_type"]?.Value<string>(), type, StringComparison.OrdinalIgnoreCase)) continue;
-                if (!string.IsNullOrWhiteSpace(handle) &&
-                    !string.Equals(entity.Value<string>("handle"), handle, StringComparison.OrdinalIgnoreCase)) continue;
-
-                var bounds = entity["bounds"] as JObject;
-                var min = bounds?["min"] as JArray;
-                var max = bounds?["max"] as JArray;
-                if (min == null || max == null || min.Count < 2 || max.Count < 2) continue;
-
-                var eMinX = min[0].Value<double>();
-                var eMinY = min[1].Value<double>();
-                var eMinZ = min.Count > 2 ? min[2].Value<double>() : 0;
-                var eMaxX = max[0].Value<double>();
-                var eMaxY = max[1].Value<double>();
-                var eMaxZ = max.Count > 2 ? max[2].Value<double>() : 0;
-                minX = !minX.HasValue ? eMinX : Math.Min(minX.Value, eMinX);
-                minY = !minY.HasValue ? eMinY : Math.Min(minY.Value, eMinY);
-                minZ = !minZ.HasValue ? eMinZ : Math.Min(minZ.Value, eMinZ);
-                maxX = !maxX.HasValue ? eMaxX : Math.Max(maxX.Value, eMaxX);
-                maxY = !maxY.HasValue ? eMaxY : Math.Max(maxY.Value, eMaxY);
-                maxZ = !maxZ.HasValue ? eMaxZ : Math.Max(maxZ.Value, eMaxZ);
-                selected.Add(new JObject
-                {
-                    ["handle"] = entity.Value<string>("handle"),
-                    ["type"] = entity.Value<string>("type"),
-                    ["layer"] = entity.Value<string>("layer"),
-                });
-            }
-
-            var aggregate = minX.HasValue
-                ? new JObject
-                {
-                    ["min"] = new JArray(minX.Value, minY.Value, minZ.Value),
-                    ["max"] = new JArray(maxX.Value, maxY.Value, maxZ.Value),
-                    ["width"] = maxX.Value - minX.Value,
-                    ["height"] = maxY.Value - minY.Value,
-                    ["depth"] = maxZ.Value - minZ.Value,
-                }
-                : null;
+            ApplySnapshotLimit(snapshot, args.Value<int?>("limit"));
+            var selected = SelectMatchingEntities(snapshot, args);
+            var aggregate = MeasureSelectionBounds(selected);
 
             return new CadToolExecutionResult
             {
@@ -237,16 +224,100 @@ namespace Vcad.Plugin.Execution
                 Message = "DWG bounds measured.",
                 Data = new JObject
                 {
-                    ["filter"] = new JObject
-                    {
-                        ["layer"] = string.IsNullOrWhiteSpace(layer) ? null : layer,
-                        ["type"] = string.IsNullOrWhiteSpace(type) ? null : type,
-                        ["handle"] = string.IsNullOrWhiteSpace(handle) ? null : handle,
-                        ["include_exploded"] = includeExploded,
-                    },
+                    ["filter"] = FilterSummary(args),
                     ["count"] = selected.Count,
                     ["bounds"] = aggregate,
-                    ["entities"] = selected,
+                    ["entities"] = EntitySummaryArray(selected, 80),
+                },
+            };
+        }
+
+        private static CadToolExecutionResult MeasureDistance(string callId, string name, JObject args)
+        {
+            var snapshot = DrawingSnapshotCollector.CaptureActive();
+            ApplySnapshotLimit(snapshot, args.Value<int?>("limit"));
+            var from = ReadDistancePoint(snapshot, args, "from", "from_selector", "x1", "y1");
+            var to = ReadDistancePoint(snapshot, args, "to", "to_selector", "x2", "y2");
+            var distance = from.DistanceTo(to);
+
+            return new CadToolExecutionResult
+            {
+                CallId = callId,
+                ToolName = name,
+                Success = true,
+                Message = "DWG distance measured.",
+                Data = new JObject
+                {
+                    ["from"] = new JArray(from.X, from.Y, from.Z),
+                    ["to"] = new JArray(to.X, to.Y, to.Z),
+                    ["distance"] = distance,
+                },
+            };
+        }
+
+        private static CadToolExecutionResult LayerDiff(string callId, string name, JObject args)
+        {
+            var before = args["before_snapshot"] as JObject ?? args["before"] as JObject;
+            if (before == null)
+            {
+                return Fail(callId, name, "SCHEMA_INVALID", "'before_snapshot' is required.");
+            }
+
+            var after = args["after_snapshot"] as JObject ?? DrawingSnapshotCollector.CaptureActive();
+            ApplySnapshotLimit(after, args.Value<int?>("limit"));
+            var beforeSelected = SelectMatchingEntities(before, args);
+            var afterSelected = SelectMatchingEntities(after, args);
+
+            return new CadToolExecutionResult
+            {
+                CallId = callId,
+                ToolName = name,
+                Success = true,
+                Message = "DWG layer diff computed.",
+                Data = new JObject
+                {
+                    ["filter"] = FilterSummary(args),
+                    ["before_count"] = beforeSelected.Count,
+                    ["after_count"] = afterSelected.Count,
+                    ["delta"] = afterSelected.Count - beforeSelected.Count,
+                    ["layer_diff"] = CountDiff(CountMap(beforeSelected, "layer"), CountMap(afterSelected, "layer")),
+                    ["before_summary"] = before["summary"] ?? new JObject(),
+                    ["after_summary"] = after["summary"] ?? new JObject(),
+                },
+            };
+        }
+
+        private static CadToolExecutionResult BeforeAfterDiff(string callId, string name, JObject args)
+        {
+            var before = args["before_snapshot"] as JObject ?? args["before"] as JObject;
+            if (before == null)
+            {
+                return Fail(callId, name, "SCHEMA_INVALID", "'before_snapshot' is required.");
+            }
+
+            var after = args["after_snapshot"] as JObject ?? DrawingSnapshotCollector.CaptureActive();
+            ApplySnapshotLimit(after, args.Value<int?>("limit"));
+            var beforeSelected = SelectMatchingEntities(before, args);
+            var afterSelected = SelectMatchingEntities(after, args);
+
+            return new CadToolExecutionResult
+            {
+                CallId = callId,
+                ToolName = name,
+                Success = true,
+                Message = "DWG before/after diff computed.",
+                Data = new JObject
+                {
+                    ["filter"] = FilterSummary(args),
+                    ["before_count"] = beforeSelected.Count,
+                    ["after_count"] = afterSelected.Count,
+                    ["delta"] = afterSelected.Count - beforeSelected.Count,
+                    ["layer_diff"] = CountDiff(CountMap(beforeSelected, "layer"), CountMap(afterSelected, "layer")),
+                    ["type_diff"] = CountDiff(CountMap(beforeSelected, "type"), CountMap(afterSelected, "type")),
+                    ["before_bounds"] = MeasureSelectionBounds(beforeSelected),
+                    ["after_bounds"] = MeasureSelectionBounds(afterSelected),
+                    ["before_summary"] = before["summary"] ?? new JObject(),
+                    ["after_summary"] = after["summary"] ?? new JObject(),
                 },
             };
         }
@@ -254,10 +325,11 @@ namespace Vcad.Plugin.Execution
         private static CadToolExecutionResult ValidateDwgState(string callId, string name, JObject args)
         {
             var snapshot = DrawingSnapshotCollector.CaptureActive();
+            ApplySnapshotLimit(snapshot, args.Value<int?>("limit"));
             var checks = new JArray();
             var passed = true;
             var layers = snapshot["layers"] as JArray ?? new JArray();
-            var entities = snapshot["entities"] as JArray ?? new JArray();
+            var entities = SelectMatchingEntities(snapshot, args);
             var warnings = snapshot["warnings"] as JArray ?? new JArray();
             var expectedLayers = args["expected_layers"] as JArray;
             if (expectedLayers != null)
@@ -285,9 +357,7 @@ namespace Vcad.Plugin.Execution
                 foreach (var typeToken in expectedTypes)
                 {
                     var expectedType = typeToken.Value<string>();
-                    var count = entities.Count(e =>
-                        string.Equals(e?["type"]?.Value<string>(), expectedType, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(e?["geometry"]?["entity_type"]?.Value<string>(), expectedType, StringComparison.OrdinalIgnoreCase));
+                    var count = entities.Count(e => TypeMatches(e, expectedType));
                     var ok = count > 0;
                     checks.Add(CheckResult("type_exists:" + expectedType, ok, "count=" + count));
                     passed &= ok;
@@ -324,12 +394,327 @@ namespace Vcad.Plugin.Execution
                 Message = passed ? "DWG validation passed." : "DWG validation failed.",
                 Data = new JObject
                 {
+                    ["filter"] = FilterSummary(args),
                     ["passed"] = passed,
                     ["checks"] = checks,
                     ["summary"] = snapshot["summary"] ?? new JObject(),
                     ["warnings"] = warnings,
                 },
             };
+        }
+
+        private sealed class BoundsAccumulator
+        {
+            private double _minX;
+            private double _minY;
+            private double _minZ;
+            private double _maxX;
+            private double _maxY;
+            private double _maxZ;
+
+            public bool HasValue { get; private set; }
+
+            public void Add(JObject entity)
+            {
+                var bounds = entity?["bounds"] as JObject;
+                var min = bounds?["min"] as JArray;
+                var max = bounds?["max"] as JArray;
+                if (min == null || max == null || min.Count < 2 || max.Count < 2) return;
+
+                var minX = min[0].Value<double>();
+                var minY = min[1].Value<double>();
+                var minZ = min.Count > 2 ? min[2].Value<double>() : 0;
+                var maxX = max[0].Value<double>();
+                var maxY = max[1].Value<double>();
+                var maxZ = max.Count > 2 ? max[2].Value<double>() : 0;
+                if (!HasValue)
+                {
+                    _minX = minX;
+                    _minY = minY;
+                    _minZ = minZ;
+                    _maxX = maxX;
+                    _maxY = maxY;
+                    _maxZ = maxZ;
+                    HasValue = true;
+                    return;
+                }
+
+                _minX = Math.Min(_minX, minX);
+                _minY = Math.Min(_minY, minY);
+                _minZ = Math.Min(_minZ, minZ);
+                _maxX = Math.Max(_maxX, maxX);
+                _maxY = Math.Max(_maxY, maxY);
+                _maxZ = Math.Max(_maxZ, maxZ);
+            }
+
+            public JObject ToJson()
+            {
+                if (!HasValue) return null;
+                return new JObject
+                {
+                    ["min"] = new JArray(_minX, _minY, _minZ),
+                    ["max"] = new JArray(_maxX, _maxY, _maxZ),
+                    ["width"] = _maxX - _minX,
+                    ["height"] = _maxY - _minY,
+                    ["depth"] = _maxZ - _minZ,
+                    ["center"] = new JArray((_minX + _maxX) / 2, (_minY + _maxY) / 2, (_minZ + _maxZ) / 2),
+                };
+            }
+
+            public Point3d Center()
+            {
+                if (!HasValue) throw new InvalidOperationException("Selection has no measurable bounds.");
+                return new Point3d((_minX + _maxX) / 2, (_minY + _maxY) / 2, (_minZ + _maxZ) / 2);
+            }
+        }
+
+        private static void ApplySnapshotLimit(JObject snapshot, int? limit)
+        {
+            if (!limit.HasValue || limit.Value <= 0) return;
+            var entities = snapshot?["entities"] as JArray;
+            if (entities == null || entities.Count <= limit.Value) return;
+            var trimmed = new JArray(entities.Take(limit.Value));
+            snapshot["entities"] = trimmed;
+            var summary = snapshot["summary"] as JObject;
+            if (summary != null) summary["truncated"] = true;
+            var warnings = snapshot["warnings"] as JArray;
+            if (warnings != null) warnings.Add("Snapshot limited to " + limit.Value + " entities for tool context.");
+        }
+
+        private static List<JObject> SelectMatchingEntities(JObject snapshot, JObject args)
+        {
+            var selected = new List<JObject>();
+            var entities = snapshot?["entities"] as JArray ?? new JArray();
+            var selectors = ReadSelectors(args);
+            var includeExploded = args.Value<bool?>("include_exploded") ?? true;
+            var layer = args.Value<string>("layer");
+            var type = args.Value<string>("type");
+            var handle = args.Value<string>("handle");
+
+            foreach (var token in entities)
+            {
+                var entity = token as JObject;
+                if (entity == null) continue;
+                if (!includeExploded && entity["source"]?["from_block_explode"]?.Value<bool>() == true) continue;
+                if (!string.IsNullOrWhiteSpace(layer) &&
+                    !string.Equals(entity.Value<string>("layer"), layer, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!string.IsNullOrWhiteSpace(type) && !TypeMatches(entity, type)) continue;
+                if (!string.IsNullOrWhiteSpace(handle) &&
+                    !string.Equals(entity.Value<string>("handle"), handle, StringComparison.OrdinalIgnoreCase)) continue;
+                if (selectors.Count > 0 && !selectors.Any(selector => MatchesSelector(entity, selector))) continue;
+                selected.Add(entity);
+            }
+
+            return selected;
+        }
+
+        private static List<string> ReadSelectors(JObject args)
+        {
+            var selectors = new List<string>();
+            var selector = args.Value<string>("selector");
+            if (!string.IsNullOrWhiteSpace(selector)) selectors.Add(selector.Trim());
+            var array = args["selectors"] as JArray;
+            if (array != null)
+            {
+                foreach (var token in array)
+                {
+                    var value = token.Value<string>();
+                    if (!string.IsNullOrWhiteSpace(value)) selectors.Add(value.Trim());
+                }
+            }
+            return selectors;
+        }
+
+        private static bool MatchesSelector(JObject entity, string selector)
+        {
+            if (entity == null || string.IsNullOrWhiteSpace(selector)) return true;
+            var parts = selector.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0) parts = new[] { selector };
+
+            foreach (var rawPart in parts)
+            {
+                var part = rawPart.Trim();
+                if (part.Length == 0) continue;
+                var colon = part.IndexOf(':');
+                if (colon <= 0)
+                {
+                    if (!BareSelectorMatches(entity, part)) return false;
+                    continue;
+                }
+
+                var key = part.Substring(0, colon).Trim().ToLowerInvariant();
+                var value = StripOrdinal(part.Substring(colon + 1).Trim());
+                if (value.Length == 0) return false;
+                switch (key)
+                {
+                    case "layer":
+                        if (!string.Equals(entity.Value<string>("layer"), value, StringComparison.OrdinalIgnoreCase)) return false;
+                        break;
+                    case "handle":
+                        if (!string.Equals(entity.Value<string>("handle"), value, StringComparison.OrdinalIgnoreCase)) return false;
+                        break;
+                    case "type":
+                    case "entity":
+                        if (!TypeMatches(entity, value)) return false;
+                        break;
+                    case "block":
+                        if (!BlockPathMatches(entity, value)) return false;
+                        break;
+                    default:
+                        if (!BareSelectorMatches(entity, value)) return false;
+                        break;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool BareSelectorMatches(JObject entity, string value)
+        {
+            value = StripOrdinal(value);
+            return string.Equals(entity.Value<string>("handle"), value, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(entity.Value<string>("layer"), value, StringComparison.OrdinalIgnoreCase) ||
+                   TypeMatches(entity, value) ||
+                   BlockPathMatches(entity, value);
+        }
+
+        private static bool TypeMatches(JObject entity, string type)
+        {
+            return string.Equals(entity?["type"]?.Value<string>(), type, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(entity?["geometry"]?["entity_type"]?.Value<string>(), type, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool BlockPathMatches(JObject entity, string blockName)
+        {
+            var path = entity?["source"]?["block_path"] as JArray;
+            if (path != null)
+            {
+                foreach (var part in path.Values<string>())
+                {
+                    if (string.Equals(StripOrdinal(part), blockName, StringComparison.OrdinalIgnoreCase)) return true;
+                    if ((part ?? "").IndexOf(blockName, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+                }
+            }
+
+            var referenceName = entity?["block_reference"]?["name"]?.Value<string>();
+            return !string.IsNullOrWhiteSpace(referenceName) &&
+                   (string.Equals(StripOrdinal(referenceName), blockName, StringComparison.OrdinalIgnoreCase) ||
+                    referenceName.IndexOf(blockName, StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        private static string StripOrdinal(string value)
+        {
+            if (value == null) return "";
+            var trimmed = value.Trim();
+            var hash = trimmed.IndexOf('#');
+            return hash >= 0 ? trimmed.Substring(0, hash).Trim() : trimmed;
+        }
+
+        private static JObject FilterSummary(JObject args)
+        {
+            return new JObject
+            {
+                ["selector"] = string.IsNullOrWhiteSpace(args.Value<string>("selector")) ? null : args.Value<string>("selector"),
+                ["selectors"] = SelectorSummary(args),
+                ["layer"] = string.IsNullOrWhiteSpace(args.Value<string>("layer")) ? null : args.Value<string>("layer"),
+                ["type"] = string.IsNullOrWhiteSpace(args.Value<string>("type")) ? null : args.Value<string>("type"),
+                ["handle"] = string.IsNullOrWhiteSpace(args.Value<string>("handle")) ? null : args.Value<string>("handle"),
+                ["include_exploded"] = args.Value<bool?>("include_exploded") ?? true,
+            };
+        }
+
+        private static JArray SelectorSummary(JObject args)
+        {
+            var arr = new JArray();
+            foreach (var selector in ReadSelectors(args)) arr.Add(selector);
+            return arr;
+        }
+
+        private static JArray EntitySummaryArray(IEnumerable<JObject> entities, int limit)
+        {
+            var arr = new JArray();
+            foreach (var entity in entities.Take(limit))
+            {
+                arr.Add(new JObject
+                {
+                    ["handle"] = entity.Value<string>("handle"),
+                    ["type"] = entity.Value<string>("type"),
+                    ["layer"] = entity.Value<string>("layer"),
+                    ["selectors"] = entity["selectors"] ?? new JArray(),
+                });
+            }
+            return arr;
+        }
+
+        private static JObject MeasureSelectionBounds(IEnumerable<JObject> entities)
+        {
+            var acc = new BoundsAccumulator();
+            foreach (var entity in entities) acc.Add(entity);
+            return acc.ToJson();
+        }
+
+        private static Point3d ReadDistancePoint(JObject snapshot, JObject args, string arrayName, string selectorName, string xName, string yName)
+        {
+            var selector = args.Value<string>(selectorName);
+            if (!string.IsNullOrWhiteSpace(selector))
+            {
+                var selectorArgs = new JObject
+                {
+                    ["selector"] = selector,
+                    ["include_exploded"] = args.Value<bool?>("include_exploded") ?? true,
+                };
+                var selected = SelectMatchingEntities(snapshot, selectorArgs);
+                var acc = new BoundsAccumulator();
+                foreach (var entity in selected) acc.Add(entity);
+                return acc.Center();
+            }
+
+            return ReadPoint(args, arrayName, xName, yName);
+        }
+
+        private static JObject CountBy(IEnumerable<JObject> entities, string field)
+        {
+            var obj = new JObject();
+            foreach (var pair in CountMap(entities, field).OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                obj[pair.Key] = pair.Value;
+            }
+            return obj;
+        }
+
+        private static Dictionary<string, int> CountMap(IEnumerable<JObject> entities, string field)
+        {
+            var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var entity in entities)
+            {
+                var key = field == "type"
+                    ? (entity.Value<string>("type") ?? entity["geometry"]?["entity_type"]?.Value<string>())
+                    : entity.Value<string>(field);
+                if (string.IsNullOrWhiteSpace(key)) key = "(none)";
+                map[key] = map.ContainsKey(key) ? map[key] + 1 : 1;
+            }
+            return map;
+        }
+
+        private static JArray CountDiff(Dictionary<string, int> before, Dictionary<string, int> after)
+        {
+            var arr = new JArray();
+            var keys = new HashSet<string>(before.Keys, StringComparer.OrdinalIgnoreCase);
+            foreach (var key in after.Keys) keys.Add(key);
+            foreach (var key in keys.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+            {
+                var b = before.ContainsKey(key) ? before[key] : 0;
+                var a = after.ContainsKey(key) ? after[key] : 0;
+                if (b == a) continue;
+                arr.Add(new JObject
+                {
+                    ["key"] = key,
+                    ["before"] = b,
+                    ["after"] = a,
+                    ["delta"] = a - b,
+                });
+            }
+            return arr;
         }
 
         private static JObject CheckResult(string name, bool passed, string detail)

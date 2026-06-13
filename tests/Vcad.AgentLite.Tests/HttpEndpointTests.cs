@@ -48,6 +48,7 @@ public class HttpEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.True(jo["success"]!.GetValue<bool>());
         var response = jo["response"]!.AsObject();
         Assert.NotNull(response["tool_calls"]);
+        Assert.Contains(response["tool_calls"]!.AsArray(), t => t!["name"]!.GetValue<string>() == "cad.preview_plan");
         Assert.Contains(response["tool_calls"]!.AsArray(), t => t!["name"]!.GetValue<string>() == "cad.draw_rectangle");
         Assert.Equal("active AutoCAD DWG", response["cad_brief"]!["primary_artifact"]!.GetValue<string>());
         Assert.NotNull(response["task_plan"]);
@@ -69,8 +70,51 @@ public class HttpEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         var tools = jo["tools"]!.AsArray();
         Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "web.fetch_url");
         Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "workspace.read_file");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.preview_plan");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.count_entities");
         Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.measure_bounds");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.measure_distance");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.layer_diff");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.before_after_diff");
         Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.validate_dwg_state");
+    }
+
+    [Fact]
+    public async Task Benchmark_greeting_stays_in_panel_without_cad_text()
+    {
+        var client = _factory.CreateClient();
+        var req = new
+        {
+            session_id = "bench-hello-1",
+            message = "你好",
+        };
+        var resp = await client.PostAsJsonAsync("/agent/turn", req);
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+
+        var body = await resp.Content.ReadAsStringAsync();
+        var jo = JsonNode.Parse(body)!.AsObject();
+        var response = jo["response"]!.AsObject();
+        var calls = response["tool_calls"]!.AsArray();
+        Assert.DoesNotContain(calls, t => t!["name"]!.GetValue<string>() == "cad.draw_text");
+        Assert.True(response["requires_user_input"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task Benchmark_inspect_uses_dwg_snapshot_tool()
+    {
+        var client = _factory.CreateClient();
+        var req = new
+        {
+            session_id = "bench-inspect-1",
+            message = "inspect the current drawing",
+        };
+        var resp = await client.PostAsJsonAsync("/agent/turn", req);
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+
+        var body = await resp.Content.ReadAsStringAsync();
+        var jo = JsonNode.Parse(body)!.AsObject();
+        var response = jo["response"]!.AsObject();
+        Assert.Contains(response["tool_calls"]!.AsArray(), t => t!["name"]!.GetValue<string>() == "cad.read_dwg_snapshot");
     }
 
     [Fact]

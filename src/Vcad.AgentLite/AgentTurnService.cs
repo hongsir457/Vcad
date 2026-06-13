@@ -263,7 +263,7 @@ public sealed class AgentTurnService
             },
             validation = new JsonObject
             {
-                ["planned_checks"] = new JsonArray("cad.read_dwg_snapshot", "cad.validate_dwg_state"),
+                ["planned_checks"] = new JsonArray("cad.preview_plan", "cad.read_dwg_snapshot", "cad.validate_dwg_state", "cad.before_after_diff"),
             },
         };
         response.trace.Add(new AgentTraceEvent
@@ -274,6 +274,26 @@ public sealed class AgentTurnService
 
         if (ContainsAny(text, "矩形", "rectangle", "房间", "room"))
         {
+            response.tool_calls.Add(new AgentToolCall
+            {
+                id = "call-" + DateTime.UtcNow.ToString("HHmmssfff"),
+                name = "cad.preview_plan",
+                args = new JsonObject
+                {
+                    ["writes_dwg"] = true,
+                    ["operations"] = new JsonArray(new JsonObject
+                    {
+                        ["action"] = "draw_rectangle",
+                        ["target_layer"] = "A-WALL",
+                        ["parameters"] = new JsonObject { ["x"] = 0, ["y"] = 0, ["width"] = 6000, ["height"] = 4000 },
+                    }),
+                    ["expected_effect"] = new JsonObject
+                    {
+                        ["layers"] = new JsonArray("A-WALL"),
+                        ["object_types"] = new JsonArray("Polyline"),
+                    },
+                },
+            });
             response.tool_calls.Add(new AgentToolCall
             {
                 id = "call-" + DateTime.UtcNow.ToString("HHmmssfff"),
@@ -412,7 +432,7 @@ Return JSON only:
     "reason": "why this is safe or what needs confirmation"
   },
   "validation": {
-    "planned_checks": ["cad.validate_dwg_state", "cad.measure_bounds", "cad.read_dwg_snapshot"],
+    "planned_checks": ["cad.preview_plan", "cad.validate_dwg_state", "cad.measure_bounds", "cad.before_after_diff", "cad.read_dwg_snapshot"],
     "success_criteria": ["what must be true after tool execution"]
   },
   "trace": [{"title":"short step","summary":"brief visible reasoning, no hidden chain-of-thought"}],
@@ -424,8 +444,13 @@ Return JSON only:
 
 Available CAD tools:
 - cad.read_dwg_snapshot { limit }
-- cad.measure_bounds { layer, type, handle, include_exploded }
-- cad.validate_dwg_state { expected_layers, expected_min_entities, expected_types, expected_layer_entity_counts, max_warnings }
+- cad.preview_plan { operations, selectors, expected_effect, writes_dwg }
+- cad.count_entities { selector, selectors, layer, type, handle, include_exploded }
+- cad.measure_bounds { selector, selectors, layer, type, handle, include_exploded }
+- cad.measure_distance { from, to, x1, y1, x2, y2, from_selector, to_selector, include_exploded }
+- cad.layer_diff { before_snapshot, selector, selectors, layer, type, handle, include_exploded }
+- cad.before_after_diff { before_snapshot, after_snapshot, selector, selectors, layer, type, handle, include_exploded }
+- cad.validate_dwg_state { selector, selectors, layer, type, handle, include_exploded, expected_layers, expected_min_entities, expected_types, expected_layer_entity_counts, max_warnings }
 - cad.create_layer { name, color }
 - cad.draw_line { layer, color, x1, y1, x2, y2 }
 - cad.draw_polyline { layer, color, points:[[x,y],...], closed, constant_width }
@@ -444,7 +469,9 @@ Rules:
 - Keep the entry point and primary artifact DWG-first: you are inside AutoCAD, and the current active DWG is the source of truth. Do not switch to STEP/build123d workflows unless the user explicitly asks to export/import such files.
 - Every CAD task should follow this engineering loop at the right depth: Intent -> CAD brief -> task plan -> CAD-IR -> safety -> preview/confirm policy -> AutoCAD tool adapter -> validation -> result.
 - For non-trivial or modification tasks, call cad.read_dwg_snapshot before writing so you understand layers, existing objects, block references, and expanded block internals.
-- After write tools succeed, prefer a validation read tool in the next turn: cad.validate_dwg_state for expected layers/counts/types, cad.measure_bounds for dimensions/bounds, or cad.read_dwg_snapshot for general inspection.
+- Use stable DWG selectors for existing geometry: layer:FROG, handle:1A2F, type:Polyline, block:Door#3/entity:Line#2. Prefer selectors over vague phrases once a target has been observed.
+- Before writes, use cad.preview_plan when the user has not fully authorized execution or when impact is not obvious.
+- After write tools succeed, prefer a validation read tool in the next turn: cad.before_after_diff if a previous snapshot is available, cad.layer_diff for layer changes, cad.validate_dwg_state for expected layers/counts/types, cad.measure_bounds for dimensions/bounds, cad.count_entities for target counts, or cad.read_dwg_snapshot for general inspection.
 - Use tool_calls for CAD work. Do not emit AutoLISP, scripts, or command text unless a specific tool supports it.
 - Use web.search/web.fetch_url when the user asks for external facts, standards, product information, or current web context.
 - Use workspace.read_file/workspace.write_file when the user asks to inspect or save files under the configured workspace root. Write only when the user asked to create/update a file or the execution mode authorizes it.
@@ -504,6 +531,14 @@ Rules:
                 sb.AppendLine();
                 sb.AppendLine("Important: at least one previous tool call failed. Diagnose the tool error, correct the arguments, and continue the same user task. Do not restart with the generic initial intent clarification unless the missing information cannot be inferred from the original user message, CAD observation, and tool error.");
             }
+        }
+
+        var references = AgentReferences.Build(req);
+        if (!string.IsNullOrWhiteSpace(references))
+        {
+            sb.AppendLine();
+            sb.AppendLine("Progressive reference snippets:");
+            sb.AppendLine(references);
         }
 
         return sb.ToString();

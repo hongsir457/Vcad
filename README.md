@@ -142,6 +142,13 @@ dotnet run --project src\Vcad.AgentLite\Vcad.AgentLite.csproj
 Plugin-hosted CAD tools:
 
 - `cad.read_dwg_snapshot`
+- `cad.preview_plan`
+- `cad.count_entities`
+- `cad.measure_bounds`
+- `cad.measure_distance`
+- `cad.layer_diff`
+- `cad.before_after_diff`
+- `cad.validate_dwg_state`
 - `cad.create_layer`
 - `cad.draw_line`
 - `cad.draw_polyline`
@@ -177,6 +184,7 @@ It builds a bounded context payload:
 - [Windows + AutoCAD 2017 verification](docs/windows-verify.md)
 - [Agent panel architecture](docs/plugin-agent-panel.md)
 - [DWG-first agent engineering workflow](docs/agent-engineering-workflow.md)
+- [Agent benchmark tasks](docs/agent-benchmarks.md)
 - [Claude Code AutoCAD COM development bridge](docs/claude-code-autocad-com.md)
 - [Troubleshooting](docs/troubleshooting.md)
 

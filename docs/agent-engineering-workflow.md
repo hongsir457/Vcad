@@ -6,69 +6,87 @@ VCAD keeps the product entry point and primary artifact unchanged:
 - Primary artifact: the active DWG opened in AutoCAD.
 - Execution adapter: AutoCAD .NET API tools hosted by the plugin.
 
-The agent borrows the effective engineering loop from CAD skill/toolchain
-projects, but translates it to DWG-first work:
+The agent borrows the useful engineering ideas from CAD skill/toolchain
+projects, but translates them to a DWG-first workflow:
 
 ```text
 Natural language
--> Intent classification
+-> Intent
 -> CAD brief
 -> Task plan
 -> DWG-backed CAD-IR
--> Safety policy
--> Preview / confirmation policy
--> AutoCAD tool adapter
+-> Safety
+-> Preview / confirmation
+-> AutoCAD adapter tool calls
 -> DWG validation
 -> Natural-language result in the panel
 ```
 
-## Agent Response Contract
+## What Was Adopted
 
-Every non-trivial turn should return these structured sections:
+1. Skill/tool layering
+   - AgentLite exposes a manifest grouped into CAD context, CAD preview, CAD
+     measurement, CAD validation, document context, web context, file context,
+     and CAD action tools.
+   - The plugin owns `cad.*` tools because only AutoCAD can safely inspect and
+     mutate the active drawing.
+   - AgentLite owns guarded external context tools such as `web.search`,
+     `web.fetch_url`, `workspace.read_file`, and `workspace.write_file`.
 
-- `cad_brief`: task type, objective, primary artifact, units, assumptions,
-  validation targets.
-- `task_plan`: short visible plan and immediate next step.
-- `cad_ir`: DWG-oriented operations that map to plugin tools.
-- `safety`: risk level, whether the turn writes the DWG, destructive flag,
-  confirmation requirement.
-- `validation`: planned checks and success criteria.
+2. CAD brief
+   - Every non-trivial agent turn must return `cad_brief`, `task_plan`,
+     `cad_ir`, `safety`, and `validation`.
+   - The panel shows these as one collapsed engineering card. This gives the
+     user auditability without exposing hidden chain-of-thought.
 
-The panel shows these as one collapsible **Agent 工程计划** card. It is for
-auditability, not hidden chain-of-thought.
+3. DWG selector references
+   - Snapshot entities include stable selector references such as
+     `handle:1A2F`, `layer:FROG`, `type:Polyline`, and `block:Door`.
+   - Read tools accept `selector` / `selectors` plus direct `layer`, `type`,
+     `handle`, and `include_exploded` filters.
+   - Block internals are included in the memory snapshot for understanding and
+     measurement.
 
-## DWG Validation Rules
+4. Deterministic checks
+   - `cad.read_dwg_snapshot`: read layers, entities, blocks, expanded internals.
+   - `cad.count_entities`: count selected objects by layer and type.
+   - `cad.measure_bounds`: measure selected aggregate bounds.
+   - `cad.measure_distance`: measure point-to-point or selector-center distance.
+   - `cad.layer_diff`: compare layer counts before and after a step.
+   - `cad.before_after_diff`: compare counts, layer/type deltas, and bounds.
+   - `cad.validate_dwg_state`: verify expected layers, counts, types, warnings.
 
-For modification or non-trivial drawing tasks:
+5. Preview/validation loop
+   - `cad.preview_plan` provides a dry-run style preview over the current DWG
+     context before writes.
+   - Write tools still go through the panel's confirmation or trusted execution
+     mode.
+   - After writes, the agent should validate with deterministic read tools and
+     summarize the result in the panel. Assistant explanations must never be
+     written into the DWG.
 
-1. Read current DWG context when the existing drawing matters.
-2. Execute small, explicit AutoCAD tools.
-3. Re-observe or validate after writes:
-   - `cad.validate_dwg_state` for layers, counts, object types, warning count.
-   - `cad.measure_bounds` for aggregate bounds and dimensions.
-   - `cad.read_dwg_snapshot` for broad inspection.
-4. Reply in the panel with what changed and what was verified.
+6. Progressive reference snippets
+   - `AgentReferences` loads short task-specific guidance into the model prompt:
+     DWG selectors, write/validation loop, attachments, web, and workspace
+     files.
+   - This keeps the model focused without stuffing the full architecture into
+     every turn.
 
-Assistant explanations, status messages, and PDF-reading failures must never be
-written into the drawing. `cad.draw_text` is only for explicit drawing labels,
-notes, titles, or annotations requested by the user.
+7. Benchmark task set
+   - Manual and automated regression prompts live in
+     [agent-benchmarks.md](agent-benchmarks.md).
+   - The test suite covers the tool manifest, simple rectangle planning,
+     snapshot inspection, and the rule that conversational replies stay in the
+     panel instead of becoming `cad.draw_text`.
 
-## Benchmark Prompts
+## Product Rules
 
-Use these prompts as manual or automated regressions:
-
-1. `画一个 6000x4000 的房间矩形，图层 A-WALL`
-   - Expect: rectangle/polyline on `A-WALL`; validation checks layer and bounds.
-2. `读取当前图纸，告诉我有哪些图层和块`
-   - Expect: no DWG write; panel-only summary.
-3. `把 FROG 图层上的轮廓整体复制到右侧 1200`
-   - Expect: reads DWG first; asks only if target objects are ambiguous.
-4. `根据这个 PDF 鉴定报告画平面和立面草图`
-   - Expect: extracts PDF text when copyable; reports OCR limitation if scanned.
-5. `加文字标注“车在这里”`
-   - Expect: `cad.draw_text` allowed because user asked for a drawing label.
-6. `你好`
-   - Expect: panel-only natural-language reply; no `cad.draw_text`.
-7. `撤销上次画图，或者不要改图纸只告诉我方案`
-   - Expect: no destructive/global edit unless explicit safe adapter exists.
-
+- The current DWG is the source of truth.
+- Do not emit AutoLISP or script text as the main control path.
+- Use tool calls for CAD work.
+- Use selectors after observation instead of vague object references.
+- Ask only for missing, task-specific parameters.
+- If a tool call fails, repair the arguments and continue the same task.
+- Do not return to generic initial intent options after an execution failure.
+- `cad.draw_text` is only for explicit drawing labels, notes, titles,
+  dimensions, or annotations requested by the user.

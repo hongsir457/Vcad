@@ -107,7 +107,12 @@ access to the drawing. It calls `/agent/turn` again with the tool results.
 Plugin-hosted CAD tools:
 
 - `cad.read_dwg_snapshot`
+- `cad.preview_plan`
+- `cad.count_entities`
 - `cad.measure_bounds`
+- `cad.measure_distance`
+- `cad.layer_diff`
+- `cad.before_after_diff`
 - `cad.validate_dwg_state`
 - `cad.create_layer`
 - `cad.draw_line`

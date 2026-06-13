@@ -170,6 +170,7 @@ namespace Vcad.Plugin.Context
                 },
                 ["bounds"] = TryReadBounds(entity),
                 ["geometry"] = ReadGeometry(entity),
+                ["selectors"] = BuildSelectorRefs(entity, blockPath),
             };
 
             if (IsBlockReference(entity))
@@ -256,6 +257,32 @@ namespace Vcad.Plugin.Context
         private static bool IsBlockReference(Entity entity)
         {
             return string.Equals(entity.GetType().Name, "BlockReference", StringComparison.Ordinal);
+        }
+
+        private static JArray BuildSelectorRefs(Entity entity, JArray blockPath)
+        {
+            var refs = new JArray
+            {
+                "handle:" + entity.Handle,
+                "type:" + entity.GetType().Name,
+            };
+            if (!string.IsNullOrWhiteSpace(entity.Layer))
+            {
+                refs.Add("layer:" + entity.Layer);
+            }
+
+            if (blockPath != null)
+            {
+                foreach (var part in blockPath.Values<string>())
+                {
+                    if (!string.IsNullOrWhiteSpace(part))
+                    {
+                        refs.Add("block:" + part);
+                    }
+                }
+            }
+
+            return refs;
         }
 
         private static JObject ReadBlockReference(Entity entity)
