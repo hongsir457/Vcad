@@ -2527,6 +2527,7 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
             var currentAttachments = attachments ?? new JArray();
             var currentObservation = cadObservation;
             var anyToolFailed = false;
+            var anyWriteToolSucceeded = false;
             var lastToolFailure = "";
 
             for (var turn = 1; turn <= 8; turn++)
@@ -2572,7 +2573,8 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                         "模型给出了 CAD-IR 但漏掉 tool_calls，已转换为 " + synthesizedCalls.Count + " 个可执行工具。",
                         synthesizedCalls.ToString(Formatting.Indented));
                 }
-                if ((turnResult.ToolCalls == null || turnResult.ToolCalls.Count == 0) &&
+                if (!anyWriteToolSucceeded &&
+                    (turnResult.ToolCalls == null || turnResult.ToolCalls.Count == 0) &&
                     TryBuildLocalFallbackToolCalls(originalUserText, currentMessage, turnResult, out var localCalls))
                 {
                     turnResult.ToolCalls = localCalls;
@@ -2607,7 +2609,8 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                     AddAssistantCard("CAD 助手", turnResult.AssistantMessage);
                 }
 
-                if (turnResult.NeedsClarification &&
+                if (!anyWriteToolSucceeded &&
+                    turnResult.NeedsClarification &&
                     TryBuildLocalFallbackToolCalls(originalUserText, currentMessage, turnResult, out var clarificationFallbackCalls))
                 {
                     turnResult.ToolCalls = clarificationFallbackCalls;
@@ -2621,7 +2624,14 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
 
                 if (turnResult.NeedsClarification)
                 {
-                    if (LooksLikeCadWriteRequest(originalUserText) && IsVagueClarification(turnResult.Clarification, turnResult.AssistantMessage))
+                    if (anyWriteToolSucceeded)
+                    {
+                        SetChatStatus(anyToolFailed ? "已完成，但有工具失败。" : "已完成。", anyToolFailed ? CadOrange : CadGreen);
+                        return;
+                    }
+                    if (!anyWriteToolSucceeded &&
+                        LooksLikeCadWriteRequest(originalUserText) &&
+                        IsVagueClarification(turnResult.Clarification, turnResult.AssistantMessage))
                     {
                         currentMessage = BuildForceToolCallPrompt(originalUserText, turnResult);
                         currentAttachments = attachments == null ? new JArray() : (JArray)attachments.DeepClone();
@@ -2645,7 +2655,7 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
 
                 if (turnResult.ToolCalls == null || turnResult.ToolCalls.Count == 0)
                 {
-                    if (LooksLikeCadWriteRequest(originalUserText) && turn < 8)
+                    if (!anyWriteToolSucceeded && LooksLikeCadWriteRequest(originalUserText) && turn < 8)
                     {
                         currentMessage = BuildForceToolCallPrompt(originalUserText, turnResult);
                         currentAttachments = attachments == null ? new JArray() : (JArray)attachments.DeepClone();
@@ -2664,12 +2674,17 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                 {
                     var call = token as JObject;
                     if (call == null) continue;
+                    var toolName = call.Value<string>("name");
                     var result = await ExecuteToolCallAsync(client, settings, call).ConfigureAwait(true);
                     toolResults.Add(result);
                     if (result.Value<bool?>("success") != true)
                     {
                         anyToolFailed = true;
                         lastToolFailure = ExtractToolFailure(result);
+                    }
+                    else if (CadToolHost.IsWriteTool(toolName))
+                    {
+                        anyWriteToolSucceeded = true;
                     }
                 }
 
@@ -3039,6 +3054,7 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
         {
             calls = new JArray();
             var text = (originalUserText ?? "") + "\n" + (currentMessage ?? "") + "\n" + (result?.AssistantMessage ?? "");
+            if (TryBuildRectangleFallbackToolCalls(text, out calls)) return true;
             if (!LooksLikeStairDrawRequest(text)) return false;
 
             var args = new JObject
@@ -3060,6 +3076,120 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                 ["args"] = args,
             });
             return true;
+        }
+
+        private static bool TryBuildRectangleFallbackToolCalls(string text, out JArray calls)
+        {
+            calls = new JArray();
+            if (!LooksLikeRectangleDrawRequest(text)) return false;
+
+            var dimensions = ExtractRectangleDimensions(text);
+            var layer = ExtractLayerName(text) ?? "A-WALL";
+            var origin = ExtractOrigin(text);
+            var color = 7;
+
+            calls.Add(new JObject
+            {
+                ["id"] = "local-rect-layer-" + DateTime.UtcNow.ToString("HHmmssfff"),
+                ["name"] = "cad.create_layer",
+                ["args"] = new JObject
+                {
+                    ["name"] = layer,
+                    ["color"] = color,
+                },
+            });
+            calls.Add(new JObject
+            {
+                ["id"] = "local-rect-" + DateTime.UtcNow.ToString("HHmmssfff"),
+                ["name"] = "cad.draw_rectangle",
+                ["args"] = new JObject
+                {
+                    ["layer"] = layer,
+                    ["x"] = origin.X,
+                    ["y"] = origin.Y,
+                    ["width"] = dimensions.Width,
+                    ["height"] = dimensions.Height,
+                    ["color"] = color,
+                },
+            });
+            return true;
+        }
+
+        private static bool LooksLikeRectangleDrawRequest(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            var s = text.ToLowerInvariant();
+            var wantsRectangle = s.Contains("rectangle") || s.Contains("rect ") || s.Contains("room") || s.Contains("矩形") || s.Contains("房间");
+            var wantsWrite = s.Contains("draw") || s.Contains("create") || s.Contains("绘制") || s.Contains("画") || s.Contains("生成");
+            return wantsRectangle && wantsWrite;
+        }
+
+        private static RectangleDimensions ExtractRectangleDimensions(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return new RectangleDimensions(6000, 4000);
+            var matches = System.Text.RegularExpressions.Regex
+                .Matches(text, @"(?<![A-Za-z0-9])(\d+(?:\.\d+)?)(?![A-Za-z0-9])")
+                .Cast<System.Text.RegularExpressions.Match>()
+                .Select(m => double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture))
+                .Where(v => v > 0)
+                .ToList();
+
+            if (matches.Count >= 2)
+            {
+                return new RectangleDimensions(matches[0], matches[1]);
+            }
+
+            return new RectangleDimensions(
+                ExtractCadDimension(text, new[] { "width", "宽" }, 6000),
+                ExtractCadDimension(text, new[] { "height", "高" }, 4000));
+        }
+
+        private static RectangleOrigin ExtractOrigin(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return new RectangleOrigin(0, 0);
+            var match = System.Text.RegularExpressions.Regex.Match(
+                text,
+                @"(?:at|origin|lower[- ]?left|左下角|原点)\s*\(?\s*(-?\d+(?:\.\d+)?)\s*[,，]\s*(-?\d+(?:\.\d+)?)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (!match.Success) return new RectangleOrigin(0, 0);
+
+            return new RectangleOrigin(
+                double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture),
+                double.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture));
+        }
+
+        private static string ExtractLayerName(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return null;
+            var match = System.Text.RegularExpressions.Regex.Match(
+                text,
+                @"(?:layer|图层)\s*[:=]?\s*([A-Za-z0-9_.-]+)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            return match.Success ? match.Groups[1].Value : null;
+        }
+
+        private struct RectangleDimensions
+        {
+            public RectangleDimensions(double width, double height)
+            {
+                Width = width;
+                Height = height;
+            }
+
+            public double Width { get; }
+            public double Height { get; }
+        }
+
+        private struct RectangleOrigin
+        {
+            public RectangleOrigin(double x, double y)
+            {
+                X = x;
+                Y = y;
+            }
+
+            public double X { get; }
+            public double Y { get; }
         }
 
         private static bool LooksLikeStairRequest(string text)
