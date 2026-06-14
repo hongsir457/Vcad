@@ -62,6 +62,18 @@ namespace Vcad.Plugin.Execution
             new Dictionary<string, ToolDefinition>(StringComparer.OrdinalIgnoreCase)
             {
                 { "cad.read_dwg_snapshot", new ToolDefinition("cad.read_dwg_snapshot", false, ReadSnapshot) },
+                { "cad.read_layers", new ToolDefinition("cad.read_layers", false, ReadLayers) },
+                { "cad.read_styles", new ToolDefinition("cad.read_styles", false, ReadStyles) },
+                { "cad.read_blocks", new ToolDefinition("cad.read_blocks", false, ReadBlocks) },
+                { "cad.query_entities", new ToolDefinition("cad.query_entities", false, QueryEntities) },
+                { "cad.describe_entity", new ToolDefinition("cad.describe_entity", false, DescribeEntity) },
+                { "cad.describe_selection", new ToolDefinition("cad.describe_selection", false, DescribeSelection) },
+                { "cad.find_near", new ToolDefinition("cad.find_near", false, FindNear) },
+                { "cad.find_intersections", new ToolDefinition("cad.find_intersections", false, FindIntersections) },
+                { "cad.find_connected_contours", new ToolDefinition("cad.find_connected_contours", false, FindConnectedContours) },
+                { "cad.find_closed_regions", new ToolDefinition("cad.find_closed_regions", false, FindClosedRegions) },
+                { "cad.measure_relation", new ToolDefinition("cad.measure_relation", false, MeasureRelation) },
+                { "cad.semantic_scan", new ToolDefinition("cad.semantic_scan", false, SemanticScan) },
                 { "cad.preview_plan", new ToolDefinition("cad.preview_plan", false, PreviewPlan) },
                 { "cad.count_entities", new ToolDefinition("cad.count_entities", false, CountEntities) },
                 { "cad.measure_bounds", new ToolDefinition("cad.measure_bounds", false, MeasureBounds) },
@@ -73,9 +85,23 @@ namespace Vcad.Plugin.Execution
                 { "cad.draw_line", new ToolDefinition("cad.draw_line", true, (id, name, args) => RunWrite(id, name, args, DrawLine)) },
                 { "cad.draw_polyline", new ToolDefinition("cad.draw_polyline", true, (id, name, args) => RunWrite(id, name, args, DrawPolyline)) },
                 { "cad.draw_circle", new ToolDefinition("cad.draw_circle", true, (id, name, args) => RunWrite(id, name, args, DrawCircle)) },
+                { "cad.draw_arc", new ToolDefinition("cad.draw_arc", true, (id, name, args) => RunWrite(id, name, args, DrawArc)) },
                 { "cad.draw_rectangle", new ToolDefinition("cad.draw_rectangle", true, (id, name, args) => RunWrite(id, name, args, DrawRectangle)) },
+                { "cad.draw_room", new ToolDefinition("cad.draw_room", true, (id, name, args) => RunWrite(id, name, args, DrawRoom)) },
+                { "cad.draw_wall", new ToolDefinition("cad.draw_wall", true, (id, name, args) => RunWrite(id, name, args, DrawWall)) },
                 { "cad.draw_stair", new ToolDefinition("cad.draw_stair", true, (id, name, args) => RunWrite(id, name, args, DrawStair)) },
                 { "cad.draw_text", new ToolDefinition("cad.draw_text", true, (id, name, args) => RunWrite(id, name, args, DrawText)) },
+                { "cad.draw_mtext", new ToolDefinition("cad.draw_mtext", true, (id, name, args) => RunWrite(id, name, args, DrawMText)) },
+                { "cad.draw_dimension", new ToolDefinition("cad.draw_dimension", true, (id, name, args) => RunWrite(id, name, args, DrawDimension)) },
+                { "cad.insert_block", new ToolDefinition("cad.insert_block", true, (id, name, args) => RunWrite(id, name, args, InsertBlock)) },
+                { "cad.move_entities", new ToolDefinition("cad.move_entities", true, (id, name, args) => RunWrite(id, name, args, MoveEntities)) },
+                { "cad.copy_entities", new ToolDefinition("cad.copy_entities", true, (id, name, args) => RunWrite(id, name, args, CopyEntities)) },
+                { "cad.rotate_entities", new ToolDefinition("cad.rotate_entities", true, (id, name, args) => RunWrite(id, name, args, RotateEntities)) },
+                { "cad.scale_entities", new ToolDefinition("cad.scale_entities", true, (id, name, args) => RunWrite(id, name, args, ScaleEntities)) },
+                { "cad.offset_entities", new ToolDefinition("cad.offset_entities", true, (id, name, args) => RunWrite(id, name, args, OffsetEntities)) },
+                { "cad.delete_entities", new ToolDefinition("cad.delete_entities", true, (id, name, args) => RunWrite(id, name, args, DeleteEntities)) },
+                { "cad.change_layer", new ToolDefinition("cad.change_layer", true, (id, name, args) => RunWrite(id, name, args, ChangeLayer)) },
+                { "cad.set_properties", new ToolDefinition("cad.set_properties", true, (id, name, args) => RunWrite(id, name, args, SetProperties)) },
             };
 
         public static bool IsCadTool(string name)
@@ -155,6 +181,265 @@ namespace Vcad.Plugin.Execution
                     ["summary_text"] = DrawingSnapshotCollector.FormatSummary(snapshot),
                 },
             };
+        }
+
+        private static CadToolExecutionResult ReadLayers(string callId, string name, JObject args)
+        {
+            var snapshot = DrawingSnapshotCollector.CaptureActive();
+            return Success(callId, name, "DWG layers read.", new JObject
+            {
+                ["layers"] = snapshot["layers"] ?? new JArray(),
+                ["summary"] = snapshot["summary"] ?? new JObject(),
+            });
+        }
+
+        private static CadToolExecutionResult ReadStyles(string callId, string name, JObject args)
+        {
+            var snapshot = DrawingSnapshotCollector.CaptureActive();
+            return Success(callId, name, "DWG styles read.", new JObject
+            {
+                ["linetypes"] = snapshot["linetypes"] ?? new JArray(),
+                ["text_styles"] = snapshot["text_styles"] ?? new JArray(),
+                ["dim_styles"] = snapshot["dim_styles"] ?? new JArray(),
+                ["database"] = snapshot["database"] ?? new JObject(),
+            });
+        }
+
+        private static CadToolExecutionResult ReadBlocks(string callId, string name, JObject args)
+        {
+            var snapshot = DrawingSnapshotCollector.CaptureActive();
+            return Success(callId, name, "DWG blocks read.", new JObject
+            {
+                ["blocks"] = snapshot["blocks"] ?? new JArray(),
+                ["block_references"] = snapshot["geometry_index"]?["block_references"] ?? new JArray(),
+                ["summary"] = snapshot["summary"] ?? new JObject(),
+            });
+        }
+
+        private static CadToolExecutionResult QueryEntities(string callId, string name, JObject args)
+        {
+            var snapshot = DrawingSnapshotCollector.CaptureActive();
+            ApplySnapshotLimit(snapshot, args.Value<int?>("scan_limit"));
+            var selected = ApplyAdvancedEntityFilters(snapshot, args);
+            var limit = Math.Max(1, Math.Min(args.Value<int?>("limit") ?? 120, 1000));
+            var includeGeometry = args.Value<bool?>("include_geometry") ?? true;
+            var includeProperties = args.Value<bool?>("include_properties") ?? true;
+
+            return Success(callId, name, "DWG entities queried.", new JObject
+            {
+                ["filter"] = FilterSummary(args),
+                ["count"] = selected.Count,
+                ["returned"] = Math.Min(selected.Count, limit),
+                ["by_layer"] = CountBy(selected, "layer"),
+                ["by_type"] = CountBy(selected, "type"),
+                ["bounds"] = MeasureSelectionBounds(selected),
+                ["entities"] = EntityDetailArray(selected, limit, includeGeometry, includeProperties),
+            });
+        }
+
+        private static CadToolExecutionResult DescribeEntity(string callId, string name, JObject args)
+        {
+            var snapshot = DrawingSnapshotCollector.CaptureActive();
+            var selected = ApplyAdvancedEntityFilters(snapshot, args);
+            if (selected.Count == 0)
+            {
+                return Fail(callId, name, "NOT_FOUND", "No entity matched the selector.");
+            }
+
+            var entity = selected[0];
+            var center = EntityCenter(entity);
+            var nearbyArgs = new JObject
+            {
+                ["x"] = center.X,
+                ["y"] = center.Y,
+                ["radius"] = args.Value<double?>("near_radius") ?? 1000,
+                ["include_exploded"] = args.Value<bool?>("include_exploded") ?? true,
+            };
+            var nearby = ApplyAdvancedEntityFilters(snapshot, nearbyArgs)
+                .Where(e => !string.Equals(e.Value<string>("handle"), entity.Value<string>("handle"), StringComparison.OrdinalIgnoreCase))
+                .Take(30)
+                .ToList();
+
+            return Success(callId, name, "DWG entity described.", new JObject
+            {
+                ["entity"] = entity,
+                ["center"] = new JArray(center.X, center.Y, center.Z),
+                ["nearby"] = EntitySummaryArray(nearby, 30),
+                ["relations"] = DescribeRelations(entity, nearby),
+            });
+        }
+
+        private static CadToolExecutionResult DescribeSelection(string callId, string name, JObject args)
+        {
+            var snapshot = DrawingSnapshotCollector.CaptureActive();
+            var selected = ApplyAdvancedEntityFilters(snapshot, args);
+            return Success(callId, name, "DWG selection described.", new JObject
+            {
+                ["filter"] = FilterSummary(args),
+                ["count"] = selected.Count,
+                ["by_layer"] = CountBy(selected, "layer"),
+                ["by_type"] = CountBy(selected, "type"),
+                ["bounds"] = MeasureSelectionBounds(selected),
+                ["text_sample"] = TextSample(selected, 30),
+                ["closed_entities"] = EntitySummaryArray(selected.Where(IsClosedEntity), 50),
+                ["entities"] = EntitySummaryArray(selected, 120),
+            });
+        }
+
+        private static CadToolExecutionResult FindNear(string callId, string name, JObject args)
+        {
+            var snapshot = DrawingSnapshotCollector.CaptureActive();
+            var selected = ApplyAdvancedEntityFilters(snapshot, args);
+            var origin = ReadNearOrigin(snapshot, args);
+            var radius = args.Value<double?>("radius") ?? 1000;
+            ValidatePositiveDimension(radius, "radius");
+            var limit = Math.Max(1, Math.Min(args.Value<int?>("limit") ?? 80, 500));
+
+            var ranked = selected
+                .Select(e => new { Entity = e, Distance = DistanceToEntity(origin, e) })
+                .Where(x => x.Distance <= radius)
+                .OrderBy(x => x.Distance)
+                .Take(limit)
+                .Select(x =>
+                {
+                    var item = EntitySummary(x.Entity);
+                    item["distance"] = x.Distance;
+                    item["bounds"] = x.Entity["bounds"];
+                    return item;
+                });
+
+            return Success(callId, name, "Nearby DWG entities found.", new JObject
+            {
+                ["origin"] = new JArray(origin.X, origin.Y, origin.Z),
+                ["radius"] = radius,
+                ["entities"] = new JArray(ranked),
+            });
+        }
+
+        private static CadToolExecutionResult FindIntersections(string callId, string name, JObject args)
+        {
+            var snapshot = DrawingSnapshotCollector.CaptureActive();
+            var selected = ApplyAdvancedEntityFilters(snapshot, args);
+            var segments = ExtractSegments(selected).Take(1200).ToList();
+            var limit = Math.Max(1, Math.Min(args.Value<int?>("limit") ?? 100, 1000));
+            var intersections = new JArray();
+
+            for (var i = 0; i < segments.Count && intersections.Count < limit; i++)
+            {
+                for (var j = i + 1; j < segments.Count && intersections.Count < limit; j++)
+                {
+                    if (string.Equals(segments[i].Handle, segments[j].Handle, StringComparison.OrdinalIgnoreCase)) continue;
+                    Point2d point;
+                    if (!TryIntersectSegments(segments[i].Start, segments[i].End, segments[j].Start, segments[j].End, out point)) continue;
+                    intersections.Add(new JObject
+                    {
+                        ["point"] = new JArray(point.X, point.Y, 0),
+                        ["a"] = segments[i].ToJson(),
+                        ["b"] = segments[j].ToJson(),
+                    });
+                }
+            }
+
+            return Success(callId, name, "DWG intersections found.", new JObject
+            {
+                ["segment_count"] = segments.Count,
+                ["intersection_count"] = intersections.Count,
+                ["intersections"] = intersections,
+            });
+        }
+
+        private static CadToolExecutionResult FindConnectedContours(string callId, string name, JObject args)
+        {
+            var snapshot = DrawingSnapshotCollector.CaptureActive();
+            var selected = ApplyAdvancedEntityFilters(snapshot, args);
+            var tolerance = args.Value<double?>("tolerance") ?? 1.0;
+            ValidatePositiveDimension(tolerance, "tolerance");
+            var contours = BuildConnectedContours(ExtractSegments(selected), tolerance);
+
+            return Success(callId, name, "Connected DWG contours found.", new JObject
+            {
+                ["tolerance"] = tolerance,
+                ["contour_count"] = contours.Count,
+                ["closed_count"] = contours.Count(c => c.Value<bool>("closed")),
+                ["contours"] = new JArray(contours.Take(Math.Max(1, Math.Min(args.Value<int?>("limit") ?? 80, 500)))),
+            });
+        }
+
+        private static CadToolExecutionResult FindClosedRegions(string callId, string name, JObject args)
+        {
+            var snapshot = DrawingSnapshotCollector.CaptureActive();
+            var selected = ApplyAdvancedEntityFilters(snapshot, args);
+            var closedEntities = selected.Where(IsClosedEntity).ToList();
+            var tolerance = args.Value<double?>("tolerance") ?? 1.0;
+            var contours = BuildConnectedContours(ExtractSegments(selected), tolerance)
+                .Where(c => c.Value<bool>("closed"))
+                .ToList();
+
+            return Success(callId, name, "Closed DWG regions found.", new JObject
+            {
+                ["closed_entity_count"] = closedEntities.Count,
+                ["closed_contour_count"] = contours.Count,
+                ["closed_entities"] = EntitySummaryArray(closedEntities, 100),
+                ["connected_regions"] = new JArray(contours.Take(100)),
+            });
+        }
+
+        private static CadToolExecutionResult MeasureRelation(string callId, string name, JObject args)
+        {
+            var snapshot = DrawingSnapshotCollector.CaptureActive();
+            var aArgs = args["a"] as JObject ?? new JObject { ["selector"] = args.Value<string>("a_selector") };
+            var bArgs = args["b"] as JObject ?? new JObject { ["selector"] = args.Value<string>("b_selector") };
+            var a = ApplyAdvancedEntityFilters(snapshot, aArgs);
+            var b = ApplyAdvancedEntityFilters(snapshot, bArgs);
+            var aBounds = MeasureSelectionBounds(a);
+            var bBounds = MeasureSelectionBounds(b);
+            var aCenter = BoundsCenter(aBounds);
+            var bCenter = BoundsCenter(bBounds);
+
+            return Success(callId, name, "DWG relation measured.", new JObject
+            {
+                ["a_count"] = a.Count,
+                ["b_count"] = b.Count,
+                ["a_bounds"] = aBounds,
+                ["b_bounds"] = bBounds,
+                ["center_distance"] = aCenter.DistanceTo(bCenter),
+                ["bounds_intersect"] = BoundsIntersect(aBounds, bBounds),
+                ["a_contains_b"] = BoundsContains(aBounds, bBounds),
+                ["b_contains_a"] = BoundsContains(bBounds, aBounds),
+                ["sample_relations"] = DescribeRelations(a.Take(10), b.Take(10)),
+            });
+        }
+
+        private static CadToolExecutionResult SemanticScan(string callId, string name, JObject args)
+        {
+            var snapshot = DrawingSnapshotCollector.CaptureActive();
+            var entities = SelectMatchingEntities(snapshot, args);
+            var layers = snapshot["layers"] as JArray ?? new JArray();
+            var semantic = new JObject
+            {
+                ["wall_candidates"] = EntitySummaryArray(entities.Where(IsWallCandidate), 120),
+                ["room_candidates"] = EntitySummaryArray(entities.Where(IsRoomCandidate), 120),
+                ["stair_candidates"] = EntitySummaryArray(entities.Where(IsStairCandidate), 120),
+                ["annotation_candidates"] = EntitySummaryArray(entities.Where(IsAnnotationCandidate), 120),
+                ["door_window_candidates"] = EntitySummaryArray(entities.Where(IsDoorWindowCandidate), 120),
+                ["layers"] = new JObject
+                {
+                    ["wall"] = new JArray(layers.Where(l => NameHints(l?["name"]?.Value<string>(), "wall", "a-wall", "墙")).Select(l => l?["name"]?.Value<string>())),
+                    ["stair"] = new JArray(layers.Where(l => NameHints(l?["name"]?.Value<string>(), "stair", "楼梯", "梯")).Select(l => l?["name"]?.Value<string>())),
+                    ["text"] = new JArray(layers.Where(l => NameHints(l?["name"]?.Value<string>(), "text", "anno", "标注", "文字")).Select(l => l?["name"]?.Value<string>())),
+                },
+            };
+
+            semantic["summary"] = new JObject
+            {
+                ["wall_candidates"] = ((JArray)semantic["wall_candidates"]).Count,
+                ["room_candidates"] = ((JArray)semantic["room_candidates"]).Count,
+                ["stair_candidates"] = ((JArray)semantic["stair_candidates"]).Count,
+                ["annotation_candidates"] = ((JArray)semantic["annotation_candidates"]).Count,
+                ["door_window_candidates"] = ((JArray)semantic["door_window_candidates"]).Count,
+            };
+
+            return Success(callId, name, "DWG semantic scan completed.", semantic);
         }
 
         private static CadToolExecutionResult PreviewPlan(string callId, string name, JObject args)
@@ -636,15 +921,480 @@ namespace Vcad.Plugin.Execution
             var arr = new JArray();
             foreach (var entity in entities.Take(limit))
             {
+                arr.Add(EntitySummary(entity));
+            }
+            return arr;
+        }
+
+        private static JObject EntitySummary(JObject entity)
+        {
+            return new JObject
+            {
+                ["handle"] = entity.Value<string>("handle"),
+                ["type"] = entity.Value<string>("type"),
+                ["layer"] = entity.Value<string>("layer"),
+                ["selectors"] = entity["selectors"] ?? new JArray(),
+            };
+        }
+
+        private static JArray EntityDetailArray(IEnumerable<JObject> entities, int limit, bool includeGeometry, bool includeProperties)
+        {
+            var arr = new JArray();
+            foreach (var entity in entities.Take(limit))
+            {
+                var item = EntitySummary(entity);
+                item["bounds"] = entity["bounds"];
+                item["source"] = entity["source"];
+                if (includeGeometry) item["geometry"] = entity["geometry"];
+                if (includeProperties) item["properties"] = entity["properties"];
+                if (entity["block_reference"] != null) item["block_reference"] = entity["block_reference"];
+                arr.Add(item);
+            }
+            return arr;
+        }
+
+        private static List<JObject> ApplyAdvancedEntityFilters(JObject snapshot, JObject args)
+        {
+            var selected = SelectMatchingEntities(snapshot, args);
+            var textContains = args.Value<string>("text_contains");
+            if (!string.IsNullOrWhiteSpace(textContains))
+            {
+                selected = selected
+                    .Where(e => (e["geometry"]?["text"]?.Value<string>() ?? "").IndexOf(textContains, StringComparison.OrdinalIgnoreCase) >= 0)
+                    .ToList();
+            }
+
+            var minLength = args.Value<double?>("min_length");
+            if (minLength.HasValue)
+            {
+                selected = selected.Where(e => (e["geometry"]?["length"]?.Value<double?>() ?? SegmentLengthSum(e)) >= minLength.Value).ToList();
+            }
+
+            var maxLength = args.Value<double?>("max_length");
+            if (maxLength.HasValue)
+            {
+                selected = selected.Where(e => (e["geometry"]?["length"]?.Value<double?>() ?? SegmentLengthSum(e)) <= maxLength.Value).ToList();
+            }
+
+            var window = ReadBoundsFilter(args);
+            if (window != null)
+            {
+                selected = selected.Where(e => BoundsIntersect(e["bounds"] as JObject, window)).ToList();
+            }
+
+            if (args["near"] != null || args["x"] != null || !string.IsNullOrWhiteSpace(args.Value<string>("near_selector")))
+            {
+                var origin = ReadNearOrigin(snapshot, args);
+                var radius = args.Value<double?>("radius");
+                if (radius.HasValue)
+                {
+                    selected = selected.Where(e => DistanceToEntity(origin, e) <= radius.Value).ToList();
+                }
+            }
+
+            return selected;
+        }
+
+        private static JObject ReadBoundsFilter(JObject args)
+        {
+            var bounds = args["bounds"] as JObject ?? args["window"] as JObject ?? args["within"] as JObject;
+            if (bounds != null && bounds["min"] != null && bounds["max"] != null) return bounds;
+
+            var arr = args["bounds"] as JArray ?? args["window"] as JArray ?? args["within"] as JArray;
+            if (arr != null && arr.Count >= 4)
+            {
+                var x1 = arr[0].Value<double>();
+                var y1 = arr[1].Value<double>();
+                var x2 = arr[2].Value<double>();
+                var y2 = arr[3].Value<double>();
+                return new JObject
+                {
+                    ["min"] = new JArray(Math.Min(x1, x2), Math.Min(y1, y2), 0),
+                    ["max"] = new JArray(Math.Max(x1, x2), Math.Max(y1, y2), 0),
+                };
+            }
+
+            return null;
+        }
+
+        private static Point3d ReadNearOrigin(JObject snapshot, JObject args)
+        {
+            var selector = args.Value<string>("near_selector");
+            if (!string.IsNullOrWhiteSpace(selector))
+            {
+                var selected = SelectMatchingEntities(snapshot, new JObject
+                {
+                    ["selector"] = selector,
+                    ["include_exploded"] = args.Value<bool?>("include_exploded") ?? true,
+                });
+                var center = BoundsCenter(MeasureSelectionBounds(selected));
+                return center;
+            }
+
+            var near = args["near"] as JObject;
+            if (near != null)
+            {
+                return ReadPoint(near, "point", "x", "y");
+            }
+
+            return ReadPoint(args, "point", "x", "y");
+        }
+
+        private static Point3d EntityCenter(JObject entity)
+        {
+            return BoundsCenter(entity["bounds"] as JObject);
+        }
+
+        private static Point3d BoundsCenter(JObject bounds)
+        {
+            var center = bounds?["center"] as JArray;
+            if (center != null && center.Count >= 2)
+            {
+                return new Point3d(center[0].Value<double>(), center[1].Value<double>(), center.Count > 2 ? center[2].Value<double>() : 0);
+            }
+
+            var min = bounds?["min"] as JArray;
+            var max = bounds?["max"] as JArray;
+            if (min == null || max == null || min.Count < 2 || max.Count < 2)
+            {
+                throw new InvalidOperationException("Selection has no measurable bounds.");
+            }
+
+            return new Point3d(
+                (min[0].Value<double>() + max[0].Value<double>()) / 2,
+                (min[1].Value<double>() + max[1].Value<double>()) / 2,
+                ((min.Count > 2 ? min[2].Value<double>() : 0) + (max.Count > 2 ? max[2].Value<double>() : 0)) / 2);
+        }
+
+        private static double DistanceToEntity(Point3d origin, JObject entity)
+        {
+            try
+            {
+                return origin.DistanceTo(EntityCenter(entity));
+            }
+            catch
+            {
+                return double.MaxValue;
+            }
+        }
+
+        private static bool BoundsIntersect(JObject a, JObject b)
+        {
+            if (!TryReadBounds(a, out var amin, out var amax) || !TryReadBounds(b, out var bmin, out var bmax)) return false;
+            return amin.X <= bmax.X && amax.X >= bmin.X &&
+                   amin.Y <= bmax.Y && amax.Y >= bmin.Y &&
+                   amin.Z <= bmax.Z && amax.Z >= bmin.Z;
+        }
+
+        private static bool BoundsContains(JObject outer, JObject inner)
+        {
+            if (!TryReadBounds(outer, out var omin, out var omax) || !TryReadBounds(inner, out var imin, out var imax)) return false;
+            return omin.X <= imin.X && omin.Y <= imin.Y && omin.Z <= imin.Z &&
+                   omax.X >= imax.X && omax.Y >= imax.Y && omax.Z >= imax.Z;
+        }
+
+        private static bool TryReadBounds(JObject bounds, out Point3d min, out Point3d max)
+        {
+            min = Point3d.Origin;
+            max = Point3d.Origin;
+            var minArr = bounds?["min"] as JArray;
+            var maxArr = bounds?["max"] as JArray;
+            if (minArr == null || maxArr == null || minArr.Count < 2 || maxArr.Count < 2) return false;
+            min = new Point3d(minArr[0].Value<double>(), minArr[1].Value<double>(), minArr.Count > 2 ? minArr[2].Value<double>() : 0);
+            max = new Point3d(maxArr[0].Value<double>(), maxArr[1].Value<double>(), maxArr.Count > 2 ? maxArr[2].Value<double>() : 0);
+            return true;
+        }
+
+        private static JArray TextSample(IEnumerable<JObject> entities, int limit)
+        {
+            var arr = new JArray();
+            foreach (var entity in entities.Take(limit))
+            {
+                var text = entity["geometry"]?["text"]?.Value<string>();
+                if (string.IsNullOrWhiteSpace(text)) continue;
                 arr.Add(new JObject
                 {
                     ["handle"] = entity.Value<string>("handle"),
-                    ["type"] = entity.Value<string>("type"),
                     ["layer"] = entity.Value<string>("layer"),
-                    ["selectors"] = entity["selectors"] ?? new JArray(),
+                    ["text"] = text.Length > 300 ? text.Substring(0, 300) : text,
                 });
             }
             return arr;
+        }
+
+        private static bool IsClosedEntity(JObject entity)
+        {
+            return entity?["geometry"]?["closed"]?.Value<bool>() == true;
+        }
+
+        private static double SegmentLengthSum(JObject entity)
+        {
+            return ExtractSegments(new[] { entity }).Sum(s => s.Start.GetDistanceTo(s.End));
+        }
+
+        private sealed class SegmentInfo
+        {
+            public string Handle { get; set; }
+            public string Layer { get; set; }
+            public string Type { get; set; }
+            public Point2d Start { get; set; }
+            public Point2d End { get; set; }
+
+            public JObject ToJson()
+            {
+                return new JObject
+                {
+                    ["handle"] = Handle,
+                    ["layer"] = Layer,
+                    ["type"] = Type,
+                    ["start"] = new JArray(Start.X, Start.Y),
+                    ["end"] = new JArray(End.X, End.Y),
+                };
+            }
+        }
+
+        private static IEnumerable<SegmentInfo> ExtractSegments(IEnumerable<JObject> entities)
+        {
+            foreach (var entity in entities)
+            {
+                var geometry = entity["geometry"] as JObject;
+                if (geometry == null) continue;
+                var handle = entity.Value<string>("handle");
+                var layer = entity.Value<string>("layer");
+                var type = entity.Value<string>("type");
+                var start = geometry["start"] as JArray;
+                var end = geometry["end"] as JArray;
+                if (start != null && end != null && start.Count >= 2 && end.Count >= 2)
+                {
+                    yield return new SegmentInfo
+                    {
+                        Handle = handle,
+                        Layer = layer,
+                        Type = type,
+                        Start = new Point2d(start[0].Value<double>(), start[1].Value<double>()),
+                        End = new Point2d(end[0].Value<double>(), end[1].Value<double>()),
+                    };
+                }
+
+                var vertices = geometry["vertices"] as JArray;
+                if (vertices == null || vertices.Count < 2) continue;
+                for (var i = 0; i < vertices.Count - 1; i++)
+                {
+                    var a = vertices[i] as JArray;
+                    var b = vertices[i + 1] as JArray;
+                    if (a == null || b == null || a.Count < 2 || b.Count < 2) continue;
+                    yield return new SegmentInfo
+                    {
+                        Handle = handle,
+                        Layer = layer,
+                        Type = type,
+                        Start = new Point2d(a[0].Value<double>(), a[1].Value<double>()),
+                        End = new Point2d(b[0].Value<double>(), b[1].Value<double>()),
+                    };
+                }
+                if (geometry.Value<bool?>("closed") == true)
+                {
+                    var a = vertices[vertices.Count - 1] as JArray;
+                    var b = vertices[0] as JArray;
+                    if (a != null && b != null && a.Count >= 2 && b.Count >= 2)
+                    {
+                        yield return new SegmentInfo
+                        {
+                            Handle = handle,
+                            Layer = layer,
+                            Type = type,
+                            Start = new Point2d(a[0].Value<double>(), a[1].Value<double>()),
+                            End = new Point2d(b[0].Value<double>(), b[1].Value<double>()),
+                        };
+                    }
+                }
+            }
+        }
+
+        private static bool TryIntersectSegments(Point2d a, Point2d b, Point2d c, Point2d d, out Point2d point)
+        {
+            point = Point2d.Origin;
+            var r = b - a;
+            var s = d - c;
+            var denom = Cross(r, s);
+            if (Math.Abs(denom) < 1e-9) return false;
+            var u = Cross(c - a, r) / denom;
+            var t = Cross(c - a, s) / denom;
+            if (t < -1e-9 || t > 1 + 1e-9 || u < -1e-9 || u > 1 + 1e-9) return false;
+            point = a + r * t;
+            return true;
+        }
+
+        private static double Cross(Vector2d a, Vector2d b)
+        {
+            return a.X * b.Y - a.Y * b.X;
+        }
+
+        private static List<JObject> BuildConnectedContours(IEnumerable<SegmentInfo> sourceSegments, double tolerance)
+        {
+            var segments = sourceSegments.Take(3000).ToList();
+            var parent = new Dictionary<int, int>();
+            for (var i = 0; i < segments.Count; i++) parent[i] = i;
+
+            for (var i = 0; i < segments.Count; i++)
+            {
+                for (var j = i + 1; j < segments.Count; j++)
+                {
+                    if (PointsClose(segments[i].Start, segments[j].Start, tolerance) ||
+                        PointsClose(segments[i].Start, segments[j].End, tolerance) ||
+                        PointsClose(segments[i].End, segments[j].Start, tolerance) ||
+                        PointsClose(segments[i].End, segments[j].End, tolerance))
+                    {
+                        Union(parent, i, j);
+                    }
+                }
+            }
+
+            var groups = segments.Select((s, i) => new { Segment = s, Index = i })
+                .GroupBy(x => Find(parent, x.Index))
+                .ToList();
+            var contours = new List<JObject>();
+            foreach (var group in groups)
+            {
+                var groupSegments = group.Select(x => x.Segment).ToList();
+                var degrees = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                var handles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var acc = new BoundsAccumulator();
+                foreach (var segment in groupSegments)
+                {
+                    IncrementDegree(degrees, PointKey(segment.Start, tolerance));
+                    IncrementDegree(degrees, PointKey(segment.End, tolerance));
+                    handles.Add(segment.Handle);
+                    acc.Add(new JObject
+                    {
+                        ["min"] = new JArray(Math.Min(segment.Start.X, segment.End.X), Math.Min(segment.Start.Y, segment.End.Y), 0),
+                        ["max"] = new JArray(Math.Max(segment.Start.X, segment.End.X), Math.Max(segment.Start.Y, segment.End.Y), 0),
+                    });
+                }
+
+                contours.Add(new JObject
+                {
+                    ["segment_count"] = groupSegments.Count,
+                    ["entity_count"] = handles.Count,
+                    ["handles"] = new JArray(handles.Take(100)),
+                    ["closed"] = groupSegments.Count >= 3 && degrees.Values.All(v => v % 2 == 0),
+                    ["bounds"] = acc.ToJson(),
+                });
+            }
+
+            return contours.OrderByDescending(c => c.Value<int>("segment_count")).ToList();
+        }
+
+        private static bool PointsClose(Point2d a, Point2d b, double tolerance)
+        {
+            return a.GetDistanceTo(b) <= tolerance;
+        }
+
+        private static string PointKey(Point2d p, double tolerance)
+        {
+            var scale = Math.Max(tolerance, 1e-9);
+            return Math.Round(p.X / scale).ToString(CultureInfo.InvariantCulture) + "," +
+                   Math.Round(p.Y / scale).ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static int Find(Dictionary<int, int> parent, int x)
+        {
+            if (parent[x] == x) return x;
+            parent[x] = Find(parent, parent[x]);
+            return parent[x];
+        }
+
+        private static void Union(Dictionary<int, int> parent, int a, int b)
+        {
+            var pa = Find(parent, a);
+            var pb = Find(parent, b);
+            if (pa != pb) parent[pb] = pa;
+        }
+
+        private static void IncrementDegree(Dictionary<string, int> map, string key)
+        {
+            map[key] = map.ContainsKey(key) ? map[key] + 1 : 1;
+        }
+
+        private static JArray DescribeRelations(JObject entity, IEnumerable<JObject> others)
+        {
+            return DescribeRelations(new[] { entity }, others);
+        }
+
+        private static JArray DescribeRelations(IEnumerable<JObject> aEntities, IEnumerable<JObject> bEntities)
+        {
+            var arr = new JArray();
+            foreach (var a in aEntities)
+            {
+                foreach (var b in bEntities)
+                {
+                    if (string.Equals(a.Value<string>("handle"), b.Value<string>("handle"), StringComparison.OrdinalIgnoreCase)) continue;
+                    var relation = new JObject
+                    {
+                        ["a"] = a.Value<string>("handle"),
+                        ["b"] = b.Value<string>("handle"),
+                        ["bounds_intersect"] = BoundsIntersect(a["bounds"] as JObject, b["bounds"] as JObject),
+                        ["center_distance"] = DistanceToEntity(EntityCenter(a), b),
+                    };
+                    var aSeg = ExtractSegments(new[] { a }).FirstOrDefault();
+                    var bSeg = ExtractSegments(new[] { b }).FirstOrDefault();
+                    if (aSeg != null && bSeg != null)
+                    {
+                        var av = aSeg.End - aSeg.Start;
+                        var bv = bSeg.End - bSeg.Start;
+                        var dot = Math.Abs(av.DotProduct(bv));
+                        var cross = Math.Abs(Cross(av, bv));
+                        relation["parallel"] = cross <= 1e-6;
+                        relation["perpendicular"] = dot <= 1e-6;
+                    }
+                    arr.Add(relation);
+                    if (arr.Count >= 80) return arr;
+                }
+            }
+            return arr;
+        }
+
+        private static bool IsWallCandidate(JObject entity)
+        {
+            var layer = entity.Value<string>("layer");
+            if (NameHints(layer, "wall", "a-wall", "墙")) return true;
+            return TypeMatches(entity, "Line") && SegmentLengthSum(entity) > 1000;
+        }
+
+        private static bool IsRoomCandidate(JObject entity)
+        {
+            if (!IsClosedEntity(entity)) return false;
+            var bounds = entity["bounds"] as JObject;
+            if (!TryReadBounds(bounds, out var min, out var max)) return false;
+            return (max.X - min.X) > 1000 && (max.Y - min.Y) > 1000;
+        }
+
+        private static bool IsStairCandidate(JObject entity)
+        {
+            return NameHints(entity.Value<string>("layer"), "stair", "楼梯", "梯") ||
+                   NameHints(entity["block_reference"]?["name"]?.Value<string>(), "stair", "楼梯", "梯");
+        }
+
+        private static bool IsAnnotationCandidate(JObject entity)
+        {
+            return !string.IsNullOrWhiteSpace(entity["geometry"]?["text"]?.Value<string>()) ||
+                   NameHints(entity.Value<string>("layer"), "text", "anno", "note", "标注", "文字");
+        }
+
+        private static bool IsDoorWindowCandidate(JObject entity)
+        {
+            return NameHints(entity.Value<string>("layer"), "door", "window", "门", "窗") ||
+                   NameHints(entity["block_reference"]?["name"]?.Value<string>(), "door", "window", "门", "窗");
+        }
+
+        private static bool NameHints(string value, params string[] hints)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return false;
+            foreach (var hint in hints)
+            {
+                if (value.IndexOf(hint, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            }
+            return false;
         }
 
         private static JObject MeasureSelectionBounds(IEnumerable<JObject> entities)
@@ -848,6 +1598,27 @@ namespace Vcad.Plugin.Execution
             return data;
         }
 
+        private static JObject DrawArc(Database db, Transaction tr, JObject args)
+        {
+            var layer = OptionalString(args, "layer", "0");
+            ValidateLayerName(layer);
+            var center = ReadPoint(args, "center", "x", "y");
+            var radius = RequiredDouble(args, "radius");
+            var startAngle = OptionalDouble(args, "start_angle", 0);
+            var endAngle = OptionalDouble(args, "end_angle", 90);
+            ValidatePositiveDimension(radius, "radius");
+            EnsureLayer(db, tr, layer);
+
+            var arc = new Arc(center, radius, startAngle * Math.PI / 180.0, endAngle * Math.PI / 180.0) { Layer = layer };
+            ApplyEntityColor(arc, args);
+            AppendToModelSpace(db, tr, arc);
+            var data = EntityResult("Arc", arc, layer);
+            data["radius"] = radius;
+            data["start_angle"] = startAngle;
+            data["end_angle"] = endAngle;
+            return data;
+        }
+
         private static JObject DrawRectangle(Database db, Transaction tr, JObject args)
         {
             var layer = OptionalString(args, "layer", "0");
@@ -887,6 +1658,73 @@ namespace Vcad.Plugin.Execution
             return data;
         }
 
+        private static JObject DrawRoom(Database db, Transaction tr, JObject args)
+        {
+            var layer = OptionalString(args, "layer", "A-WALL");
+            ValidateLayerName(layer);
+            var x = OptionalDouble(args, "x", 0);
+            var y = OptionalDouble(args, "y", 0);
+            var width = RequiredDouble(args, "width");
+            var height = RequiredDouble(args, "height");
+            var wallThickness = OptionalDouble(args, "wall_thickness", OptionalDouble(args, "thickness", 200));
+            ValidatePositiveDimension(width, "width");
+            ValidatePositiveDimension(height, "height");
+            ValidatePositiveDimension(wallThickness, "wall_thickness");
+            EnsureLayer(db, tr, layer);
+
+            var handles = new JArray();
+            handles.Add(AppendRectangleEntity(db, tr, args, layer, x, y, width, height).Handle.ToString());
+            if (wallThickness > 0 && width > wallThickness * 2 && height > wallThickness * 2)
+            {
+                handles.Add(AppendRectangleEntity(db, tr, args, layer, x + wallThickness, y + wallThickness, width - wallThickness * 2, height - wallThickness * 2).Handle.ToString());
+            }
+
+            return new JObject
+            {
+                ["entity_type"] = "Room",
+                ["layer"] = layer,
+                ["handles"] = handles,
+                ["width"] = width,
+                ["height"] = height,
+                ["wall_thickness"] = wallThickness,
+                ["bounds"] = new JObject
+                {
+                    ["min"] = new JArray(x, y, 0),
+                    ["max"] = new JArray(x + width, y + height, 0),
+                    ["width"] = width,
+                    ["height"] = height,
+                },
+            };
+        }
+
+        private static JObject DrawWall(Database db, Transaction tr, JObject args)
+        {
+            var layer = OptionalString(args, "layer", "A-WALL");
+            ValidateLayerName(layer);
+            var start = ReadPoint(args, "start", "x1", "y1");
+            var end = ReadPoint(args, "end", "x2", "y2");
+            var thickness = OptionalDouble(args, "thickness", 200);
+            ValidatePositiveDimension(thickness, "thickness");
+            EnsureLayer(db, tr, layer);
+
+            var direction = end - start;
+            if (direction.Length <= 1e-9) throw new InvalidOperationException("Wall start and end points must be different.");
+            var normal = direction.GetNormal().CrossProduct(Vector3d.ZAxis).GetNormal() * (thickness / 2.0);
+            var pl = new Polyline(4);
+            pl.AddVertexAt(0, new Point2d(start.X + normal.X, start.Y + normal.Y), 0, 0, 0);
+            pl.AddVertexAt(1, new Point2d(end.X + normal.X, end.Y + normal.Y), 0, 0, 0);
+            pl.AddVertexAt(2, new Point2d(end.X - normal.X, end.Y - normal.Y), 0, 0, 0);
+            pl.AddVertexAt(3, new Point2d(start.X - normal.X, start.Y - normal.Y), 0, 0, 0);
+            pl.Closed = true;
+            pl.Layer = layer;
+            ApplyEntityColor(pl, args);
+            AppendToModelSpace(db, tr, pl);
+            var data = EntityResult("Wall", pl, layer);
+            data["thickness"] = thickness;
+            data["length"] = direction.Length;
+            return data;
+        }
+
         private static JObject DrawText(Database db, Transaction tr, JObject args)
         {
             var layer = OptionalString(args, "layer", "0");
@@ -917,6 +1755,84 @@ namespace Vcad.Plugin.Execution
             AppendToModelSpace(db, tr, dbText);
             var data = EntityResult("DBText", dbText, layer);
             data["text"] = text;
+            return data;
+        }
+
+        private static JObject DrawMText(Database db, Transaction tr, JObject args)
+        {
+            var layer = OptionalString(args, "layer", "0");
+            ValidateLayerName(layer);
+            var text = RequiredString(args, "text");
+            ValidateText(text);
+            if (LooksLikeAssistantReplyText(text))
+            {
+                throw new InvalidOperationException("Text looks like an assistant reply. Replies must stay in the panel.");
+            }
+
+            var pos = ReadPoint(args, "position", "x", "y");
+            var height = OptionalDouble(args, "height", 250);
+            var width = OptionalDouble(args, "width", 0);
+            var rotationDeg = OptionalDouble(args, "rotation", 0);
+            ValidatePositiveDimension(height, "height");
+            EnsureLayer(db, tr, layer);
+
+            var mtext = new MText
+            {
+                Contents = text,
+                Location = pos,
+                TextHeight = height,
+                Rotation = rotationDeg * Math.PI / 180.0,
+                Layer = layer,
+            };
+            if (width > 0) mtext.Width = width;
+            ApplyEntityColor(mtext, args);
+            AppendToModelSpace(db, tr, mtext);
+            var data = EntityResult("MText", mtext, layer);
+            data["text"] = text;
+            data["width"] = width;
+            return data;
+        }
+
+        private static JObject DrawDimension(Database db, Transaction tr, JObject args)
+        {
+            var layer = OptionalString(args, "layer", "A-DIMS");
+            ValidateLayerName(layer);
+            var p1 = ReadPoint(args, "p1", "x1", "y1");
+            var p2 = ReadPoint(args, "p2", "x2", "y2");
+            var dimLine = args["dim_line"] != null
+                ? ReadPoint(args, "dim_line", "dim_x", "dim_y")
+                : new Point3d((p1.X + p2.X) / 2, (p1.Y + p2.Y) / 2 + 300, 0);
+            EnsureLayer(db, tr, layer);
+
+            var dim = new AlignedDimension(p1, p2, dimLine, OptionalString(args, "text", ""), db.Dimstyle) { Layer = layer };
+            ApplyEntityColor(dim, args);
+            AppendToModelSpace(db, tr, dim);
+            return EntityResult("AlignedDimension", dim, layer);
+        }
+
+        private static JObject InsertBlock(Database db, Transaction tr, JObject args)
+        {
+            var blockName = RequiredString(args, "name");
+            var layer = OptionalString(args, "layer", "0");
+            ValidateLayerName(layer);
+            var position = ReadPoint(args, "position", "x", "y");
+            var rotationDeg = OptionalDouble(args, "rotation", 0);
+            var scale = OptionalDouble(args, "scale", 1);
+            ValidatePositiveDimension(scale, "scale");
+            EnsureLayer(db, tr, layer);
+
+            var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+            if (!bt.Has(blockName)) throw new InvalidOperationException("Block not found: " + blockName);
+            var br = new BlockReference(position, bt[blockName])
+            {
+                Layer = layer,
+                Rotation = rotationDeg * Math.PI / 180.0,
+                ScaleFactors = new Scale3d(scale),
+            };
+            ApplyEntityColor(br, args);
+            AppendToModelSpace(db, tr, br);
+            var data = EntityResult("BlockReference", br, layer);
+            data["block"] = blockName;
             return data;
         }
 
@@ -988,6 +1904,166 @@ namespace Vcad.Plugin.Execution
             };
         }
 
+        private static JObject MoveEntities(Database db, Transaction tr, JObject args)
+        {
+            var selected = SelectWritableEntities(db, tr, args);
+            var dx = OptionalDouble(args, "dx", 0);
+            var dy = OptionalDouble(args, "dy", 0);
+            var dz = OptionalDouble(args, "dz", 0);
+            if (args["vector"] is JArray vector && vector.Count >= 2)
+            {
+                dx = vector[0].Value<double>();
+                dy = vector[1].Value<double>();
+                dz = vector.Count > 2 ? vector[2].Value<double>() : 0;
+            }
+            ValidateCoordinate(dx, "dx");
+            ValidateCoordinate(dy, "dy");
+            ValidateCoordinate(dz, "dz");
+            var matrix = Matrix3d.Displacement(new Vector3d(dx, dy, dz));
+            foreach (var entity in selected) entity.TransformBy(matrix);
+            return SelectionWriteResult("move", selected, new JObject { ["dx"] = dx, ["dy"] = dy, ["dz"] = dz });
+        }
+
+        private static JObject CopyEntities(Database db, Transaction tr, JObject args)
+        {
+            var selected = SelectWritableEntities(db, tr, args);
+            var dx = OptionalDouble(args, "dx", 0);
+            var dy = OptionalDouble(args, "dy", 0);
+            var dz = OptionalDouble(args, "dz", 0);
+            if (args["vector"] is JArray vector && vector.Count >= 2)
+            {
+                dx = vector[0].Value<double>();
+                dy = vector[1].Value<double>();
+                dz = vector.Count > 2 ? vector[2].Value<double>() : 0;
+            }
+            var matrix = Matrix3d.Displacement(new Vector3d(dx, dy, dz));
+            var handles = new JArray();
+            foreach (var entity in selected)
+            {
+                var clone = entity.Clone() as Entity;
+                if (clone == null) continue;
+                clone.TransformBy(matrix);
+                AppendToModelSpace(db, tr, clone);
+                handles.Add(clone.Handle.ToString());
+            }
+            return new JObject
+            {
+                ["operation"] = "copy",
+                ["source_count"] = selected.Count,
+                ["object_count"] = handles.Count,
+                ["handles"] = handles,
+                ["dx"] = dx,
+                ["dy"] = dy,
+                ["dz"] = dz,
+            };
+        }
+
+        private static JObject RotateEntities(Database db, Transaction tr, JObject args)
+        {
+            var selected = SelectWritableEntities(db, tr, args);
+            var angle = RequiredDouble(args, "angle");
+            var basePoint = args["base"] != null ? ReadPoint(args, "base", "x", "y") : ReadPoint(args, "point", "x", "y");
+            var matrix = Matrix3d.Rotation(angle * Math.PI / 180.0, Vector3d.ZAxis, basePoint);
+            foreach (var entity in selected) entity.TransformBy(matrix);
+            return SelectionWriteResult("rotate", selected, new JObject { ["angle"] = angle, ["base"] = new JArray(basePoint.X, basePoint.Y, basePoint.Z) });
+        }
+
+        private static JObject ScaleEntities(Database db, Transaction tr, JObject args)
+        {
+            var selected = SelectWritableEntities(db, tr, args);
+            var factor = RequiredDouble(args, "factor");
+            ValidatePositiveDimension(factor, "factor");
+            var basePoint = args["base"] != null ? ReadPoint(args, "base", "x", "y") : ReadPoint(args, "point", "x", "y");
+            var matrix = Matrix3d.Scaling(factor, basePoint);
+            foreach (var entity in selected) entity.TransformBy(matrix);
+            return SelectionWriteResult("scale", selected, new JObject { ["factor"] = factor, ["base"] = new JArray(basePoint.X, basePoint.Y, basePoint.Z) });
+        }
+
+        private static JObject OffsetEntities(Database db, Transaction tr, JObject args)
+        {
+            var selected = SelectWritableEntities(db, tr, args);
+            var distance = RequiredDouble(args, "distance");
+            if (Math.Abs(distance) < 1e-9) throw new InvalidOperationException("'distance' must not be zero.");
+            var handles = new JArray();
+            foreach (var entity in selected)
+            {
+                var curve = entity as Curve;
+                if (curve == null) continue;
+                var offsets = curve.GetOffsetCurves(distance);
+                foreach (DBObject obj in offsets)
+                {
+                    var offsetEntity = obj as Entity;
+                    if (offsetEntity == null)
+                    {
+                        obj.Dispose();
+                        continue;
+                    }
+                    offsetEntity.Layer = entity.Layer;
+                    AppendToModelSpace(db, tr, offsetEntity);
+                    handles.Add(offsetEntity.Handle.ToString());
+                }
+            }
+            return new JObject
+            {
+                ["operation"] = "offset",
+                ["source_count"] = selected.Count,
+                ["object_count"] = handles.Count,
+                ["handles"] = handles,
+                ["distance"] = distance,
+            };
+        }
+
+        private static JObject DeleteEntities(Database db, Transaction tr, JObject args)
+        {
+            var selected = SelectWritableEntities(db, tr, args);
+            var handles = new JArray(selected.Select(e => e.Handle.ToString()));
+            foreach (var entity in selected) entity.Erase();
+            return new JObject
+            {
+                ["operation"] = "delete",
+                ["object_count"] = selected.Count,
+                ["handles"] = handles,
+            };
+        }
+
+        private static JObject ChangeLayer(Database db, Transaction tr, JObject args)
+        {
+            var selected = SelectWritableEntities(db, tr, args);
+            var layer = RequiredString(args, "target_layer");
+            ValidateLayerName(layer);
+            EnsureLayer(db, tr, layer);
+            foreach (var entity in selected) entity.Layer = layer;
+            return SelectionWriteResult("change_layer", selected, new JObject { ["target_layer"] = layer });
+        }
+
+        private static JObject SetProperties(Database db, Transaction tr, JObject args)
+        {
+            var selected = SelectWritableEntities(db, tr, args);
+            var layer = args.Value<string>("layer");
+            if (!string.IsNullOrWhiteSpace(layer))
+            {
+                ValidateLayerName(layer);
+                EnsureLayer(db, tr, layer);
+            }
+            foreach (var entity in selected)
+            {
+                if (!string.IsNullOrWhiteSpace(layer)) entity.Layer = layer;
+                ApplyEntityColor(entity, args);
+                var linetype = args.Value<string>("linetype");
+                if (!string.IsNullOrWhiteSpace(linetype)) entity.Linetype = linetype;
+                var lineweight = args.Value<string>("lineweight");
+                if (!string.IsNullOrWhiteSpace(lineweight) && Enum.IsDefined(typeof(LineWeight), lineweight))
+                {
+                    entity.LineWeight = (LineWeight)Enum.Parse(typeof(LineWeight), lineweight);
+                }
+            }
+            return SelectionWriteResult("set_properties", selected, new JObject
+            {
+                ["layer"] = string.IsNullOrWhiteSpace(layer) ? null : layer,
+                ["linetype"] = string.IsNullOrWhiteSpace(args.Value<string>("linetype")) ? null : args.Value<string>("linetype"),
+            });
+        }
+
         private static Polyline AppendRectangleEntity(Database db, Transaction tr, JObject args, string layer, double x, double y, double width, double height)
         {
             var pl = new Polyline(4);
@@ -1008,6 +2084,89 @@ namespace Vcad.Plugin.Execution
             ApplyEntityColor(line, args);
             AppendToModelSpace(db, tr, line);
             return line;
+        }
+
+        private static List<Entity> SelectWritableEntities(Database db, Transaction tr, JObject args)
+        {
+            var selected = new List<Entity>();
+            var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+            SelectWritableEntitiesFromSpace(bt, tr, BlockTableRecord.ModelSpace, args, selected);
+            SelectWritableEntitiesFromSpace(bt, tr, BlockTableRecord.PaperSpace, args, selected);
+            if (selected.Count == 0)
+            {
+                throw new InvalidOperationException("No editable top-level entities matched the selector. Block-internal exploded entities are read-only until their block reference is edited explicitly.");
+            }
+            return selected;
+        }
+
+        private static void SelectWritableEntitiesFromSpace(BlockTable bt, Transaction tr, string blockName, JObject args, List<Entity> selected)
+        {
+            if (!bt.Has(blockName)) return;
+            var btr = (BlockTableRecord)tr.GetObject(bt[blockName], OpenMode.ForRead);
+            foreach (ObjectId id in btr)
+            {
+                var entity = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                if (entity == null) continue;
+                if (!WritableEntityMatches(entity, args)) continue;
+                entity.UpgradeOpen();
+                selected.Add(entity);
+            }
+        }
+
+        private static bool WritableEntityMatches(Entity entity, JObject args)
+        {
+            var layer = args.Value<string>("layer");
+            if (!string.IsNullOrWhiteSpace(layer) &&
+                !string.Equals(entity.Layer, layer, StringComparison.OrdinalIgnoreCase)) return false;
+
+            var type = args.Value<string>("type");
+            if (!string.IsNullOrWhiteSpace(type) &&
+                !string.Equals(entity.GetType().Name, type, StringComparison.OrdinalIgnoreCase)) return false;
+
+            var handle = args.Value<string>("handle");
+            if (!string.IsNullOrWhiteSpace(handle) &&
+                !string.Equals(entity.Handle.ToString(), handle, StringComparison.OrdinalIgnoreCase)) return false;
+
+            var selectors = ReadSelectors(args);
+            if (selectors.Count > 0)
+            {
+                var token = new JObject
+                {
+                    ["handle"] = entity.Handle.ToString(),
+                    ["type"] = entity.GetType().Name,
+                    ["layer"] = entity.Layer,
+                    ["selectors"] = new JArray("handle:" + entity.Handle, "type:" + entity.GetType().Name, "layer:" + entity.Layer),
+                };
+                if (!selectors.Any(selector => MatchesSelector(token, selector))) return false;
+            }
+
+            var textContains = args.Value<string>("text_contains");
+            if (!string.IsNullOrWhiteSpace(textContains))
+            {
+                var text = TryGetEntityText(entity);
+                if (text.IndexOf(textContains, StringComparison.OrdinalIgnoreCase) < 0) return false;
+            }
+
+            return true;
+        }
+
+        private static string TryGetEntityText(Entity entity)
+        {
+            var text = entity as DBText;
+            if (text != null) return text.TextString ?? "";
+            var mtext = entity as MText;
+            if (mtext != null) return mtext.Contents ?? "";
+            return "";
+        }
+
+        private static JObject SelectionWriteResult(string operation, IList<Entity> selected, JObject extra)
+        {
+            var data = extra ?? new JObject();
+            data["operation"] = operation;
+            data["object_count"] = selected.Count;
+            data["handles"] = new JArray(selected.Select(e => e.Handle.ToString()));
+            data["layers"] = new JArray(selected.Select(e => e.Layer).Distinct(StringComparer.OrdinalIgnoreCase));
+            return data;
         }
 
         private static LayerTableRecord EnsureLayer(Database db, Transaction tr, string name)
@@ -1319,6 +2478,18 @@ namespace Vcad.Plugin.Execution
                 if (lower.Contains(fragment.ToLowerInvariant())) return true;
             }
             return false;
+        }
+
+        private static CadToolExecutionResult Success(string callId, string name, string message, JObject data)
+        {
+            return new CadToolExecutionResult
+            {
+                CallId = callId,
+                ToolName = name,
+                Success = true,
+                Message = message,
+                Data = data ?? new JObject(),
+            };
         }
 
         private static CadToolExecutionResult Fail(string callId, string name, string code, string message)

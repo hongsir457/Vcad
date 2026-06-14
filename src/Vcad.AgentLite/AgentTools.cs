@@ -19,7 +19,103 @@ public static class AgentTools
             Category = "cad_context",
             Effect = "read",
             Status = "available_in_plugin",
-            Description = "Read layers, entities, block references, and expanded block internals from the active DWG.",
+            Description = "Read drawing metadata, layers, linetypes, text/dim styles, blocks, entities, geometry index, block references, and expanded block internals from the active DWG.",
+        },
+        new()
+        {
+            Name = "cad.read_layers",
+            Category = "cad_context",
+            Effect = "read",
+            Status = "available_in_plugin",
+            Description = "Read full layer table with color, linetype, lineweight, plot/off/frozen/locked state.",
+        },
+        new()
+        {
+            Name = "cad.read_styles",
+            Category = "cad_context",
+            Effect = "read",
+            Status = "available_in_plugin",
+            Description = "Read linetype, text style, dimension style, and current database style settings.",
+        },
+        new()
+        {
+            Name = "cad.read_blocks",
+            Category = "cad_context",
+            Effect = "read",
+            Status = "available_in_plugin",
+            Description = "Read block definitions, block reference summaries, xref-ish metadata, and block entity counts.",
+        },
+        new()
+        {
+            Name = "cad.query_entities",
+            Category = "cad_context",
+            Effect = "read",
+            Status = "available_in_plugin",
+            Description = "Query entities by selector, layer, type, handle, text, bounds/window, near point, length, and include detailed geometry/properties.",
+        },
+        new()
+        {
+            Name = "cad.describe_entity",
+            Category = "cad_context",
+            Effect = "read",
+            Status = "available_in_plugin",
+            Description = "Describe a matched entity with geometry, properties, nearby entities, and relation hints.",
+        },
+        new()
+        {
+            Name = "cad.describe_selection",
+            Category = "cad_context",
+            Effect = "read",
+            Status = "available_in_plugin",
+            Description = "Summarize selected entities with counts, bounds, text samples, closed entities, and layer/type breakdown.",
+        },
+        new()
+        {
+            Name = "cad.find_near",
+            Category = "cad_geometry",
+            Effect = "read",
+            Status = "available_in_plugin",
+            Description = "Find entities near a point or selector with distance-ranked results.",
+        },
+        new()
+        {
+            Name = "cad.find_intersections",
+            Category = "cad_geometry",
+            Effect = "read",
+            Status = "available_in_plugin",
+            Description = "Find 2D intersections among line/polyline segments for selected entities.",
+        },
+        new()
+        {
+            Name = "cad.find_connected_contours",
+            Category = "cad_geometry",
+            Effect = "read",
+            Status = "available_in_plugin",
+            Description = "Build connected contour components from line/polyline endpoints and report closed components.",
+        },
+        new()
+        {
+            Name = "cad.find_closed_regions",
+            Category = "cad_geometry",
+            Effect = "read",
+            Status = "available_in_plugin",
+            Description = "Find closed polylines and connected closed contour regions.",
+        },
+        new()
+        {
+            Name = "cad.measure_relation",
+            Category = "cad_geometry",
+            Effect = "read",
+            Status = "available_in_plugin",
+            Description = "Measure relation between two selectors: counts, bounds, center distance, intersection, containment, parallel/perpendicular hints.",
+        },
+        new()
+        {
+            Name = "cad.semantic_scan",
+            Category = "cad_semantics",
+            Effect = "read",
+            Status = "available_in_plugin",
+            Description = "Heuristically identify wall, room, stair, annotation, door, and window candidates from geometry, layers, text, and blocks.",
         },
         new()
         {
@@ -159,11 +255,35 @@ public static class AgentTools
         },
         new()
         {
+            Name = "cad.draw_arc",
+            Category = "cad_action",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Draw an arc by center, radius, and start/end angles.",
+        },
+        new()
+        {
             Name = "cad.draw_rectangle",
             Category = "cad_action",
             Effect = "write",
             Status = "available_in_plugin",
             Description = "Draw a rectangle in the active AutoCAD drawing.",
+        },
+        new()
+        {
+            Name = "cad.draw_room",
+            Category = "cad_action",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Draw a room outline with optional inner wall thickness using closed polylines.",
+        },
+        new()
+        {
+            Name = "cad.draw_wall",
+            Category = "cad_action",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Draw a wall as a thick rectangular polyline along a start/end centerline.",
         },
         new()
         {
@@ -180,6 +300,94 @@ public static class AgentTools
             Effect = "write",
             Status = "available_in_plugin",
             Description = "Draw an explicit user-requested annotation, label, note, or title.",
+        },
+        new()
+        {
+            Name = "cad.draw_mtext",
+            Category = "cad_action",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Draw explicit multiline annotation text in the active DWG.",
+        },
+        new()
+        {
+            Name = "cad.draw_dimension",
+            Category = "cad_action",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Draw an aligned dimension between two points.",
+        },
+        new()
+        {
+            Name = "cad.insert_block",
+            Category = "cad_action",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Insert an existing block definition by name at a point with rotation and scale.",
+        },
+        new()
+        {
+            Name = "cad.move_entities",
+            Category = "cad_modify",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Move top-level editable entities selected by selector/layer/type/handle.",
+        },
+        new()
+        {
+            Name = "cad.copy_entities",
+            Category = "cad_modify",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Copy top-level editable entities selected by selector/layer/type/handle.",
+        },
+        new()
+        {
+            Name = "cad.rotate_entities",
+            Category = "cad_modify",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Rotate top-level editable entities around a base point.",
+        },
+        new()
+        {
+            Name = "cad.scale_entities",
+            Category = "cad_modify",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Scale top-level editable entities around a base point.",
+        },
+        new()
+        {
+            Name = "cad.offset_entities",
+            Category = "cad_modify",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Offset editable curve entities by a distance.",
+        },
+        new()
+        {
+            Name = "cad.delete_entities",
+            Category = "cad_modify",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Delete top-level editable entities selected by selector/layer/type/handle.",
+        },
+        new()
+        {
+            Name = "cad.change_layer",
+            Category = "cad_modify",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Move selected editable entities to a target layer.",
+        },
+        new()
+        {
+            Name = "cad.set_properties",
+            Category = "cad_modify",
+            Effect = "write",
+            Status = "available_in_plugin",
+            Description = "Set selected entity properties such as layer, color, linetype, and lineweight.",
         },
     ];
 }

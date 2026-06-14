@@ -14,6 +14,7 @@ Natural language
 -> Intent
 -> CAD brief
 -> Task plan
+-> DWG Memory / Geometry Index
 -> DWG-backed CAD-IR
 -> Safety
 -> Preview / confirmation
@@ -26,8 +27,8 @@ Natural language
 
 1. Skill/tool layering
    - AgentLite exposes a manifest grouped into CAD context, CAD preview, CAD
-     measurement, CAD validation, document context, web context, file context,
-     and CAD action tools.
+     geometry, CAD semantics, CAD validation, CAD modification, document
+     context, web context, file context, and CAD action tools.
    - The plugin owns `cad.*` tools because only AutoCAD can safely inspect and
      mutate the active drawing.
    - AgentLite owns guarded external context tools such as `web.search`,
@@ -48,7 +49,22 @@ Natural language
      measurement.
 
 4. Deterministic checks
-   - `cad.read_dwg_snapshot`: read layers, entities, blocks, expanded internals.
+   - `cad.read_dwg_snapshot`: read drawing metadata, layers, linetypes,
+     text/dim styles, blocks, entities, properties, bounds, geometry index, and
+     expanded block internals.
+   - `cad.read_layers`, `cad.read_styles`, `cad.read_blocks`: read focused DWG
+     tables without forcing the model to parse a whole snapshot.
+   - `cad.query_entities`: query by selector, layer, type, handle, text,
+     bounds/window, near point, length, and expanded block inclusion.
+   - `cad.describe_entity`, `cad.describe_selection`: inspect selected targets
+     before modifying them.
+   - `cad.find_near`, `cad.find_intersections`,
+     `cad.find_connected_contours`, `cad.find_closed_regions`: reason about
+     geometry relationships.
+   - `cad.measure_relation`: compare two selectors by bounds, distance,
+     intersection, containment, and simple orientation hints.
+   - `cad.semantic_scan`: identify likely walls, rooms, stairs, annotations,
+     doors, and windows from geometry, layers, text, and blocks.
    - `cad.count_entities`: count selected objects by layer and type.
    - `cad.measure_bounds`: measure selected aggregate bounds.
    - `cad.measure_distance`: measure point-to-point or selector-center distance.
@@ -65,14 +81,24 @@ Natural language
      summarize the result in the panel. Assistant explanations must never be
      written into the DWG.
 
-6. Progressive reference snippets
+6. Third-stage CAD tools
+   - Drawing: `cad.draw_arc`, `cad.draw_room`, `cad.draw_wall`,
+     `cad.draw_mtext`, `cad.draw_dimension`, and `cad.insert_block` supplement
+     the basic line/polyline/circle/rectangle/stair tools.
+   - Modification: `cad.move_entities`, `cad.copy_entities`,
+     `cad.rotate_entities`, `cad.scale_entities`, `cad.offset_entities`,
+     `cad.delete_entities`, `cad.change_layer`, and `cad.set_properties` act on
+     top-level editable entities selected by stable DWG selectors.
+   - The model must resolve vague references to selectors before modification.
+
+7. Progressive reference snippets
    - `AgentReferences` loads short task-specific guidance into the model prompt:
      DWG selectors, write/validation loop, attachments, web, and workspace
      files.
    - This keeps the model focused without stuffing the full architecture into
      every turn.
 
-7. Benchmark task set
+8. Benchmark task set
    - Manual and automated regression prompts live in
      [agent-benchmarks.md](agent-benchmarks.md).
    - The test suite covers the tool manifest, simple rectangle planning,
@@ -85,6 +111,10 @@ Natural language
 - Do not emit AutoLISP or script text as the main control path.
 - Use tool calls for CAD work.
 - Use selectors after observation instead of vague object references.
+- For existing drawings, query and describe the target set before modifying it.
+- Use semantic and geometry tools when the user's instruction depends on
+  relationships such as nearby, inside, connected, intersecting, wall, room,
+  stair, door, or window.
 - Ask only for missing, task-specific parameters.
 - If a tool call fails, repair the arguments and continue the same task.
 - Do not return to generic initial intent options after an execution failure.

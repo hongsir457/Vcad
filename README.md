@@ -24,8 +24,10 @@ voice or typed natural language to drive a local CAD agent.
   -> natural-language result in the panel
   ```
 
-- Reads the active DWG into memory before a turn: layers, entities, block
-  references, and exploded block internals.
+- Reads the active DWG into memory before a turn: drawing metadata, layers,
+  linetypes, text/dimension styles, block definitions, entities, properties,
+  bounds, block references, exploded block internals, and a compact geometry
+  index.
 - Supports local context attachments: text-like files, DXF/LISP/script text,
   image metadata or small inline images, PDF text extraction, and DWG metadata.
 - Supports voice input through Windows local speech recognition when available.
@@ -144,9 +146,21 @@ dotnet run --project src\Vcad.AgentLite\Vcad.AgentLite.csproj
 
 ## Tool Surface
 
-Plugin-hosted CAD tools:
+Plugin-hosted CAD context and geometry tools:
 
 - `cad.read_dwg_snapshot`
+- `cad.read_layers`
+- `cad.read_styles`
+- `cad.read_blocks`
+- `cad.query_entities`
+- `cad.describe_entity`
+- `cad.describe_selection`
+- `cad.find_near`
+- `cad.find_intersections`
+- `cad.find_connected_contours`
+- `cad.find_closed_regions`
+- `cad.measure_relation`
+- `cad.semantic_scan`
 - `cad.preview_plan`
 - `cad.count_entities`
 - `cad.measure_bounds`
@@ -154,13 +168,33 @@ Plugin-hosted CAD tools:
 - `cad.layer_diff`
 - `cad.before_after_diff`
 - `cad.validate_dwg_state`
+
+Plugin-hosted CAD draw tools:
+
 - `cad.create_layer`
 - `cad.draw_line`
 - `cad.draw_polyline`
 - `cad.draw_circle`
+- `cad.draw_arc`
 - `cad.draw_rectangle`
+- `cad.draw_room`
+- `cad.draw_wall`
 - `cad.draw_stair`
 - `cad.draw_text`
+- `cad.draw_mtext`
+- `cad.draw_dimension`
+- `cad.insert_block`
+
+Plugin-hosted CAD modify tools:
+
+- `cad.move_entities`
+- `cad.copy_entities`
+- `cad.rotate_entities`
+- `cad.scale_entities`
+- `cad.offset_entities`
+- `cad.delete_entities`
+- `cad.change_layer`
+- `cad.set_properties`
 
 AgentLite-hosted context tools:
 

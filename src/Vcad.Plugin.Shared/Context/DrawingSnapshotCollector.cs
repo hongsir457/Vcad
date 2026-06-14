@@ -19,6 +19,10 @@ namespace Vcad.Plugin.Context
         {
             var warnings = new JArray();
             var layers = new JArray();
+            var linetypes = new JArray();
+            var textStyles = new JArray();
+            var dimStyles = new JArray();
+            var blocks = new JArray();
             var entities = new JArray();
             var summary = new JObject
             {
@@ -35,6 +39,7 @@ namespace Vcad.Plugin.Context
                 ["schema"] = "cad_drawing_snapshot_v1",
                 ["captured_at"] = DateTime.UtcNow.ToString("o"),
                 ["document"] = new JObject(),
+                ["database"] = new JObject(),
                 ["limits"] = new JObject
                 {
                     ["max_entities"] = MaxEntities,
@@ -43,6 +48,10 @@ namespace Vcad.Plugin.Context
                 },
                 ["summary"] = summary,
                 ["layers"] = layers,
+                ["linetypes"] = linetypes,
+                ["text_styles"] = textStyles,
+                ["dim_styles"] = dimStyles,
+                ["blocks"] = blocks,
                 ["entities"] = entities,
                 ["warnings"] = warnings,
             };
@@ -59,6 +68,18 @@ namespace Vcad.Plugin.Context
                 ["name"] = TryGetStringProperty(doc, "Name"),
                 ["database_filename"] = TryGetStringProperty(doc.Database, "Filename"),
             };
+            snapshot["database"] = new JObject
+            {
+                ["insunits"] = TryGetStringProperty(doc.Database, "Insunits"),
+                ["measurement"] = TryGetStringProperty(doc.Database, "Measurement"),
+                ["tilemode"] = TryGetStringProperty(doc.Database, "TileMode"),
+                ["current_layer"] = TryGetSymbolNameSafe(doc.Database, doc.Database.Clayer),
+                ["current_linetype"] = TryGetSymbolNameSafe(doc.Database, doc.Database.Celtype),
+                ["text_style"] = TryGetSymbolNameSafe(doc.Database, doc.Database.Textstyle),
+                ["dim_style"] = TryGetSymbolNameSafe(doc.Database, doc.Database.Dimstyle),
+                ["ltscale"] = TryReadDoubleProperty(doc.Database, "Ltscale"),
+                ["dimscale"] = TryReadDoubleProperty(doc.Database, "Dimscale"),
+            };
 
             try
             {
@@ -66,6 +87,10 @@ namespace Vcad.Plugin.Context
                 using (var tr = doc.Database.TransactionManager.StartTransaction())
                 {
                     CaptureLayers(doc.Database, tr, layers, warnings);
+                    CaptureLinetypes(doc.Database, tr, linetypes, warnings);
+                    CaptureTextStyles(doc.Database, tr, textStyles, warnings);
+                    CaptureDimStyles(doc.Database, tr, dimStyles, warnings);
+                    CaptureBlocks(doc.Database, tr, blocks, warnings);
                     summary["layer_count"] = layers.Count;
 
                     var bt = (BlockTable)tr.GetObject(doc.Database.BlockTableId, OpenMode.ForRead);
@@ -81,6 +106,11 @@ namespace Vcad.Plugin.Context
             }
 
             summary["entity_count"] = entities.Count;
+            summary["linetype_count"] = linetypes.Count;
+            summary["text_style_count"] = textStyles.Count;
+            summary["dim_style_count"] = dimStyles.Count;
+            summary["block_definition_count"] = blocks.Count;
+            snapshot["geometry_index"] = BuildGeometryIndex(entities, layers, blocks);
             return snapshot;
         }
 
@@ -117,6 +147,10 @@ namespace Vcad.Plugin.Context
                         ["name"] = ltr.Name,
                         ["handle"] = ltr.Handle.ToString(),
                         ["color"] = DescribeColor(ltr.Color),
+                        ["linetype"] = TryGetSymbolNameSafe(db, ltr.LinetypeObjectId),
+                        ["lineweight"] = TryGetStringProperty(ltr, "LineWeight"),
+                        ["transparency"] = TryGetStringProperty(ltr, "Transparency"),
+                        ["is_plottable"] = TryGetBoolProperty(ltr, "IsPlottable"),
                         ["is_off"] = TryGetBoolProperty(ltr, "IsOff"),
                         ["is_frozen"] = TryGetBoolProperty(ltr, "IsFrozen"),
                         ["is_locked"] = TryGetBoolProperty(ltr, "IsLocked"),
@@ -126,6 +160,115 @@ namespace Vcad.Plugin.Context
             catch (System.Exception ex)
             {
                 warnings.Add("Layer scan failed: " + ex.Message);
+            }
+        }
+
+        private static void CaptureLinetypes(Database db, Transaction tr, JArray linetypes, JArray warnings)
+        {
+            try
+            {
+                var table = (LinetypeTable)tr.GetObject(db.LinetypeTableId, OpenMode.ForRead);
+                foreach (ObjectId id in EnumerateObjectIds(table))
+                {
+                    var record = tr.GetObject(id, OpenMode.ForRead) as LinetypeTableRecord;
+                    if (record == null) continue;
+                    linetypes.Add(new JObject
+                    {
+                        ["name"] = record.Name,
+                        ["handle"] = record.Handle.ToString(),
+                        ["description"] = TryGetStringProperty(record, "Comments"),
+                    });
+                }
+            }
+            catch (System.Exception ex)
+            {
+                warnings.Add("Linetype scan failed: " + ex.Message);
+            }
+        }
+
+        private static void CaptureTextStyles(Database db, Transaction tr, JArray styles, JArray warnings)
+        {
+            try
+            {
+                var table = (TextStyleTable)tr.GetObject(db.TextStyleTableId, OpenMode.ForRead);
+                foreach (ObjectId id in EnumerateObjectIds(table))
+                {
+                    var record = tr.GetObject(id, OpenMode.ForRead) as TextStyleTableRecord;
+                    if (record == null) continue;
+                    styles.Add(new JObject
+                    {
+                        ["name"] = record.Name,
+                        ["handle"] = record.Handle.ToString(),
+                        ["font"] = TryGetStringProperty(record, "FileName"),
+                        ["big_font"] = TryGetStringProperty(record, "BigFontFileName"),
+                        ["text_size"] = TryReadDoubleProperty(record, "TextSize"),
+                        ["x_scale"] = TryReadDoubleProperty(record, "XScale"),
+                        ["obliquing_angle"] = TryReadDoubleProperty(record, "ObliquingAngle"),
+                    });
+                }
+            }
+            catch (System.Exception ex)
+            {
+                warnings.Add("Text style scan failed: " + ex.Message);
+            }
+        }
+
+        private static void CaptureDimStyles(Database db, Transaction tr, JArray styles, JArray warnings)
+        {
+            try
+            {
+                var table = (DimStyleTable)tr.GetObject(db.DimStyleTableId, OpenMode.ForRead);
+                foreach (ObjectId id in EnumerateObjectIds(table))
+                {
+                    var record = tr.GetObject(id, OpenMode.ForRead) as DimStyleTableRecord;
+                    if (record == null) continue;
+                    styles.Add(new JObject
+                    {
+                        ["name"] = record.Name,
+                        ["handle"] = record.Handle.ToString(),
+                        ["dimscale"] = TryReadDoubleProperty(record, "Dimscale"),
+                        ["dimtxt"] = TryReadDoubleProperty(record, "Dimtxt"),
+                        ["dimasz"] = TryReadDoubleProperty(record, "Dimasz"),
+                        ["dimclrd"] = TryGetStringProperty(record, "Dimclrd"),
+                        ["dimclre"] = TryGetStringProperty(record, "Dimclre"),
+                        ["dimclrt"] = TryGetStringProperty(record, "Dimclrt"),
+                    });
+                }
+            }
+            catch (System.Exception ex)
+            {
+                warnings.Add("Dimension style scan failed: " + ex.Message);
+            }
+        }
+
+        private static void CaptureBlocks(Database db, Transaction tr, JArray blocks, JArray warnings)
+        {
+            try
+            {
+                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                foreach (ObjectId id in EnumerateObjectIds(bt))
+                {
+                    var btr = tr.GetObject(id, OpenMode.ForRead) as BlockTableRecord;
+                    if (btr == null) continue;
+                    var count = 0;
+                    foreach (ObjectId ignored in EnumerateObjectIds(btr)) count++;
+                    blocks.Add(new JObject
+                    {
+                        ["name"] = btr.Name,
+                        ["handle"] = btr.Handle.ToString(),
+                        ["origin"] = ToPointToken(btr.Origin),
+                        ["entity_count"] = count,
+                        ["is_layout"] = TryGetBoolProperty(btr, "IsLayout"),
+                        ["is_anonymous"] = TryGetBoolProperty(btr, "IsAnonymous"),
+                        ["is_dynamic_block"] = TryGetBoolProperty(btr, "IsDynamicBlock"),
+                        ["is_from_external_reference"] = TryGetBoolProperty(btr, "IsFromExternalReference"),
+                        ["path_name"] = TryGetStringProperty(btr, "PathName"),
+                    });
+                }
+            }
+            catch (System.Exception ex)
+            {
+                warnings.Add("Block definition scan failed: " + ex.Message);
             }
         }
 
@@ -161,6 +304,7 @@ namespace Vcad.Plugin.Context
                 ["object_id"] = entity.ObjectId.ToString(),
                 ["type"] = type,
                 ["layer"] = entity.Layer,
+                ["properties"] = ReadEntityProperties(entity),
                 ["source"] = new JObject
                 {
                     ["space"] = space,
@@ -308,13 +452,34 @@ namespace Vcad.Plugin.Context
             AddStringIfPresent(geometry, entity, "TextString", "text");
             AddStringIfPresent(geometry, entity, "Contents", "text");
             AddDoubleIfPresent(geometry, entity, "Radius", "radius");
+            AddDoubleIfPresent(geometry, entity, "Diameter", "diameter");
             AddDoubleIfPresent(geometry, entity, "Height", "height");
             AddDoubleIfPresent(geometry, entity, "TextHeight", "height");
+            AddDoubleIfPresent(geometry, entity, "Length", "length");
+            AddDoubleIfPresent(geometry, entity, "Area", "area");
             AddDoubleIfPresent(geometry, entity, "Rotation", "rotation");
             AddDoubleIfPresent(geometry, entity, "StartAngle", "start_angle");
             AddDoubleIfPresent(geometry, entity, "EndAngle", "end_angle");
             AddPolylineVerticesIfPresent(geometry, entity);
             return geometry;
+        }
+
+        private static JObject ReadEntityProperties(Entity entity)
+        {
+            var obj = new JObject
+            {
+                ["color"] = DescribeColor(entity.Color),
+                ["linetype"] = TryGetStringProperty(entity, "Linetype"),
+                ["lineweight"] = TryGetStringProperty(entity, "LineWeight"),
+                ["linetype_scale"] = TryReadDoubleProperty(entity, "LinetypeScale"),
+                ["transparency"] = TryGetStringProperty(entity, "Transparency"),
+                ["visible"] = TryGetBoolProperty(entity, "Visible"),
+                ["material"] = TryGetStringProperty(entity, "Material"),
+            };
+
+            AddStringIfPresent(obj, entity, "TextStyleName", "text_style");
+            AddStringIfPresent(obj, entity, "DimensionStyleName", "dimension_style");
+            return obj;
         }
 
         private static void AddPolylineVerticesIfPresent(JObject geometry, object entity)
@@ -445,7 +610,157 @@ namespace Vcad.Plugin.Context
             var obj = new JObject();
             AddStringIfPresent(obj, color, "ColorMethod", "method");
             AddDoubleIfPresent(obj, color, "ColorIndex", "index");
+            AddStringIfPresent(obj, color, "ColorName", "name");
             return obj;
+        }
+
+        private static string TryGetSymbolNameSafe(Database db, ObjectId id)
+        {
+            try
+            {
+                if (id.IsNull) return null;
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    var record = tr.GetObject(id, OpenMode.ForRead) as SymbolTableRecord;
+                    var name = record == null ? null : record.Name;
+                    tr.Commit();
+                    return name;
+                }
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static JObject BuildGeometryIndex(JArray entities, JArray layers, JArray blocks)
+        {
+            var byLayer = new JObject();
+            var byType = new JObject();
+            var textEntities = new JArray();
+            var closedEntities = new JArray();
+            var blockRefs = new JArray();
+            var acc = new GeometryBounds();
+
+            foreach (var token in entities)
+            {
+                var entity = token as JObject;
+                if (entity == null) continue;
+                Increment(byLayer, entity.Value<string>("layer"));
+                Increment(byType, entity.Value<string>("type"));
+                acc.Add(entity["bounds"] as JObject);
+
+                var text = entity["geometry"]?["text"]?.Value<string>();
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    textEntities.Add(new JObject
+                    {
+                        ["handle"] = entity.Value<string>("handle"),
+                        ["layer"] = entity.Value<string>("layer"),
+                        ["type"] = entity.Value<string>("type"),
+                        ["text"] = text.Length > 200 ? text.Substring(0, 200) : text,
+                        ["bounds"] = entity["bounds"],
+                    });
+                }
+
+                if (entity["geometry"]?["closed"]?.Value<bool>() == true)
+                {
+                    closedEntities.Add(new JObject
+                    {
+                        ["handle"] = entity.Value<string>("handle"),
+                        ["layer"] = entity.Value<string>("layer"),
+                        ["type"] = entity.Value<string>("type"),
+                        ["vertex_count"] = entity["geometry"]?["vertex_count"],
+                        ["bounds"] = entity["bounds"],
+                    });
+                }
+
+                if (entity["block_reference"] != null)
+                {
+                    blockRefs.Add(new JObject
+                    {
+                        ["handle"] = entity.Value<string>("handle"),
+                        ["layer"] = entity.Value<string>("layer"),
+                        ["name"] = entity["block_reference"]?["name"],
+                        ["position"] = entity["block_reference"]?["position"],
+                    });
+                }
+            }
+
+            return new JObject
+            {
+                ["drawing_bounds"] = acc.ToJson(),
+                ["by_layer"] = byLayer,
+                ["by_type"] = byType,
+                ["text_entities"] = textEntities,
+                ["closed_entities"] = closedEntities,
+                ["block_references"] = blockRefs,
+                ["layer_count"] = layers.Count,
+                ["block_definition_count"] = blocks.Count,
+            };
+        }
+
+        private static void Increment(JObject obj, string key)
+        {
+            if (string.IsNullOrWhiteSpace(key)) key = "(none)";
+            obj[key] = (obj.Value<int?>(key) ?? 0) + 1;
+        }
+
+        private sealed class GeometryBounds
+        {
+            private double _minX;
+            private double _minY;
+            private double _minZ;
+            private double _maxX;
+            private double _maxY;
+            private double _maxZ;
+
+            public bool HasValue { get; private set; }
+
+            public void Add(JObject bounds)
+            {
+                var min = bounds?["min"] as JArray;
+                var max = bounds?["max"] as JArray;
+                if (min == null || max == null || min.Count < 2 || max.Count < 2) return;
+                var minX = min[0].Value<double>();
+                var minY = min[1].Value<double>();
+                var minZ = min.Count > 2 ? min[2].Value<double>() : 0;
+                var maxX = max[0].Value<double>();
+                var maxY = max[1].Value<double>();
+                var maxZ = max.Count > 2 ? max[2].Value<double>() : 0;
+                if (!HasValue)
+                {
+                    _minX = minX;
+                    _minY = minY;
+                    _minZ = minZ;
+                    _maxX = maxX;
+                    _maxY = maxY;
+                    _maxZ = maxZ;
+                    HasValue = true;
+                    return;
+                }
+
+                _minX = Math.Min(_minX, minX);
+                _minY = Math.Min(_minY, minY);
+                _minZ = Math.Min(_minZ, minZ);
+                _maxX = Math.Max(_maxX, maxX);
+                _maxY = Math.Max(_maxY, maxY);
+                _maxZ = Math.Max(_maxZ, maxZ);
+            }
+
+            public JObject ToJson()
+            {
+                if (!HasValue) return null;
+                return new JObject
+                {
+                    ["min"] = new JArray(_minX, _minY, _minZ),
+                    ["max"] = new JArray(_maxX, _maxY, _maxZ),
+                    ["width"] = _maxX - _minX,
+                    ["height"] = _maxY - _minY,
+                    ["depth"] = _maxZ - _minZ,
+                    ["center"] = new JArray((_minX + _maxX) / 2, (_minY + _maxY) / 2, (_minZ + _maxZ) / 2),
+                };
+            }
         }
     }
 }

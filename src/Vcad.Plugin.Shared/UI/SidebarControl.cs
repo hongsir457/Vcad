@@ -2607,6 +2607,18 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                     AddAssistantCard("CAD 助手", turnResult.AssistantMessage);
                 }
 
+                if (turnResult.NeedsClarification &&
+                    TryBuildLocalFallbackToolCalls(originalUserText, currentMessage, turnResult, out var clarificationFallbackCalls))
+                {
+                    turnResult.ToolCalls = clarificationFallbackCalls;
+                    turnResult.RequiresUserInput = false;
+                    turnResult.Clarification = null;
+                    AddCollapsibleAssistantCard(
+                        "本地 CAD 工具兜底",
+                        "模型要求补充信息，但这是可用默认参数执行的常见 CAD 构件任务，已转换为 " + clarificationFallbackCalls.Count + " 个工具调用。",
+                        clarificationFallbackCalls.ToString(Formatting.Indented));
+                }
+
                 if (turnResult.NeedsClarification)
                 {
                     if (LooksLikeCadWriteRequest(originalUserText) && IsVagueClarification(turnResult.Clarification, turnResult.AssistantMessage))
@@ -2886,6 +2898,42 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                 case "read_snapshot":
                 case "read_dwg_snapshot":
                     return "cad.read_dwg_snapshot";
+                case "read_layers":
+                case "layers":
+                    return "cad.read_layers";
+                case "read_styles":
+                case "styles":
+                    return "cad.read_styles";
+                case "read_blocks":
+                case "blocks":
+                    return "cad.read_blocks";
+                case "query":
+                case "query_entities":
+                case "select":
+                case "select_entities":
+                    return "cad.query_entities";
+                case "describe_entity":
+                    return "cad.describe_entity";
+                case "describe_selection":
+                    return "cad.describe_selection";
+                case "find_near":
+                case "near":
+                    return "cad.find_near";
+                case "find_intersections":
+                case "intersections":
+                    return "cad.find_intersections";
+                case "find_connected_contours":
+                case "connected_contours":
+                    return "cad.find_connected_contours";
+                case "find_closed_regions":
+                case "closed_regions":
+                    return "cad.find_closed_regions";
+                case "measure_relation":
+                case "relation":
+                    return "cad.measure_relation";
+                case "semantic_scan":
+                case "scan_semantics":
+                    return "cad.semantic_scan";
                 case "count":
                 case "count_entities":
                     return "cad.count_entities";
@@ -2913,9 +2961,18 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                 case "draw_circle":
                 case "circle":
                     return "cad.draw_circle";
+                case "draw_arc":
+                case "arc":
+                    return "cad.draw_arc";
                 case "draw_rectangle":
                 case "rectangle":
                     return "cad.draw_rectangle";
+                case "draw_room":
+                case "room":
+                    return "cad.draw_room";
+                case "draw_wall":
+                case "wall":
+                    return "cad.draw_wall";
                 case "draw_stair":
                 case "stair":
                 case "stairs":
@@ -2930,6 +2987,38 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                 case "annotation":
                 case "label":
                     return "cad.draw_text";
+                case "draw_mtext":
+                case "mtext":
+                    return "cad.draw_mtext";
+                case "draw_dimension":
+                case "dimension":
+                    return "cad.draw_dimension";
+                case "insert_block":
+                case "block_insert":
+                    return "cad.insert_block";
+                case "move":
+                case "move_entities":
+                    return "cad.move_entities";
+                case "copy":
+                case "copy_entities":
+                    return "cad.copy_entities";
+                case "rotate":
+                case "rotate_entities":
+                    return "cad.rotate_entities";
+                case "scale":
+                case "scale_entities":
+                    return "cad.scale_entities";
+                case "offset":
+                case "offset_entities":
+                    return "cad.offset_entities";
+                case "delete":
+                case "delete_entities":
+                    return "cad.delete_entities";
+                case "change_layer":
+                    return "cad.change_layer";
+                case "set_properties":
+                case "properties":
+                    return "cad.set_properties";
                 default:
                     return "";
             }
@@ -2950,7 +3039,7 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
         {
             calls = new JArray();
             var text = (originalUserText ?? "") + "\n" + (currentMessage ?? "") + "\n" + (result?.AssistantMessage ?? "");
-            if (!LooksLikeStairRequest(text)) return false;
+            if (!LooksLikeStairDrawRequest(text)) return false;
 
             var args = new JObject
             {
@@ -2978,6 +3067,18 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
             if (string.IsNullOrWhiteSpace(text)) return false;
             var s = text.ToLowerInvariant();
             return s.Contains("楼梯") || s.Contains("stair");
+        }
+
+        private static bool LooksLikeStairDrawRequest(string text)
+        {
+            if (!LooksLikeStairRequest(text)) return false;
+            var s = text.ToLowerInvariant();
+            return s.Contains("画") ||
+                   s.Contains("绘制") ||
+                   s.Contains("生成") ||
+                   s.Contains("创建") ||
+                   s.Contains("draw") ||
+                   s.Contains("create");
         }
 
         private static bool LooksLikeCadWriteRequest(string text)

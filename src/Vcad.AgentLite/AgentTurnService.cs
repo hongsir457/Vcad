@@ -82,6 +82,7 @@ public sealed class AgentTurnService
         }
 
         var response = ParseAgentResponse(content, req);
+        ApplyDeterministicToolFallbacks(req, response);
         response.usage = ExtractOpenAiUsage(parsed, options, parsed?["model"]?.GetValue<string>() ?? model, req, content);
         return response;
     }
@@ -183,6 +184,7 @@ public sealed class AgentTurnService
         }
 
         var response = ParseAgentResponse(raw, req);
+        ApplyDeterministicToolFallbacks(req, response);
         if (onDelta != null && visibleChars == 0 && !string.IsNullOrWhiteSpace(response.assistant_message))
         {
             await onDelta(response.assistant_message);
@@ -232,6 +234,7 @@ public sealed class AgentTurnService
         }
 
         var response = ParseAgentResponse(content, req);
+        ApplyDeterministicToolFallbacks(req, response);
         response.usage = ExtractAnthropicUsage(parsed, options, parsed?["model"]?.GetValue<string>() ?? model, req, content);
         return response;
     }
@@ -427,6 +430,100 @@ public sealed class AgentTurnService
         return response;
     }
 
+    private static void ApplyDeterministicToolFallbacks(AgentTurnRequest req, AgentTurnResponse response)
+    {
+        if (response.tool_calls.Count > 0) return;
+
+        var text = req.message ?? "";
+        if (!LooksLikeDrawStairRequest(text)) return;
+
+        response.requires_user_input = false;
+        response.done = false;
+        response.clarification = null;
+        response.assistant_message =
+            "我将按常规住宅默认参数绘制一部U形双跑楼梯：宽1100mm、踏步深280mm、踢步高165mm、共18级、中间平台深1000mm，放在图层 A-STAIR。执行后我会检查图层和对象数量，你可以再要求调整宽度、层高、踏步数、平台尺寸或位置。";
+
+        response.cad_brief ??= new JsonObject
+        {
+            ["task_type"] = "new_geometry",
+            ["objective"] = "按默认住宅参数在当前 DWG 中绘制楼梯",
+            ["primary_artifact"] = "active AutoCAD DWG",
+            ["units"] = "mm",
+            ["assumptions"] = new JsonArray("用户未给出尺寸时使用常规住宅默认参数", "新建/使用 A-STAIR 图层", "在原点附近绘制"),
+            ["validation_targets"] = new JsonArray("A-STAIR 图层存在", "楼梯线段已写入 DWG", "对象包围盒非空"),
+        };
+        response.task_plan ??= new JsonObject
+        {
+            ["steps"] = new JsonArray("observe DWG", "prepare CAD-IR", "execute via cad.draw_stair", "validate result"),
+            ["next_step"] = "execute cad.draw_stair",
+        };
+        response.cad_ir ??= new JsonObject
+        {
+            ["operations"] = new JsonArray(new JsonObject
+            {
+                ["action"] = "draw_stair",
+                ["target_layer"] = "A-STAIR",
+                ["parameters"] = new JsonObject
+                {
+                    ["x"] = 0,
+                    ["y"] = 0,
+                    ["width"] = 1100,
+                    ["tread_depth"] = 280,
+                    ["riser_height"] = 165,
+                    ["platform_depth"] = 1000,
+                    ["total_risers"] = 18,
+                },
+            }),
+            ["expected_effect"] = new JsonObject
+            {
+                ["layers"] = new JsonArray("A-STAIR"),
+                ["object_types"] = new JsonArray("Line", "Polyline"),
+            },
+        };
+        response.safety ??= new JsonObject
+        {
+            ["risk_level"] = "low",
+            ["writes_dwg"] = true,
+            ["destructive"] = false,
+            ["requires_confirmation"] = false,
+            ["reason"] = "只新增几何对象，不删除或修改既有图元。",
+        };
+        response.validation ??= new JsonObject
+        {
+            ["planned_checks"] = new JsonArray("cad.read_dwg_snapshot", "cad.measure_bounds", "cad.validate_dwg_state"),
+            ["success_criteria"] = new JsonArray("A-STAIR 图层存在", "楼梯对象数量大于 0"),
+        };
+
+        response.trace.Add(new AgentTraceEvent
+        {
+            title = "确定性工具兜底",
+            summary = "模型未给出工具调用，但用户意图是明确的绘制楼梯请求；已补充 cad.draw_stair。",
+        });
+        response.tool_calls.Add(new AgentToolCall
+        {
+            id = "call-" + Guid.NewGuid().ToString("N"),
+            name = "cad.draw_stair",
+            args = new JsonObject
+            {
+                ["layer"] = "A-STAIR",
+                ["x"] = 0,
+                ["y"] = 0,
+                ["width"] = 1100,
+                ["tread_depth"] = 280,
+                ["riser_height"] = 165,
+                ["platform_depth"] = 1000,
+                ["total_risers"] = 18,
+                ["color"] = 3,
+            },
+        });
+    }
+
+    private static bool LooksLikeDrawStairRequest(string text)
+    {
+        if (!ContainsAny(text, "楼梯", "梯", "stair", "stairs")) return false;
+        return ContainsAny(text, "画", "绘制", "生成", "创建", "新建", "draw", "create", "generate");
+    }
+
     private static string AgentSystemPrompt() => """
 You are VoiceCAD, an AutoCAD agent.
 You run as a tool-calling CAD agent inside a docked AutoCAD panel.
@@ -470,6 +567,18 @@ Return JSON only:
 
 Available CAD tools:
 - cad.read_dwg_snapshot { limit }
+- cad.read_layers {}
+- cad.read_styles {}
+- cad.read_blocks {}
+- cad.query_entities { selector, selectors, layer, type, handle, text_contains, bounds, window, near, x, y, radius, min_length, max_length, include_exploded, include_geometry, include_properties, limit }
+- cad.describe_entity { selector, layer, type, handle, near_radius, include_exploded }
+- cad.describe_selection { selector, selectors, layer, type, handle, text_contains, bounds, include_exploded }
+- cad.find_near { x, y, point, near_selector, radius, selector, layer, type, include_exploded, limit }
+- cad.find_intersections { selector, layer, type, include_exploded, limit }
+- cad.find_connected_contours { selector, layer, type, tolerance, include_exploded, limit }
+- cad.find_closed_regions { selector, layer, type, tolerance, include_exploded }
+- cad.measure_relation { a, b, a_selector, b_selector, include_exploded }
+- cad.semantic_scan { selector, layer, type, include_exploded }
 - cad.preview_plan { operations, selectors, expected_effect, writes_dwg }
 - cad.count_entities { selector, selectors, layer, type, handle, include_exploded }
 - cad.measure_bounds { selector, selectors, layer, type, handle, include_exploded }
@@ -481,9 +590,23 @@ Available CAD tools:
 - cad.draw_line { layer, color, x1, y1, x2, y2 }
 - cad.draw_polyline { layer, color, points:[[x,y],...], closed, constant_width }
 - cad.draw_circle { layer, color, x, y, radius }
+- cad.draw_arc { layer, color, x, y, radius, start_angle, end_angle }
 - cad.draw_rectangle { layer, color, x, y, width, height }
+- cad.draw_room { layer, color, x, y, width, height, wall_thickness }
+- cad.draw_wall { layer, color, x1, y1, x2, y2, thickness }
 - cad.draw_stair { layer, color, x, y, width, tread_depth, riser_height, floor_height, platform_depth, total_risers }
 - cad.draw_text { layer, color, x, y, text, height }
+- cad.draw_mtext { layer, color, x, y, text, height, width, rotation }
+- cad.draw_dimension { layer, color, x1, y1, x2, y2, dim_line:[x,y], text }
+- cad.insert_block { name, layer, color, x, y, rotation, scale }
+- cad.move_entities { selector, selectors, layer, type, handle, dx, dy, dz }
+- cad.copy_entities { selector, selectors, layer, type, handle, dx, dy, dz }
+- cad.rotate_entities { selector, selectors, layer, type, handle, x, y, angle }
+- cad.scale_entities { selector, selectors, layer, type, handle, x, y, factor }
+- cad.offset_entities { selector, selectors, layer, type, handle, distance }
+- cad.delete_entities { selector, selectors, layer, type, handle }
+- cad.change_layer { selector, selectors, layer, type, handle, target_layer }
+- cad.set_properties { selector, selectors, layer, type, handle, color, linetype, lineweight }
 
 Available context/action tools:
 - web.search { query }
@@ -496,7 +619,9 @@ Rules:
 - Keep the entry point and primary artifact DWG-first: you are inside AutoCAD, and the current active DWG is the source of truth. Do not switch to STEP/build123d workflows unless the user explicitly asks to export/import such files.
 - Every CAD task should follow this engineering loop at the right depth: Intent -> CAD brief -> task plan -> CAD-IR -> safety -> preview/confirm policy -> AutoCAD tool adapter -> validation -> result.
 - For non-trivial or modification tasks, call cad.read_dwg_snapshot before writing so you understand layers, existing objects, block references, and expanded block internals.
+- For existing drawing tasks, prefer targeted observation tools over guessing: cad.semantic_scan for likely walls/rooms/stairs/annotations, cad.query_entities for candidate sets, cad.describe_entity or cad.describe_selection for selected targets, and cad.find_near/find_intersections/find_closed_regions when geometry relationships matter.
 - Use stable DWG selectors for existing geometry: layer:FROG, handle:1A2F, type:Polyline, block:Door#3/entity:Line#2. Prefer selectors over vague phrases once a target has been observed.
+- For modification tasks, never modify vague targets without first resolving them to selectors/handles/layers and summarizing the selected target set.
 - Before writes, use cad.preview_plan when the user has not fully authorized execution or when impact is not obvious.
 - If cad_ir.operations contains executable AutoCAD actions with enough parameters, include the matching tool_calls in the same response. Do not stop at a natural-language plan.
 - After write tools succeed, prefer a validation read tool in the next turn: cad.before_after_diff if a previous snapshot is available, cad.layer_diff for layer changes, cad.validate_dwg_state for expected layers/counts/types, cad.measure_bounds for dimensions/bounds, cad.count_entities for target counts, or cad.read_dwg_snapshot for general inspection.
@@ -505,6 +630,7 @@ Rules:
 - Use workspace.read_file/workspace.write_file when the user asks to inspect or save files under the configured workspace root. Write only when the user asked to create/update a file or the execution mode authorizes it.
 - Do not ask generic questions when a safe, reversible, or previewable next step can be inferred. Make a reasonable plan, call read/context tools when useful, and ask only specific missing parameters.
 - Prefer cad.draw_polyline for multi-segment contours and outlines instead of many separate cad.draw_line calls.
+- Prefer cad.draw_room and cad.draw_wall for architectural room/wall requests when dimensions are available or safe defaults are acceptable.
 - Prefer cad.draw_stair for common U-shaped/double-run stair requests instead of only describing a stair plan.
 - Assistant replies, progress messages, status, errors, or explanations must stay in assistant_message, never cad.draw_text.
 - Reply in the user's language. If the user writes Chinese, assistant_message, trace summaries, and clarification options should be Chinese.

@@ -71,13 +71,37 @@ public class HttpEndpointTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "web.fetch_url");
         Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "workspace.read_file");
         Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.preview_plan");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.read_layers");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.read_styles");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.read_blocks");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.query_entities");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.describe_entity");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.describe_selection");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.find_near");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.find_intersections");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.find_connected_contours");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.find_closed_regions");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.measure_relation");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.semantic_scan");
         Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.count_entities");
         Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.measure_bounds");
         Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.measure_distance");
         Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.layer_diff");
         Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.before_after_diff");
         Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.validate_dwg_state");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.draw_wall");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.draw_room");
         Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.draw_stair");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.draw_dimension");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.insert_block");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.move_entities");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.copy_entities");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.rotate_entities");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.scale_entities");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.offset_entities");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.delete_entities");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.change_layer");
+        Assert.Contains(tools, t => t!["name"]!.GetValue<string>() == "cad.set_properties");
     }
 
     [Fact]

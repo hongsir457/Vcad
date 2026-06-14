@@ -107,6 +107,18 @@ access to the drawing. It calls `/agent/turn` again with the tool results.
 Plugin-hosted CAD tools:
 
 - `cad.read_dwg_snapshot`
+- `cad.read_layers`
+- `cad.read_styles`
+- `cad.read_blocks`
+- `cad.query_entities`
+- `cad.describe_entity`
+- `cad.describe_selection`
+- `cad.find_near`
+- `cad.find_intersections`
+- `cad.find_connected_contours`
+- `cad.find_closed_regions`
+- `cad.measure_relation`
+- `cad.semantic_scan`
 - `cad.preview_plan`
 - `cad.count_entities`
 - `cad.measure_bounds`
@@ -118,8 +130,23 @@ Plugin-hosted CAD tools:
 - `cad.draw_line`
 - `cad.draw_polyline`
 - `cad.draw_circle`
+- `cad.draw_arc`
 - `cad.draw_rectangle`
+- `cad.draw_room`
+- `cad.draw_wall`
 - `cad.draw_text`
+- `cad.draw_mtext`
+- `cad.draw_dimension`
+- `cad.insert_block`
+- `cad.draw_stair`
+- `cad.move_entities`
+- `cad.copy_entities`
+- `cad.rotate_entities`
+- `cad.scale_entities`
+- `cad.offset_entities`
+- `cad.delete_entities`
+- `cad.change_layer`
+- `cad.set_properties`
 
 AgentLite-hosted context tools:
 
