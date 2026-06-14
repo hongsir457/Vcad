@@ -11,11 +11,22 @@ namespace Vcad.Plugin.Context
 {
     internal static class DrawingSnapshotCollector
     {
-        private const int MaxEntities = 3000;
-        private const int MaxBlockDepth = 5;
-        private const int MaxExplodedEntitiesPerBlock = 500;
+        private const int DefaultMaxEntities = 3000;
+        private const int DefaultMaxBlockDepth = 5;
+        private const int DefaultMaxExplodedEntitiesPerBlock = 500;
+        private const int BriefMaxEntities = 120;
 
         public static JObject CaptureActive()
+        {
+            return CaptureActive(FullOptions());
+        }
+
+        public static JObject CaptureActiveBrief()
+        {
+            return CaptureActive(BriefOptions());
+        }
+
+        private static JObject CaptureActive(CaptureOptions options)
         {
             var warnings = new JArray();
             var layers = new JArray();
@@ -42,9 +53,14 @@ namespace Vcad.Plugin.Context
                 ["database"] = new JObject(),
                 ["limits"] = new JObject
                 {
-                    ["max_entities"] = MaxEntities,
-                    ["max_block_depth"] = MaxBlockDepth,
-                    ["max_exploded_entities_per_block"] = MaxExplodedEntitiesPerBlock,
+                    ["profile"] = options.Profile,
+                    ["max_entities"] = options.MaxEntities,
+                    ["max_block_depth"] = options.MaxBlockDepth,
+                    ["max_exploded_entities_per_block"] = options.MaxExplodedEntitiesPerBlock,
+                    ["include_entity_properties"] = options.IncludeEntityProperties,
+                    ["include_entity_geometry"] = options.IncludeEntityGeometry,
+                    ["include_entity_bounds"] = options.IncludeEntityBounds,
+                    ["explode_blocks"] = options.ExplodeBlocks,
                 },
                 ["summary"] = summary,
                 ["layers"] = layers,
@@ -94,8 +110,8 @@ namespace Vcad.Plugin.Context
                     summary["layer_count"] = layers.Count;
 
                     var bt = (BlockTable)tr.GetObject(doc.Database.BlockTableId, OpenMode.ForRead);
-                    CaptureSpace(bt, tr, BlockTableRecord.ModelSpace, "model", entities, summary, warnings);
-                    CaptureSpace(bt, tr, BlockTableRecord.PaperSpace, "paper", entities, summary, warnings);
+                    CaptureSpace(bt, tr, BlockTableRecord.ModelSpace, "model", entities, summary, warnings, options);
+                    CaptureSpace(bt, tr, BlockTableRecord.PaperSpace, "paper", entities, summary, warnings, options);
 
                     tr.Commit();
                 }
@@ -112,6 +128,48 @@ namespace Vcad.Plugin.Context
             summary["block_definition_count"] = blocks.Count;
             snapshot["geometry_index"] = BuildGeometryIndex(entities, layers, blocks);
             return snapshot;
+        }
+
+        private sealed class CaptureOptions
+        {
+            public string Profile { get; set; }
+            public int MaxEntities { get; set; }
+            public int MaxBlockDepth { get; set; }
+            public int MaxExplodedEntitiesPerBlock { get; set; }
+            public bool IncludeEntityProperties { get; set; }
+            public bool IncludeEntityGeometry { get; set; }
+            public bool IncludeEntityBounds { get; set; }
+            public bool ExplodeBlocks { get; set; }
+        }
+
+        private static CaptureOptions FullOptions()
+        {
+            return new CaptureOptions
+            {
+                Profile = "full",
+                MaxEntities = DefaultMaxEntities,
+                MaxBlockDepth = DefaultMaxBlockDepth,
+                MaxExplodedEntitiesPerBlock = DefaultMaxExplodedEntitiesPerBlock,
+                IncludeEntityProperties = true,
+                IncludeEntityGeometry = true,
+                IncludeEntityBounds = true,
+                ExplodeBlocks = true,
+            };
+        }
+
+        private static CaptureOptions BriefOptions()
+        {
+            return new CaptureOptions
+            {
+                Profile = "brief",
+                MaxEntities = BriefMaxEntities,
+                MaxBlockDepth = 0,
+                MaxExplodedEntitiesPerBlock = 0,
+                IncludeEntityProperties = false,
+                IncludeEntityGeometry = false,
+                IncludeEntityBounds = false,
+                ExplodeBlocks = false,
+            };
         }
 
         public static string FormatSummary(JObject snapshot)
@@ -272,7 +330,7 @@ namespace Vcad.Plugin.Context
             }
         }
 
-        private static void CaptureSpace(BlockTable bt, Transaction tr, string blockName, string space, JArray entities, JObject summary, JArray warnings)
+        private static void CaptureSpace(BlockTable bt, Transaction tr, string blockName, string space, JArray entities, JObject summary, JArray warnings, CaptureOptions options)
         {
             try
             {
@@ -280,10 +338,10 @@ namespace Vcad.Plugin.Context
                 var btr = (BlockTableRecord)tr.GetObject(bt[blockName], OpenMode.ForRead);
                 foreach (ObjectId id in EnumerateObjectIds(btr))
                 {
-                    if (IsTruncated(entities, summary)) return;
+                    if (IsTruncated(entities, summary, options)) return;
                     var entity = tr.GetObject(id, OpenMode.ForRead) as Entity;
                     if (entity == null) continue;
-                    CaptureEntity(entity, space, new JArray(), 0, false, entities, summary, warnings);
+                    CaptureEntity(entity, space, new JArray(), 0, false, entities, summary, warnings, options);
                     summary["top_level_entity_count"] = summary.Value<int>("top_level_entity_count") + 1;
                 }
             }
@@ -293,9 +351,9 @@ namespace Vcad.Plugin.Context
             }
         }
 
-        private static void CaptureEntity(Entity entity, string space, JArray blockPath, int blockDepth, bool exploded, JArray entities, JObject summary, JArray warnings)
+        private static void CaptureEntity(Entity entity, string space, JArray blockPath, int blockDepth, bool exploded, JArray entities, JObject summary, JArray warnings, CaptureOptions options)
         {
-            if (IsTruncated(entities, summary)) return;
+            if (IsTruncated(entities, summary, options)) return;
 
             var type = entity.GetType().Name;
             var item = new JObject
@@ -304,7 +362,6 @@ namespace Vcad.Plugin.Context
                 ["object_id"] = entity.ObjectId.ToString(),
                 ["type"] = type,
                 ["layer"] = entity.Layer,
-                ["properties"] = ReadEntityProperties(entity),
                 ["source"] = new JObject
                 {
                     ["space"] = space,
@@ -312,10 +369,20 @@ namespace Vcad.Plugin.Context
                     ["block_depth"] = blockDepth,
                     ["block_path"] = blockPath.DeepClone(),
                 },
-                ["bounds"] = TryReadBounds(entity),
-                ["geometry"] = ReadGeometry(entity),
                 ["selectors"] = BuildSelectorRefs(entity, blockPath),
             };
+            if (options.IncludeEntityProperties)
+            {
+                item["properties"] = ReadEntityProperties(entity);
+            }
+            if (options.IncludeEntityBounds)
+            {
+                item["bounds"] = TryReadBounds(entity);
+            }
+            if (options.IncludeEntityGeometry)
+            {
+                item["geometry"] = ReadGeometry(entity);
+            }
 
             if (IsBlockReference(entity))
             {
@@ -329,13 +396,13 @@ namespace Vcad.Plugin.Context
                 summary["exploded_entity_count"] = summary.Value<int>("exploded_entity_count") + 1;
             }
 
-            if (IsBlockReference(entity) && blockDepth < MaxBlockDepth)
+            if (options.ExplodeBlocks && IsBlockReference(entity) && blockDepth < options.MaxBlockDepth)
             {
-                CaptureExplodedBlock(entity, space, blockPath, blockDepth, entities, summary, warnings);
+                CaptureExplodedBlock(entity, space, blockPath, blockDepth, entities, summary, warnings, options);
             }
         }
 
-        private static void CaptureExplodedBlock(Entity blockRef, string space, JArray blockPath, int blockDepth, JArray entities, JObject summary, JArray warnings)
+        private static void CaptureExplodedBlock(Entity blockRef, string space, JArray blockPath, int blockDepth, JArray entities, JObject summary, JArray warnings, CaptureOptions options)
         {
             var exploded = new DBObjectCollection();
             try
@@ -354,16 +421,16 @@ namespace Vcad.Plugin.Context
                 var count = 0;
                 foreach (DBObject child in exploded)
                 {
-                    if (count >= MaxExplodedEntitiesPerBlock)
+                    if (count >= options.MaxExplodedEntitiesPerBlock)
                     {
-                        warnings.Add("Block explode truncated at " + MaxExplodedEntitiesPerBlock + " entities for " + blockRef.Handle);
+                        warnings.Add("Block explode truncated at " + options.MaxExplodedEntitiesPerBlock + " entities for " + blockRef.Handle);
                         break;
                     }
-                    if (IsTruncated(entities, summary)) break;
+                    if (IsTruncated(entities, summary, options)) break;
                     var childEntity = child as Entity;
                     if (childEntity != null)
                     {
-                        CaptureEntity(childEntity, space, childPath, blockDepth + 1, true, entities, summary, warnings);
+                        CaptureEntity(childEntity, space, childPath, blockDepth + 1, true, entities, summary, warnings, options);
                     }
                     count++;
                 }
@@ -381,9 +448,9 @@ namespace Vcad.Plugin.Context
             }
         }
 
-        private static bool IsTruncated(JArray entities, JObject summary)
+        private static bool IsTruncated(JArray entities, JObject summary, CaptureOptions options)
         {
-            if (entities.Count < MaxEntities) return false;
+            if (entities.Count < options.MaxEntities) return false;
             summary["truncated"] = true;
             return true;
         }

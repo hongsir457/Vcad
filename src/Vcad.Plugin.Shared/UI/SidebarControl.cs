@@ -2434,7 +2434,7 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                 if (_btnVoiceInput != null) _btnVoiceInput.Enabled = false;
                 SetChatStatus("正在读取当前 DWG 内存状态...", CadCyan);
                 System.Windows.Forms.Application.DoEvents();
-                var cadState = DrawingSnapshotCollector.CaptureActive();
+                var cadState = DrawingSnapshotCollector.CaptureActiveBrief();
                 _attachedFiles.Clear();
 
                 _txtNaturalLanguage.Text = "";
@@ -2585,7 +2585,7 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                         "\r\n\r\n用户在模型处理过程中补充了需求：\r\n" +
                         supplement;
                     currentAttachments = attachments == null ? new JArray() : (JArray)attachments.DeepClone();
-                    currentObservation = DrawingSnapshotCollector.CaptureActive();
+                    currentObservation = DrawingSnapshotCollector.CaptureActiveBrief();
                     continue;
                 }
 
@@ -2611,7 +2611,7 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                     {
                         currentMessage = BuildForceToolCallPrompt(originalUserText, turnResult);
                         currentAttachments = attachments == null ? new JArray() : (JArray)attachments.DeepClone();
-                        currentObservation = DrawingSnapshotCollector.CaptureActive();
+                        currentObservation = DrawingSnapshotCollector.CaptureActiveBrief();
                         SetChatStatus("模型只要求补充信息，正在强制转为工具调用...", CadOrange);
                         continue;
                     }
@@ -2635,7 +2635,7 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                     {
                         currentMessage = BuildForceToolCallPrompt(originalUserText, turnResult);
                         currentAttachments = attachments == null ? new JArray() : (JArray)attachments.DeepClone();
-                        currentObservation = DrawingSnapshotCollector.CaptureActive();
+                        currentObservation = DrawingSnapshotCollector.CaptureActiveBrief();
                         SetChatStatus("模型只返回了说明，正在要求它返回可执行工具调用...", CadOrange);
                         continue;
                     }
@@ -2664,7 +2664,7 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                     }
                 }
 
-                currentObservation = DrawingSnapshotCollector.CaptureActive();
+                currentObservation = DrawingSnapshotCollector.CaptureActiveBrief();
                 if (anyWriteToolSucceeded)
                 {
                     AddAssistantCard("CAD 助手", BuildWriteCompletionReply(toolResults, currentObservation, anyToolFailed, lastToolFailure));
