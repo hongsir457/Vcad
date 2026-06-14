@@ -2561,7 +2561,10 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                 sw.Stop();
                 SetLlmConnectionStatus("● LLM 在线", CadGreen);
                 RecordModelUsage(turnResult, settings, true, sw.ElapsedMilliseconds);
-                AddEngineeringPlanCard(turnResult);
+                if (!LooksLikeCadWriteRequest(originalUserText))
+                {
+                    AddEngineeringPlanCard(turnResult);
+                }
                 if ((turnResult.ToolCalls == null || turnResult.ToolCalls.Count == 0) &&
                     TryBuildToolCallsFromCadIr(turnResult.CadIr, out var synthesizedCalls))
                 {
@@ -2689,6 +2692,12 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                 }
 
                 currentObservation = DrawingSnapshotCollector.CaptureActive();
+                if (anyWriteToolSucceeded)
+                {
+                    AddAssistantCard("CAD 助手", BuildWriteCompletionReply(toolResults, currentObservation, anyToolFailed, lastToolFailure));
+                    SetChatStatus(anyToolFailed ? "已完成，但有工具失败。" : "已完成。", anyToolFailed ? CadOrange : CadGreen);
+                    return;
+                }
             }
 
             AddAssistantCard("CAD 助手", "Agent 工具循环已达到 8 轮上限。当前不再继续自动执行，避免无限循环。");
@@ -2730,6 +2739,68 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
                 if (!string.IsNullOrWhiteSpace(error)) return error;
             }
             return result.ToString(Formatting.None);
+        }
+
+        private static string BuildWriteCompletionReply(JArray toolResults, JObject observation, bool anyToolFailed, string lastToolFailure)
+        {
+            var successfulWrites = toolResults == null
+                ? new List<JObject>()
+                : toolResults
+                    .OfType<JObject>()
+                    .Where(r => r.Value<bool?>("success") == true && CadToolHost.IsWriteTool(r.Value<string>("name")))
+                    .ToList();
+
+            var layers = successfulWrites
+                .Select(r => r["result"] as JObject)
+                .Where(r => r != null)
+                .Select(r => r.Value<string>("layer"))
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var entityTypes = successfulWrites
+                .Select(r => r["result"] as JObject)
+                .Where(r => r != null)
+                .Select(r => r.Value<string>("entity_type"))
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var text = new StringBuilder();
+            text.Append("已在当前图纸执行完成。");
+            if (successfulWrites.Count > 0)
+            {
+                text.Append("\r\n\r\n写入对象：").Append(successfulWrites.Count).Append(" 个");
+            }
+            if (entityTypes.Count > 0)
+            {
+                text.Append("\r\n对象类型：").Append(string.Join("、", entityTypes));
+            }
+            if (layers.Count > 0)
+            {
+                text.Append("\r\n图层：").Append(string.Join("、", layers));
+            }
+
+            var snapshot = observation?["geometry_index"] as JObject;
+            var counts = snapshot?["counts"] as JObject;
+            var total = counts?.Value<int?>("entities");
+            if (total.HasValue)
+            {
+                text.Append("\r\n当前图元总数：").Append(total.Value);
+            }
+
+            if (anyToolFailed)
+            {
+                text.Append("\r\n\r\n注意：有工具调用失败。");
+                if (!string.IsNullOrWhiteSpace(lastToolFailure))
+                {
+                    text.Append("\r\n原因：").Append(lastToolFailure);
+                }
+            }
+            else
+            {
+                text.Append("\r\n\r\n你可以继续说要加墙厚、门窗、尺寸标注，或移动/缩放/复制这个对象。");
+            }
+            return text.ToString();
         }
 
         private async Task<AgentTurnResult> WaitForAgentTurnAsync(Task<AgentTurnResult> turnTask)
