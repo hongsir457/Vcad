@@ -197,6 +197,66 @@ public class HttpEndpointTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public void Native_tool_calls_map_to_cad_tool_calls()
+    {
+        var raw = JsonNode.Parse("""
+        [
+          {
+            "id": "call_native_1",
+            "type": "function",
+            "function": {
+              "name": "cad_draw_circle",
+              "arguments": "{\"layer\":\"E2E-CIRCLE\",\"x\":2000,\"y\":0,\"radius\":100}"
+            }
+          }
+        ]
+        """)!.AsArray();
+        var parse = typeof(AgentTurnService).GetMethod(
+            "ParseNativeToolCalls",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        Assert.NotNull(parse);
+
+        var calls = Assert.IsAssignableFrom<IEnumerable<AgentToolCall>>(
+            parse!.Invoke(null, new object?[] { raw }))!.ToList();
+
+        var call = Assert.Single(calls);
+        Assert.Equal("call_native_1", call.id);
+        Assert.Equal("cad.draw_circle", call.name);
+        Assert.Equal("E2E-CIRCLE", call.args["layer"]!.GetValue<string>());
+        Assert.Equal(2000, call.args["x"]!.GetValue<double>());
+        Assert.Equal(100, call.args["radius"]!.GetValue<double>());
+    }
+
+    [Fact]
+    public void Deterministic_tool_plan_supports_basic_non_rectangle_commands_for_echo_only()
+    {
+        var create = typeof(AgentTurnService).GetMethod(
+            "TryCreateDeterministicToolResponse",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.NotNull(create);
+
+        var req = new AgentTurnRequest
+        {
+            session_id = "det-circle-test",
+            message = "draw circle radius 100 at 2000,0 layer E2E-CIRCLE",
+        };
+        var optionsType = typeof(AgentTurnService).Assembly.GetType("Vcad.AgentLite.ProviderRequestOptions");
+        Assert.NotNull(optionsType);
+        var from = optionsType!.GetMethod(
+            "From",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        var options = from!.Invoke(null, new object?[] { new ProviderConfig { name = "echo", model = "echo" } });
+        var args = new object?[] { req, options, null };
+
+        var ok = Assert.IsType<bool>(create!.Invoke(null, args));
+        Assert.True(ok);
+
+        var response = Assert.IsType<AgentTurnResponse>(args[2]);
+        Assert.Contains(response.tool_calls, call => call.name == "cad.draw_circle");
+    }
+
+    [Fact]
     public async Task Tools_returns_registered_tool_manifest()
     {
         var client = _factory.CreateClient();

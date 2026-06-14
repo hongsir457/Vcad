@@ -13,12 +13,13 @@ public sealed class AgentTurnService
     public async Task<AgentTurnResponse> RunAsync(AgentTurnRequest req)
     {
         var options = ProviderRequestOptions.From(req.provider);
-        if (TryCreateDeterministicToolResponse(req, options, out var deterministic))
+        var provider = string.IsNullOrWhiteSpace(options.Name) ? "echo" : options.Name.ToLowerInvariant();
+        if (provider is not ("openai" or "deepseek" or "custom" or "anthropic") &&
+            TryCreateDeterministicToolResponse(req, options, out var deterministic))
         {
             return deterministic;
         }
 
-        var provider = string.IsNullOrWhiteSpace(options.Name) ? "echo" : options.Name.ToLowerInvariant();
         return provider switch
         {
             "openai" or "deepseek" or "custom" => await RunOpenAiCompatibleAsync(req, options),
@@ -30,7 +31,9 @@ public sealed class AgentTurnService
     public async Task<AgentTurnResponse> RunStreamingAsync(AgentTurnRequest req, Func<string, Task> onDelta)
     {
         var options = ProviderRequestOptions.From(req.provider);
-        if (TryCreateDeterministicToolResponse(req, options, out var deterministic))
+        var provider = string.IsNullOrWhiteSpace(options.Name) ? "echo" : options.Name.ToLowerInvariant();
+        if (provider is not ("openai" or "deepseek" or "custom" or "anthropic") &&
+            TryCreateDeterministicToolResponse(req, options, out var deterministic))
         {
             if (!string.IsNullOrWhiteSpace(deterministic.assistant_message) && onDelta != null)
             {
@@ -39,7 +42,6 @@ public sealed class AgentTurnService
             return deterministic;
         }
 
-        var provider = string.IsNullOrWhiteSpace(options.Name) ? "echo" : options.Name.ToLowerInvariant();
         if (provider is "openai" or "deepseek" or "custom")
         {
             return await RunOpenAiCompatibleStreamingAsync(req, options, onDelta);
@@ -67,6 +69,11 @@ public sealed class AgentTurnService
         var model = string.IsNullOrWhiteSpace(options.Model)
             ? (isDeepSeek ? "deepseek-v4-flash" : "gpt-5")
             : options.Model;
+
+        if (ShouldUseNativeToolCalling(req))
+        {
+            return await RunOpenAiCompatibleNativeToolsAsync(req, options, baseUrl, isDeepSeek, model, null);
+        }
 
         var payload = new
         {
@@ -120,6 +127,11 @@ public sealed class AgentTurnService
         var model = string.IsNullOrWhiteSpace(options.Model)
             ? (isDeepSeek ? "deepseek-v4-flash" : "gpt-5")
             : options.Model;
+
+        if (ShouldUseNativeToolCalling(req))
+        {
+            return await RunOpenAiCompatibleNativeToolsAsync(req, options, baseUrl, isDeepSeek, model, onDelta);
+        }
 
         var payload = new
         {
@@ -210,6 +222,361 @@ public sealed class AgentTurnService
             ? EstimateUsage(options, responseModel, req, raw)
             : ExtractOpenAiUsageFromNode(usageNode, options, responseModel);
         return response;
+    }
+
+    private static async Task<AgentTurnResponse> RunOpenAiCompatibleNativeToolsAsync(
+        AgentTurnRequest req,
+        ProviderRequestOptions options,
+        string baseUrl,
+        bool isDeepSeek,
+        string model,
+        Func<string, Task>? onDelta)
+    {
+        var requireTool = req.tool_results == null || req.tool_results.Count == 0;
+        var payload = new JsonObject
+        {
+            ["model"] = model,
+            ["messages"] = new JsonArray
+            {
+                new JsonObject { ["role"] = "system", ["content"] = NativeToolSystemPrompt() },
+                new JsonObject { ["role"] = "user", ["content"] = BuildAgentUserPrompt(req) },
+            },
+            ["tools"] = BuildNativeCadTools(),
+            ["tool_choice"] = requireTool ? "required" : "auto",
+        };
+
+        using var http = new HttpRequestMessage(HttpMethod.Post, BuildChatCompletionsUrl(baseUrl, isDeepSeek));
+        http.Headers.Authorization = new AuthenticationHeaderValue("Bearer", options.ApiKey);
+        http.Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json");
+        using var resp = await Http.SendAsync(http);
+        var body = await resp.Content.ReadAsStringAsync();
+        if (!resp.IsSuccessStatusCode)
+        {
+            throw new ProviderRequestException("OpenAI-compatible", (int)resp.StatusCode, SecretRedactor.Redact(body));
+        }
+
+        var parsed = JsonNode.Parse(body);
+        var message = parsed?["choices"]?[0]?["message"] as JsonObject;
+        if (message == null)
+        {
+            throw new InvalidOperationException("Agent model returned no message.");
+        }
+
+        var content = message["content"]?.GetValue<string>() ?? "";
+        var response = new AgentTurnResponse
+        {
+            session_id = FirstNonEmpty(req.session_id, "agent-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff")),
+            assistant_message = string.IsNullOrWhiteSpace(content) ? "我将调用 CAD 工具处理这个请求。" : content.Trim(),
+            done = false,
+            usage = ExtractOpenAiUsage(parsed, options, parsed?["model"]?.GetValue<string>() ?? model, req, body),
+        };
+
+        foreach (var call in ParseNativeToolCalls(message["tool_calls"] as JsonArray))
+        {
+            response.tool_calls.Add(call);
+        }
+
+        if (response.tool_calls.Count == 0 && !string.IsNullOrWhiteSpace(content) && LooksLikeJsonObject(content))
+        {
+            response = ParseAgentResponse(content, req);
+            CompileCadIrToToolCalls(response);
+        }
+
+        if (!requireTool)
+        {
+            EnsureDeterministicToolPlan(req, response);
+        }
+        if (requireTool && response.tool_calls.Count == 0 && ShouldUseNativeToolCalling(req))
+        {
+            throw new InvalidOperationException("CAD task did not produce tool_calls from native tool calling.");
+        }
+
+        if (response.tool_calls.Count > 0)
+        {
+            response.requires_user_input = false;
+            response.clarification = null;
+            response.done = false;
+            response.trace.Add(new AgentTraceEvent
+            {
+                title = "原生工具调用",
+                summary = "模型通过 OpenAI-compatible function calling 返回 cad.* tool_calls。",
+            });
+        }
+
+        if (onDelta != null && !string.IsNullOrWhiteSpace(response.assistant_message))
+        {
+            await onDelta(response.assistant_message);
+        }
+
+        return response;
+    }
+
+    private static bool ShouldUseNativeToolCalling(AgentTurnRequest req)
+    {
+        if (req.tool_results is { Count: > 0 }) return true;
+        if (req.cad_observation != null) return true;
+
+        var text = req.message ?? "";
+        return ContainsAny(text,
+            "cad", "dwg", "图纸", "图元", "图层", "对象", "选择", "当前图",
+            "画", "绘制", "创建", "新增", "生成", "标注", "文字", "测量", "读取", "检查",
+            "矩形", "长方形", "直线", "线段", "多段线", "圆", "圆弧", "房间", "墙", "楼梯",
+            "复制", "移动", "删除", "改图层", "改颜色",
+            "draw", "create", "add", "inspect", "read", "measure", "rectangle", "line", "polyline",
+            "circle", "arc", "text", "label", "dimension", "layer", "copy", "move", "delete");
+    }
+
+    private static string NativeToolSystemPrompt() =>
+        """
+You are VoiceCAD, an AutoCAD agent running inside the user's active DWG.
+Use the provided CAD tools for CAD work. For executable CAD requests, return tool_calls instead of only natural language.
+For unclear CAD requests, prefer read/inspect tools first when context can clarify the target. Ask a concise clarification only when required parameters cannot be inferred safely.
+Never draw assistant replies, explanations, progress, or errors into the DWG. Use cad.draw_text only for explicit drawing labels/annotations requested by the user.
+Use stable selectors such as handle:1A2F, layer:A-WALL, type:Polyline after observing the DWG.
+Keep assistant content concise and in the user's language.
+""";
+
+    private static IEnumerable<AgentToolCall> ParseNativeToolCalls(JsonArray? toolCalls)
+    {
+        if (toolCalls == null) yield break;
+
+        foreach (var item in toolCalls.OfType<JsonObject>())
+        {
+            var fn = item["function"] as JsonObject;
+            var nativeName = fn?["name"]?.GetValue<string>() ?? "";
+            var toolName = NativeToolNameToCadName(nativeName);
+            if (string.IsNullOrWhiteSpace(toolName)) continue;
+
+            var argsText = fn?["arguments"]?.GetValue<string>() ?? "{}";
+            JsonObject args;
+            try
+            {
+                args = JsonNode.Parse(string.IsNullOrWhiteSpace(argsText) ? "{}" : argsText) as JsonObject ?? new JsonObject();
+            }
+            catch (JsonException)
+            {
+                args = new JsonObject { ["raw_arguments"] = argsText };
+            }
+
+            yield return new AgentToolCall
+            {
+                id = item["id"]?.GetValue<string>() ?? "native-" + Guid.NewGuid().ToString("N"),
+                name = toolName,
+                args = args,
+            };
+        }
+    }
+
+    private static string NativeToolNameToCadName(string nativeName)
+    {
+        if (string.IsNullOrWhiteSpace(nativeName)) return "";
+        return nativeName.StartsWith("cad_", StringComparison.OrdinalIgnoreCase)
+            ? "cad." + nativeName.Substring(4)
+            : nativeName;
+    }
+
+    private static bool LooksLikeJsonObject(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        var s = StripCodeFence(value).TrimStart();
+        return s.StartsWith("{", StringComparison.Ordinal);
+    }
+
+    private static JsonArray BuildNativeCadTools() => new()
+    {
+        NativeTool("cad.read_dwg_snapshot", "Read the active DWG snapshot: layers, entities, blocks, bounds, and warnings.",
+            Props(("limit", Num("Maximum number of entities to include.")))),
+        NativeTool("cad.read_layers", "Read layer names and layer metadata from the active DWG.", Props()),
+        NativeTool("cad.query_entities", "Query entities by selector, layer, type, handle, text, bounds, or proximity.",
+            SelectorProps(("limit", Num("Maximum result count.")))),
+        NativeTool("cad.describe_entity", "Describe one entity by selector, handle, layer/type, or proximity.",
+            SelectorProps()),
+        NativeTool("cad.describe_selection", "Describe a selection of entities.",
+            SelectorProps()),
+        NativeTool("cad.count_entities", "Count entities matching a selector/layer/type/handle.",
+            SelectorProps()),
+        NativeTool("cad.measure_bounds", "Measure aggregate bounds for matching entities.",
+            SelectorProps()),
+        NativeTool("cad.measure_distance", "Measure distance between two points or selected entities.",
+            Props(
+                ("x1", Num("First point X.")),
+                ("y1", Num("First point Y.")),
+                ("x2", Num("Second point X.")),
+                ("y2", Num("Second point Y.")),
+                ("from_selector", Str("Selector for first entity.")),
+                ("to_selector", Str("Selector for second entity.")))),
+        NativeTool("cad.preview_plan", "Preview intended CAD operations before writes.",
+            Props(
+                ("writes_dwg", Bool("Whether the plan writes the DWG.")),
+                ("operations", Arr("Planned CAD operations.")),
+                ("selectors", Arr("Target selectors.")),
+                ("expected_effect", Obj("Expected DWG effect.")))),
+        NativeTool("cad.validate_dwg_state", "Validate expected layers, entity counts, types, and warnings.",
+            SelectorProps(
+                ("expected_layers", Arr("Expected layer names.")),
+                ("expected_min_entities", Num("Minimum matching entity count.")),
+                ("expected_types", Arr("Expected entity types.")),
+                ("expected_layer_entity_counts", Obj("Minimum counts by layer.")))),
+        NativeTool("cad.create_layer", "Create or update a layer.",
+            Props(("name", Str("Layer name.")), ("color", Num("AutoCAD ACI color 1-255."))), "name"),
+        NativeTool("cad.draw_line", "Draw one line segment.",
+            Props(
+                ("layer", Str("Target layer.")),
+                ("color", Num("AutoCAD ACI color 1-255.")),
+                ("x1", Num("Start X.")),
+                ("y1", Num("Start Y.")),
+                ("x2", Num("End X.")),
+                ("y2", Num("End Y."))), "x1", "y1", "x2", "y2"),
+        NativeTool("cad.draw_polyline", "Draw a polyline or contour.",
+            Props(
+                ("layer", Str("Target layer.")),
+                ("color", Num("AutoCAD ACI color 1-255.")),
+                ("points", Arr("Polyline points as [[x,y], ...].")),
+                ("closed", Bool("Whether the polyline is closed.")),
+                ("constant_width", Num("Optional constant polyline width."))), "points"),
+        NativeTool("cad.draw_circle", "Draw a circle.",
+            Props(
+                ("layer", Str("Target layer.")),
+                ("color", Num("AutoCAD ACI color 1-255.")),
+                ("x", Num("Center X.")),
+                ("y", Num("Center Y.")),
+                ("radius", Num("Circle radius."))), "x", "y", "radius"),
+        NativeTool("cad.draw_arc", "Draw an arc.",
+            Props(
+                ("layer", Str("Target layer.")),
+                ("color", Num("AutoCAD ACI color 1-255.")),
+                ("x", Num("Center X.")),
+                ("y", Num("Center Y.")),
+                ("radius", Num("Arc radius.")),
+                ("start_angle", Num("Start angle in degrees.")),
+                ("end_angle", Num("End angle in degrees."))), "x", "y", "radius"),
+        NativeTool("cad.draw_rectangle", "Draw a rectangle as a closed polyline.",
+            Props(
+                ("layer", Str("Target layer.")),
+                ("color", Num("AutoCAD ACI color 1-255.")),
+                ("x", Num("Lower-left X.")),
+                ("y", Num("Lower-left Y.")),
+                ("width", Num("Rectangle width.")),
+                ("height", Num("Rectangle height."))), "x", "y", "width", "height"),
+        NativeTool("cad.draw_room", "Draw an architectural room rectangle, optionally with wall thickness.",
+            Props(
+                ("layer", Str("Target layer.")),
+                ("color", Num("AutoCAD ACI color 1-255.")),
+                ("x", Num("Lower-left X.")),
+                ("y", Num("Lower-left Y.")),
+                ("width", Num("Room width.")),
+                ("height", Num("Room height.")),
+                ("wall_thickness", Num("Optional wall thickness."))), "x", "y", "width", "height"),
+        NativeTool("cad.draw_wall", "Draw a wall between two points with thickness.",
+            Props(
+                ("layer", Str("Target layer.")),
+                ("color", Num("AutoCAD ACI color 1-255.")),
+                ("x1", Num("Start X.")),
+                ("y1", Num("Start Y.")),
+                ("x2", Num("End X.")),
+                ("y2", Num("End Y.")),
+                ("thickness", Num("Wall thickness."))), "x1", "y1", "x2", "y2"),
+        NativeTool("cad.draw_stair", "Draw a U-shaped/double-run stair plan from architectural parameters.",
+            Props(
+                ("layer", Str("Target layer.")),
+                ("color", Num("AutoCAD ACI color 1-255.")),
+                ("x", Num("Base X.")),
+                ("y", Num("Base Y.")),
+                ("width", Num("Run width.")),
+                ("tread_depth", Num("Tread depth.")),
+                ("riser_height", Num("Riser height.")),
+                ("floor_height", Num("Floor height.")),
+                ("platform_depth", Num("Platform depth.")),
+                ("total_risers", Num("Optional riser count.")))),
+        NativeTool("cad.draw_text", "Draw explicit drawing text, label, title, or annotation.",
+            Props(
+                ("layer", Str("Target layer.")),
+                ("color", Num("AutoCAD ACI color 1-255.")),
+                ("x", Num("Insertion X.")),
+                ("y", Num("Insertion Y.")),
+                ("text", Str("Text to draw into the DWG.")),
+                ("height", Num("Text height."))), "x", "y", "text"),
+        NativeTool("cad.draw_dimension", "Draw an aligned dimension.",
+            Props(
+                ("layer", Str("Target layer.")),
+                ("color", Num("AutoCAD ACI color 1-255.")),
+                ("x1", Num("First point X.")),
+                ("y1", Num("First point Y.")),
+                ("x2", Num("Second point X.")),
+                ("y2", Num("Second point Y.")),
+                ("dim_line", Arr("Dimension line point [x,y].")),
+                ("text", Str("Optional dimension text."))), "x1", "y1", "x2", "y2"),
+        NativeTool("cad.move_entities", "Move selected entities by dx/dy/dz.",
+            SelectorProps(("dx", Num("Delta X.")), ("dy", Num("Delta Y.")), ("dz", Num("Delta Z.")))),
+        NativeTool("cad.copy_entities", "Copy selected entities by dx/dy/dz.",
+            SelectorProps(("dx", Num("Delta X.")), ("dy", Num("Delta Y.")), ("dz", Num("Delta Z.")))),
+        NativeTool("cad.delete_entities", "Delete selected entities. Use only when user explicitly asks to delete.",
+            SelectorProps()),
+        NativeTool("cad.change_layer", "Change selected entities to target_layer.",
+            SelectorProps(("target_layer", Str("Destination layer."))), "target_layer"),
+    };
+
+    private static JsonObject NativeTool(string cadName, string description, JsonObject properties, params string[] required)
+    {
+        return new JsonObject
+        {
+            ["type"] = "function",
+            ["function"] = new JsonObject
+            {
+                ["name"] = cadName.Replace(".", "_"),
+                ["description"] = description,
+                ["parameters"] = new JsonObject
+                {
+                    ["type"] = "object",
+                    ["properties"] = properties,
+                    ["required"] = StringArray(required),
+                    ["additionalProperties"] = true,
+                },
+            },
+        };
+    }
+
+    private static JsonObject SelectorProps(params (string Name, JsonObject Schema)[] extra)
+    {
+        var props = Props(
+            ("selector", Str("Stable selector such as handle:1A2F, layer:A-WALL, type:Polyline.")),
+            ("selectors", Arr("Stable selectors.")),
+            ("layer", Str("Layer filter.")),
+            ("type", Str("Entity type filter.")),
+            ("handle", Str("Entity handle.")),
+            ("text_contains", Str("Text substring filter.")),
+            ("include_exploded", Bool("Include exploded block internals when inspecting.")));
+        foreach (var item in extra)
+        {
+            props[item.Name] = item.Schema;
+        }
+        return props;
+    }
+
+    private static JsonObject Props(params (string Name, JsonObject Schema)[] props)
+    {
+        var obj = new JsonObject();
+        foreach (var prop in props)
+        {
+            obj[prop.Name] = prop.Schema;
+        }
+        return obj;
+    }
+
+    private static JsonObject Str(string description) => new() { ["type"] = "string", ["description"] = description };
+    private static JsonObject Num(string description) => new() { ["type"] = "number", ["description"] = description };
+    private static JsonObject Bool(string description) => new() { ["type"] = "boolean", ["description"] = description };
+    private static JsonObject Arr(string description) => new() { ["type"] = "array", ["description"] = description };
+    private static JsonObject Obj(string description) => new() { ["type"] = "object", ["description"] = description };
+
+    private static JsonArray StringArray(IEnumerable<string> values)
+    {
+        var array = new JsonArray();
+        foreach (var value in values)
+        {
+            array.Add(value);
+        }
+        return array;
     }
 
     private static async Task<AgentTurnResponse> RunAnthropicAsync(AgentTurnRequest req, ProviderRequestOptions options)
@@ -517,16 +884,104 @@ public sealed class AgentTurnService
     {
         if (response.tool_calls.Count > 0) return;
         if (req.tool_results is { Count: > 0 }) return;
-        if (!TryParseRectangleRequest(req.message ?? "", out var rect)) return;
+        if (!TryBuildDeterministicToolPlan(req.message ?? "", out var plan)) return;
 
-        var operations = new JsonArray(
-            new JsonObject
-            {
-                ["action"] = "create_layer",
-                ["target_layer"] = rect.Layer,
-                ["parameters"] = new JsonObject { ["color"] = 7 },
-            },
-            new JsonObject
+        response.assistant_message = string.IsNullOrWhiteSpace(response.assistant_message)
+            ? plan.AssistantMessage
+            : response.assistant_message;
+        response.cad_brief ??= new JsonObject
+        {
+            ["task_type"] = plan.TaskType,
+            ["objective"] = plan.Objective,
+            ["primary_artifact"] = "active AutoCAD DWG",
+            ["units"] = "mm",
+        };
+        response.task_plan ??= new JsonObject
+        {
+            ["steps"] = new JsonArray("parse explicit CAD request", "prepare deterministic CAD tool plan", "execute tool calls", "validate result"),
+            ["next_step"] = plan.WritesDwg ? "execute write tools" : "execute read tool",
+        };
+        response.cad_ir = new JsonObject
+        {
+            ["operations"] = plan.Operations.DeepClone(),
+            ["expected_effect"] = plan.ExpectedEffect.DeepClone(),
+        };
+        response.safety ??= new JsonObject
+        {
+            ["risk_level"] = plan.RiskLevel,
+            ["writes_dwg"] = plan.WritesDwg,
+            ["destructive"] = false,
+            ["requires_confirmation"] = false,
+            ["reason"] = plan.WritesDwg ? "explicit additive CAD operation" : "read-only CAD inspection",
+        };
+        response.validation ??= new JsonObject
+        {
+            ["planned_checks"] = plan.WritesDwg
+                ? new JsonArray("cad.validate_dwg_state", "cad.measure_bounds")
+                : new JsonArray("inspect returned snapshot/result"),
+            ["success_criteria"] = plan.WritesDwg
+                ? new JsonArray("tool calls succeed", "DWG contains requested geometry")
+                : new JsonArray("read tool returns current DWG context"),
+        };
+
+        foreach (var call in plan.ToolCalls)
+        {
+            response.tool_calls.Add(call);
+        }
+
+        response.requires_user_input = false;
+        response.clarification = null;
+        response.done = false;
+        response.trace.Add(new AgentTraceEvent
+        {
+            title = "确定性工具计划",
+            summary = "AgentLite 从明确 CAD 请求生成 cad.* tool_calls，避免模型只回复不执行。",
+        });
+    }
+
+    private static bool TryCreateDeterministicToolResponse(
+        AgentTurnRequest req,
+        ProviderRequestOptions options,
+        out AgentTurnResponse response)
+    {
+        response = new AgentTurnResponse();
+        if (req.tool_results is { Count: > 0 }) return false;
+        if (!TryBuildDeterministicToolPlan(req.message ?? "", out var plan)) return false;
+
+        response = new AgentTurnResponse
+        {
+            session_id = FirstNonEmpty(req.session_id, "agent-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff")),
+            assistant_message = plan.AssistantMessage,
+            done = false,
+            usage = EstimateUsage(options, string.IsNullOrWhiteSpace(options.Model) ? "deterministic-tool-plan" : options.Model, req, "deterministic-tool-plan"),
+        };
+        EnsureDeterministicToolPlan(req, response);
+        return response.tool_calls.Count > 0;
+    }
+
+    private sealed record DeterministicToolPlan(
+        string AssistantMessage,
+        string TaskType,
+        string Objective,
+        bool WritesDwg,
+        string RiskLevel,
+        JsonArray Operations,
+        JsonObject ExpectedEffect,
+        List<AgentToolCall> ToolCalls);
+
+    private sealed record PointPlan(double X, double Y);
+    private sealed record LinePlan(PointPlan Start, PointPlan End, string Layer);
+    private sealed record CirclePlan(PointPlan Center, double Radius, string Layer);
+    private sealed record TextPlan(PointPlan Position, string Text, double Height, string Layer);
+
+    private static bool TryBuildDeterministicToolPlan(string text, out DeterministicToolPlan plan)
+    {
+        plan = new DeterministicToolPlan("", "", "", false, "low", new JsonArray(), new JsonObject(), new List<AgentToolCall>());
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        if (TryParseRectangleRequest(text, out var rect))
+        {
+            var operations = new JsonArray(CreateLayerOperation(rect.Layer), new JsonObject
             {
                 ["action"] = "draw_rectangle",
                 ["target_layer"] = rect.Layer,
@@ -539,113 +994,256 @@ public sealed class AgentTurnService
                     ["color"] = 7,
                 },
             });
-
-        response.assistant_message = string.IsNullOrWhiteSpace(response.assistant_message)
-            ? $"我会调用 CAD 工具创建图层 {rect.Layer}，并在 ({rect.X},{rect.Y}) 绘制 {rect.Width} x {rect.Height} 的矩形。"
-            : response.assistant_message;
-        response.cad_brief ??= new JsonObject
-        {
-            ["task_type"] = "new_geometry",
-            ["objective"] = $"draw rectangle {rect.Width} x {rect.Height}",
-            ["primary_artifact"] = "active AutoCAD DWG",
-            ["units"] = "mm",
-        };
-        response.task_plan ??= new JsonObject
-        {
-            ["steps"] = new JsonArray("prepare deterministic CAD tool plan", "preview writes", "execute rectangle tool", "validate result"),
-            ["next_step"] = "execute cad.draw_rectangle",
-        };
-        response.cad_ir = new JsonObject
-        {
-            ["operations"] = operations.DeepClone(),
-            ["expected_effect"] = new JsonObject
+            var expected = new JsonObject
             {
                 ["layers"] = new JsonArray(rect.Layer),
                 ["object_types"] = new JsonArray("Polyline"),
-                ["bounds"] = new JsonObject
+                ["bounds"] = Bounds(rect.X, rect.Y, rect.X + rect.Width, rect.Y + rect.Height),
+            };
+            plan = BuildWritePlan(
+                $"我会调用 CAD 工具创建图层 {rect.Layer}，并在 ({rect.X},{rect.Y}) 绘制 {rect.Width} x {rect.Height} 的矩形。",
+                "new_geometry",
+                $"draw rectangle {rect.Width} x {rect.Height}",
+                rect.Layer,
+                operations,
+                expected,
+                ToolCall("cad.draw_rectangle", new JsonObject
                 {
-                    ["min_x"] = rect.X,
-                    ["min_y"] = rect.Y,
-                    ["max_x"] = rect.X + rect.Width,
-                    ["max_y"] = rect.Y + rect.Height,
-                },
-            },
-        };
-        response.safety ??= new JsonObject
-        {
-            ["risk_level"] = "low",
-            ["writes_dwg"] = true,
-            ["destructive"] = false,
-            ["requires_confirmation"] = false,
-            ["reason"] = "adds one new rectangle and layer only",
-        };
-        response.validation ??= new JsonObject
-        {
-            ["planned_checks"] = new JsonArray("cad.validate_dwg_state", "cad.measure_bounds"),
-            ["success_criteria"] = new JsonArray("layer exists", "one rectangle polyline exists", "bounds match requested size"),
-        };
+                    ["layer"] = rect.Layer,
+                    ["color"] = 7,
+                    ["x"] = rect.X,
+                    ["y"] = rect.Y,
+                    ["width"] = rect.Width,
+                    ["height"] = rect.Height,
+                }));
+            return true;
+        }
 
-        response.tool_calls.Add(new AgentToolCall
+        if (TryParseLineRequest(text, out var line))
         {
-            id = "det-preview-" + Guid.NewGuid().ToString("N"),
-            name = "cad.preview_plan",
-            args = new JsonObject
+            var operations = new JsonArray(CreateLayerOperation(line.Layer), new JsonObject
+            {
+                ["action"] = "draw_line",
+                ["target_layer"] = line.Layer,
+                ["parameters"] = new JsonObject
+                {
+                    ["x1"] = line.Start.X,
+                    ["y1"] = line.Start.Y,
+                    ["x2"] = line.End.X,
+                    ["y2"] = line.End.Y,
+                    ["color"] = 7,
+                },
+            });
+            var expected = new JsonObject
+            {
+                ["layers"] = new JsonArray(line.Layer),
+                ["object_types"] = new JsonArray("Line"),
+                ["bounds"] = Bounds(Math.Min(line.Start.X, line.End.X), Math.Min(line.Start.Y, line.End.Y),
+                    Math.Max(line.Start.X, line.End.X), Math.Max(line.Start.Y, line.End.Y)),
+            };
+            plan = BuildWritePlan(
+                $"我会调用 CAD 工具在图层 {line.Layer} 绘制线段 ({line.Start.X},{line.Start.Y}) -> ({line.End.X},{line.End.Y})。",
+                "new_geometry",
+                "draw line",
+                line.Layer,
+                operations,
+                expected,
+                ToolCall("cad.draw_line", new JsonObject
+                {
+                    ["layer"] = line.Layer,
+                    ["color"] = 7,
+                    ["x1"] = line.Start.X,
+                    ["y1"] = line.Start.Y,
+                    ["x2"] = line.End.X,
+                    ["y2"] = line.End.Y,
+                }));
+            return true;
+        }
+
+        if (TryParseCircleRequest(text, out var circle))
+        {
+            var operations = new JsonArray(CreateLayerOperation(circle.Layer), new JsonObject
+            {
+                ["action"] = "draw_circle",
+                ["target_layer"] = circle.Layer,
+                ["parameters"] = new JsonObject
+                {
+                    ["x"] = circle.Center.X,
+                    ["y"] = circle.Center.Y,
+                    ["radius"] = circle.Radius,
+                    ["color"] = 7,
+                },
+            });
+            var expected = new JsonObject
+            {
+                ["layers"] = new JsonArray(circle.Layer),
+                ["object_types"] = new JsonArray("Circle"),
+                ["bounds"] = Bounds(circle.Center.X - circle.Radius, circle.Center.Y - circle.Radius,
+                    circle.Center.X + circle.Radius, circle.Center.Y + circle.Radius),
+            };
+            plan = BuildWritePlan(
+                $"我会调用 CAD 工具在图层 {circle.Layer} 绘制圆心 ({circle.Center.X},{circle.Center.Y})、半径 {circle.Radius} 的圆。",
+                "new_geometry",
+                "draw circle",
+                circle.Layer,
+                operations,
+                expected,
+                ToolCall("cad.draw_circle", new JsonObject
+                {
+                    ["layer"] = circle.Layer,
+                    ["color"] = 7,
+                    ["x"] = circle.Center.X,
+                    ["y"] = circle.Center.Y,
+                    ["radius"] = circle.Radius,
+                }));
+            return true;
+        }
+
+        if (TryParseTextRequest(text, out var textPlan))
+        {
+            var operations = new JsonArray(CreateLayerOperation(textPlan.Layer), new JsonObject
+            {
+                ["action"] = "draw_text",
+                ["target_layer"] = textPlan.Layer,
+                ["parameters"] = new JsonObject
+                {
+                    ["x"] = textPlan.Position.X,
+                    ["y"] = textPlan.Position.Y,
+                    ["text"] = textPlan.Text,
+                    ["height"] = textPlan.Height,
+                    ["color"] = 7,
+                },
+            });
+            var expected = new JsonObject
+            {
+                ["layers"] = new JsonArray(textPlan.Layer),
+                ["object_types"] = new JsonArray("DBText"),
+            };
+            plan = BuildWritePlan(
+                $"我会调用 CAD 工具在图层 {textPlan.Layer} 的 ({textPlan.Position.X},{textPlan.Position.Y}) 写入文字“{textPlan.Text}”。",
+                "annotation",
+                "draw text",
+                textPlan.Layer,
+                operations,
+                expected,
+                ToolCall("cad.draw_text", new JsonObject
+                {
+                    ["layer"] = textPlan.Layer,
+                    ["color"] = 7,
+                    ["x"] = textPlan.Position.X,
+                    ["y"] = textPlan.Position.Y,
+                    ["text"] = textPlan.Text,
+                    ["height"] = textPlan.Height,
+                }));
+            return true;
+        }
+
+        if (TryParseCreateLayerRequest(text, out var layerName))
+        {
+            var operations = new JsonArray(CreateLayerOperation(layerName));
+            plan = BuildWritePlan(
+                $"我会调用 CAD 工具创建或更新图层 {layerName}。",
+                "layer_management",
+                "create layer " + layerName,
+                layerName,
+                operations,
+                new JsonObject { ["layers"] = new JsonArray(layerName) },
+                ToolCall("cad.create_layer", new JsonObject { ["name"] = layerName, ["color"] = 7 }),
+                includeCreateLayer: false);
+            return true;
+        }
+
+        if (LooksLikeReadLayersRequest(text))
+        {
+            plan = BuildReadPlan(
+                "我会调用 CAD 工具读取当前 DWG 的图层列表。",
+                "inspect",
+                "read layers",
+                ToolCall("cad.read_layers", new JsonObject()),
+                "read_layers");
+            return true;
+        }
+
+        if (LooksLikeReadSnapshotRequest(text))
+        {
+            plan = BuildReadPlan(
+                "我会调用 CAD 工具读取当前 DWG 快照，包含图层、图元、块和边界摘要。",
+                "inspect",
+                "read dwg snapshot",
+                ToolCall("cad.read_dwg_snapshot", new JsonObject { ["limit"] = 500 }),
+                "read_dwg_snapshot");
+            return true;
+        }
+
+        return false;
+    }
+
+    private static DeterministicToolPlan BuildWritePlan(
+        string assistantMessage,
+        string taskType,
+        string objective,
+        string layer,
+        JsonArray operations,
+        JsonObject expectedEffect,
+        AgentToolCall writeCall,
+        bool includeCreateLayer = true)
+    {
+        var calls = new List<AgentToolCall>
+        {
+            ToolCall("cad.preview_plan", new JsonObject
             {
                 ["writes_dwg"] = true,
                 ["operations"] = operations.DeepClone(),
-                ["expected_effect"] = response.cad_ir["expected_effect"]!.DeepClone(),
-            },
-        });
-        response.tool_calls.Add(new AgentToolCall
-        {
-            id = "det-layer-" + Guid.NewGuid().ToString("N"),
-            name = "cad.create_layer",
-            args = new JsonObject { ["name"] = rect.Layer, ["color"] = 7 },
-        });
-        response.tool_calls.Add(new AgentToolCall
-        {
-            id = "det-rect-" + Guid.NewGuid().ToString("N"),
-            name = "cad.draw_rectangle",
-            args = new JsonObject
-            {
-                ["layer"] = rect.Layer,
-                ["color"] = 7,
-                ["x"] = rect.X,
-                ["y"] = rect.Y,
-                ["width"] = rect.Width,
-                ["height"] = rect.Height,
-            },
-        });
-
-        response.requires_user_input = false;
-        response.clarification = null;
-        response.done = false;
-        response.trace.Add(new AgentTraceEvent
-        {
-            title = "确定性工具计划",
-            summary = "模型未返回工具调用；AgentLite 从明确的矩形绘图请求生成 cad.* tool_calls。",
-        });
-    }
-
-    private static bool TryCreateDeterministicToolResponse(
-        AgentTurnRequest req,
-        ProviderRequestOptions options,
-        out AgentTurnResponse response)
-    {
-        response = new AgentTurnResponse();
-        if (req.tool_results is { Count: > 0 }) return false;
-        if (!TryParseRectangleRequest(req.message ?? "", out _)) return false;
-
-        response = new AgentTurnResponse
-        {
-            session_id = FirstNonEmpty(req.session_id, "agent-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff")),
-            assistant_message = "我识别到这是明确的矩形绘图指令，会直接调用 CAD 工具创建图层并绘制矩形。",
-            done = false,
-            usage = EstimateUsage(options, string.IsNullOrWhiteSpace(options.Model) ? "deterministic-tool-plan" : options.Model, req, "deterministic-tool-plan"),
+                ["expected_effect"] = expectedEffect.DeepClone(),
+            }),
         };
-        EnsureDeterministicToolPlan(req, response);
-        return response.tool_calls.Count > 0;
+        if (includeCreateLayer && !string.Equals(layer, "0", StringComparison.OrdinalIgnoreCase))
+        {
+            calls.Add(ToolCall("cad.create_layer", new JsonObject { ["name"] = layer, ["color"] = 7 }));
+        }
+        calls.Add(writeCall);
+        return new DeterministicToolPlan(assistantMessage, taskType, objective, true, "low", operations, expectedEffect, calls);
     }
+
+    private static DeterministicToolPlan BuildReadPlan(
+        string assistantMessage,
+        string taskType,
+        string objective,
+        AgentToolCall call,
+        string action)
+    {
+        return new DeterministicToolPlan(
+            assistantMessage,
+            taskType,
+            objective,
+            false,
+            "low",
+            new JsonArray(new JsonObject { ["action"] = action }),
+            new JsonObject(),
+            new List<AgentToolCall> { call });
+    }
+
+    private static AgentToolCall ToolCall(string name, JsonObject args) => new()
+    {
+        id = "det-" + Guid.NewGuid().ToString("N"),
+        name = name,
+        args = args,
+    };
+
+    private static JsonObject CreateLayerOperation(string layer) => new()
+    {
+        ["action"] = "create_layer",
+        ["target_layer"] = layer,
+        ["parameters"] = new JsonObject { ["color"] = 7 },
+    };
+
+    private static JsonObject Bounds(double minX, double minY, double maxX, double maxY) => new()
+    {
+        ["min_x"] = minX,
+        ["min_y"] = minY,
+        ["max_x"] = maxX,
+        ["max_y"] = maxY,
+    };
 
     private sealed record RectanglePlan(double X, double Y, double Width, double Height, string Layer);
 
@@ -684,6 +1282,115 @@ public sealed class AgentTurnService
 
         plan = new RectanglePlan(x, y, width, height, layer);
         return true;
+    }
+
+    private static bool TryParseLineRequest(string text, out LinePlan plan)
+    {
+        plan = new LinePlan(new PointPlan(0, 0), new PointPlan(0, 0), "0");
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        if (!ContainsAny(text, "line", "直线", "线段")) return false;
+        if (!ContainsAny(text, "draw", "create", "绘制", "画", "新增", "生成")) return false;
+
+        var points = FindPointPairs(text);
+        if (points.Count < 2) return false;
+
+        plan = new LinePlan(points[0], points[1], ExtractLayer(text, "0"));
+        return true;
+    }
+
+    private static bool TryParseCircleRequest(string text, out CirclePlan plan)
+    {
+        plan = new CirclePlan(new PointPlan(0, 0), 0, "0");
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        if (!ContainsAny(text, "circle", "圆")) return false;
+        if (!ContainsAny(text, "draw", "create", "绘制", "画", "新增", "生成")) return false;
+
+        var points = FindPointPairs(text);
+        if (points.Count < 1) return false;
+        var radiusMatch = Regex.Match(text,
+            @"(?:radius|半径|r)\s*[:=：]?\s*(?<r>\d+(?:\.\d+)?)|(?<r2>\d+(?:\.\d+)?)\s*(?:radius|半径)",
+            RegexOptions.IgnoreCase);
+        var radiusText = FirstNonEmpty(radiusMatch.Groups["r"].Value, radiusMatch.Groups["r2"].Value);
+        var radius = ParseLength(radiusText, "");
+        if (radius <= 0) return false;
+
+        plan = new CirclePlan(points[0], radius, ExtractLayer(text, "0"));
+        return true;
+    }
+
+    private static bool TryParseTextRequest(string text, out TextPlan plan)
+    {
+        plan = new TextPlan(new PointPlan(0, 0), "", 250, "0");
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        if (!ContainsAny(text, "text", "label", "annotation", "文字", "标注", "标题")) return false;
+        if (!ContainsAny(text, "draw", "create", "add", "write", "绘制", "写", "添加", "新增", "标注")) return false;
+
+        var content = ExtractRequestedText(text);
+        if (string.IsNullOrWhiteSpace(content)) return false;
+        var points = FindPointPairs(text);
+        if (points.Count < 1) return false;
+
+        var heightMatch = Regex.Match(text, @"(?:height|text_height|字高|高度)\s*[:=：]?\s*(?<h>\d+(?:\.\d+)?)", RegexOptions.IgnoreCase);
+        var height = heightMatch.Success ? ParseLength(heightMatch.Groups["h"].Value, "") : 250d;
+        if (height <= 0) height = 250d;
+
+        plan = new TextPlan(points[0], content.Trim(), height, ExtractLayer(text, "0"));
+        return true;
+    }
+
+    private static bool TryParseCreateLayerRequest(string text, out string layer)
+    {
+        layer = "";
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        if (!ContainsAny(text, "layer", "图层")) return false;
+        if (!ContainsAny(text, "create", "new", "add", "创建", "新增", "添加", "建立")) return false;
+
+        layer = ExtractLayer(text, "");
+        if (!string.IsNullOrWhiteSpace(layer)) return true;
+
+        var match = Regex.Match(text,
+            @"(?:create|new|add|创建|新增|添加|建立)\s*(?:a\s*)?(?:layer|图层)\s*[:：]?\s*(?<layer>[A-Za-z0-9_.#-]+)",
+            RegexOptions.IgnoreCase);
+        layer = match.Groups["layer"].Value;
+        return !string.IsNullOrWhiteSpace(layer);
+    }
+
+    private static bool LooksLikeReadLayersRequest(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        return ContainsAny(text, "layer", "图层") &&
+               ContainsAny(text, "read", "list", "show", "inspect", "查看", "读取", "列出", "有哪些", "检查");
+    }
+
+    private static bool LooksLikeReadSnapshotRequest(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        return ContainsAny(text, "dwg", "图纸", "当前图", "图元", "对象", "snapshot", "inspect", "读取", "查看", "检查", "看一下");
+    }
+
+    private static List<PointPlan> FindPointPairs(string text)
+    {
+        return Regex.Matches(text ?? "", @"\(?\s*(?<x>-?\d+(?:\.\d+)?)\s*[,，]\s*(?<y>-?\d+(?:\.\d+)?)\s*\)?")
+            .Cast<Match>()
+            .Select(m => new PointPlan(ParseDouble(m.Groups["x"].Value), ParseDouble(m.Groups["y"].Value)))
+            .ToList();
+    }
+
+    private static string ExtractLayer(string text, string fallback)
+    {
+        var match = Regex.Match(text ?? "", @"(?:layer|图层)\s*[:：]?\s*(?<layer>[A-Za-z0-9_.#-]+)", RegexOptions.IgnoreCase);
+        return FirstNonEmpty(match.Groups["layer"].Value, fallback);
+    }
+
+    private static string ExtractRequestedText(string text)
+    {
+        var quoted = Regex.Match(text ?? "", "[\"“'‘](?<text>[^\"”'’]+)[\"”'’]");
+        if (quoted.Success) return quoted.Groups["text"].Value;
+
+        var match = Regex.Match(text ?? "",
+            @"(?:text|label|annotation|文字|标注|标题)\s*[:：]?\s*(?<text>.+?)(?:\s+(?:at|在|位置|坐标|layer|图层|height|字高|高度)\b|$)",
+            RegexOptions.IgnoreCase);
+        return match.Success ? match.Groups["text"].Value.Trim() : "";
     }
 
     private static double ParseLength(string value, string unit)
