@@ -82,7 +82,7 @@ public sealed class AgentTurnService
         }
 
         var response = ParseAgentResponse(content, req);
-        ApplyDeterministicToolFallbacks(req, response);
+        CompileCadIrToToolCalls(response);
         response.usage = ExtractOpenAiUsage(parsed, options, parsed?["model"]?.GetValue<string>() ?? model, req, content);
         return response;
     }
@@ -184,7 +184,7 @@ public sealed class AgentTurnService
         }
 
         var response = ParseAgentResponse(raw, req);
-        ApplyDeterministicToolFallbacks(req, response);
+        CompileCadIrToToolCalls(response);
         if (onDelta != null && visibleChars == 0 && !string.IsNullOrWhiteSpace(response.assistant_message))
         {
             await onDelta(response.assistant_message);
@@ -234,7 +234,7 @@ public sealed class AgentTurnService
         }
 
         var response = ParseAgentResponse(content, req);
-        ApplyDeterministicToolFallbacks(req, response);
+        CompileCadIrToToolCalls(response);
         response.usage = ExtractAnthropicUsage(parsed, options, parsed?["model"]?.GetValue<string>() ?? model, req, content);
         return response;
     }
@@ -430,99 +430,224 @@ public sealed class AgentTurnService
         return response;
     }
 
-    private static void ApplyDeterministicToolFallbacks(AgentTurnRequest req, AgentTurnResponse response)
+    private static void CompileCadIrToToolCalls(AgentTurnResponse response)
     {
         if (response.tool_calls.Count > 0) return;
 
-        var text = req.message ?? "";
-        if (!LooksLikeDrawStairRequest(text)) return;
+        var operations = response.cad_ir?["operations"] as JsonArray;
+        if (operations == null || operations.Count == 0) return;
+
+        var compiled = new List<AgentToolCall>();
+        var hasWrite = false;
+        var hasPreview = false;
+        foreach (var item in operations.OfType<JsonObject>())
+        {
+            var toolName = CadIrActionToToolName(
+                FirstNonEmpty(
+                    item["tool"]?.GetValue<string>(),
+                    item["tool_name"]?.GetValue<string>(),
+                    item["name"]?.GetValue<string>(),
+                    item["action"]?.GetValue<string>()));
+            if (string.IsNullOrWhiteSpace(toolName)) continue;
+
+            var args = BuildToolArgsFromCadIrOperation(item, toolName);
+            if (!HasMinimumArgs(toolName, args)) continue;
+
+            hasWrite |= IsCadWriteToolName(toolName);
+            hasPreview |= string.Equals(toolName, "cad.preview_plan", StringComparison.OrdinalIgnoreCase);
+            compiled.Add(new AgentToolCall
+            {
+                id = "cad-ir-" + Guid.NewGuid().ToString("N"),
+                name = toolName,
+                args = args,
+            });
+        }
+
+        if (compiled.Count == 0) return;
+
+        if (hasWrite && !hasPreview)
+        {
+            response.tool_calls.Add(new AgentToolCall
+            {
+                id = "cad-ir-preview-" + Guid.NewGuid().ToString("N"),
+                name = "cad.preview_plan",
+                args = new JsonObject
+                {
+                    ["writes_dwg"] = true,
+                    ["operations"] = CloneJsonArray(operations),
+                    ["expected_effect"] = CloneJsonObject(response.cad_ir?["expected_effect"] as JsonObject) ?? new JsonObject(),
+                },
+            });
+        }
+
+        foreach (var call in compiled)
+        {
+            response.tool_calls.Add(call);
+        }
 
         response.requires_user_input = false;
-        response.done = false;
         response.clarification = null;
-        response.assistant_message =
-            "我将按常规住宅默认参数绘制一部U形双跑楼梯：宽1100mm、踏步深280mm、踢步高165mm、共18级、中间平台深1000mm，放在图层 A-STAIR。执行后我会检查图层和对象数量，你可以再要求调整宽度、层高、踏步数、平台尺寸或位置。";
-
-        response.cad_brief ??= new JsonObject
-        {
-            ["task_type"] = "new_geometry",
-            ["objective"] = "按默认住宅参数在当前 DWG 中绘制楼梯",
-            ["primary_artifact"] = "active AutoCAD DWG",
-            ["units"] = "mm",
-            ["assumptions"] = new JsonArray("用户未给出尺寸时使用常规住宅默认参数", "新建/使用 A-STAIR 图层", "在原点附近绘制"),
-            ["validation_targets"] = new JsonArray("A-STAIR 图层存在", "楼梯线段已写入 DWG", "对象包围盒非空"),
-        };
-        response.task_plan ??= new JsonObject
-        {
-            ["steps"] = new JsonArray("observe DWG", "prepare CAD-IR", "execute via cad.draw_stair", "validate result"),
-            ["next_step"] = "execute cad.draw_stair",
-        };
-        response.cad_ir ??= new JsonObject
-        {
-            ["operations"] = new JsonArray(new JsonObject
-            {
-                ["action"] = "draw_stair",
-                ["target_layer"] = "A-STAIR",
-                ["parameters"] = new JsonObject
-                {
-                    ["x"] = 0,
-                    ["y"] = 0,
-                    ["width"] = 1100,
-                    ["tread_depth"] = 280,
-                    ["riser_height"] = 165,
-                    ["platform_depth"] = 1000,
-                    ["total_risers"] = 18,
-                },
-            }),
-            ["expected_effect"] = new JsonObject
-            {
-                ["layers"] = new JsonArray("A-STAIR"),
-                ["object_types"] = new JsonArray("Line", "Polyline"),
-            },
-        };
-        response.safety ??= new JsonObject
-        {
-            ["risk_level"] = "low",
-            ["writes_dwg"] = true,
-            ["destructive"] = false,
-            ["requires_confirmation"] = false,
-            ["reason"] = "只新增几何对象，不删除或修改既有图元。",
-        };
-        response.validation ??= new JsonObject
-        {
-            ["planned_checks"] = new JsonArray("cad.read_dwg_snapshot", "cad.measure_bounds", "cad.validate_dwg_state"),
-            ["success_criteria"] = new JsonArray("A-STAIR 图层存在", "楼梯对象数量大于 0"),
-        };
-
+        response.done = false;
         response.trace.Add(new AgentTraceEvent
         {
-            title = "确定性工具兜底",
-            summary = "模型未给出工具调用，但用户意图是明确的绘制楼梯请求；已补充 cad.draw_stair。",
-        });
-        response.tool_calls.Add(new AgentToolCall
-        {
-            id = "call-" + Guid.NewGuid().ToString("N"),
-            name = "cad.draw_stair",
-            args = new JsonObject
-            {
-                ["layer"] = "A-STAIR",
-                ["x"] = 0,
-                ["y"] = 0,
-                ["width"] = 1100,
-                ["tread_depth"] = 280,
-                ["riser_height"] = 165,
-                ["platform_depth"] = 1000,
-                ["total_risers"] = 18,
-                ["color"] = 3,
-            },
+            title = "CAD-IR 编译",
+            summary = "AgentLite 已将模型返回的 CAD-IR 编译为可执行 cad.* tool_calls。",
         });
     }
 
-    private static bool LooksLikeDrawStairRequest(string text)
+    private static JsonObject BuildToolArgsFromCadIrOperation(JsonObject operation, string toolName)
     {
-        if (!ContainsAny(text, "楼梯", "梯", "stair", "stairs")) return false;
-        return ContainsAny(text, "画", "绘制", "生成", "创建", "新建", "draw", "create", "generate");
+        var args = CloneJsonObject(operation["args"] as JsonObject) ??
+                   CloneJsonObject(operation["parameters"] as JsonObject) ??
+                   new JsonObject();
+
+        foreach (var prop in operation)
+        {
+            if (string.Equals(prop.Key, "action", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(prop.Key, "tool", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(prop.Key, "tool_name", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(prop.Key, "name", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(prop.Key, "args", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(prop.Key, "parameters", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(prop.Key, "expected_effect", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(prop.Key, "reason", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (string.Equals(prop.Key, "target_layer", StringComparison.OrdinalIgnoreCase))
+            {
+                if (prop.Value != null)
+                {
+                    if (string.Equals(toolName, "cad.create_layer", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (args["name"] == null)
+                        {
+                            args["name"] = CloneJsonNode(prop.Value);
+                        }
+                    }
+                    else
+                    {
+                        if (args["layer"] == null)
+                        {
+                            args["layer"] = CloneJsonNode(prop.Value);
+                        }
+                    }
+                }
+                continue;
+            }
+
+            if (args[prop.Key] == null && prop.Value != null && prop.Value is not JsonObject)
+            {
+                args[prop.Key] = CloneJsonNode(prop.Value);
+            }
+        }
+
+        if (string.Equals(toolName, "cad.create_layer", StringComparison.OrdinalIgnoreCase) &&
+            args["name"] == null &&
+            args["layer"] != null)
+        {
+            args["name"] = CloneJsonNode(args["layer"]!);
+        }
+
+        return args;
     }
+
+    private static string CadIrActionToToolName(string action)
+    {
+        if (string.IsNullOrWhiteSpace(action)) return "";
+        var normalized = action.Trim().ToLowerInvariant()
+            .Replace("cad.", "")
+            .Replace("-", "_")
+            .Replace(" ", "_");
+
+        return normalized switch
+        {
+            "preview" or "preview_plan" => "cad.preview_plan",
+            "inspect" or "snapshot" or "read_snapshot" or "read_dwg_snapshot" => "cad.read_dwg_snapshot",
+            "read_layers" => "cad.read_layers",
+            "read_styles" => "cad.read_styles",
+            "read_blocks" => "cad.read_blocks",
+            "query" or "query_entities" => "cad.query_entities",
+            "describe" or "describe_entity" => "cad.describe_entity",
+            "describe_selection" => "cad.describe_selection",
+            "find_near" => "cad.find_near",
+            "find_intersections" => "cad.find_intersections",
+            "find_connected_contours" => "cad.find_connected_contours",
+            "find_closed_regions" => "cad.find_closed_regions",
+            "measure_relation" => "cad.measure_relation",
+            "semantic_scan" => "cad.semantic_scan",
+            "count" or "count_entities" => "cad.count_entities",
+            "measure_bounds" or "bounds" => "cad.measure_bounds",
+            "measure_distance" or "distance" => "cad.measure_distance",
+            "layer_diff" => "cad.layer_diff",
+            "before_after_diff" => "cad.before_after_diff",
+            "validate" or "validate_dwg_state" => "cad.validate_dwg_state",
+            "create_layer" or "layer" => "cad.create_layer",
+            "draw_line" or "line" => "cad.draw_line",
+            "draw_polyline" or "polyline" => "cad.draw_polyline",
+            "draw_circle" or "circle" => "cad.draw_circle",
+            "draw_arc" or "arc" => "cad.draw_arc",
+            "draw_rectangle" or "rectangle" or "rect" => "cad.draw_rectangle",
+            "draw_room" or "room" => "cad.draw_room",
+            "draw_wall" or "wall" => "cad.draw_wall",
+            "draw_stair" or "stair" or "stairs" or "stair_u" or "u_stair" or "double_run_stair" => "cad.draw_stair",
+            "draw_text" or "text" => "cad.draw_text",
+            "draw_mtext" or "mtext" => "cad.draw_mtext",
+            "draw_dimension" or "dimension" or "dim" => "cad.draw_dimension",
+            "insert_block" or "block" => "cad.insert_block",
+            "move" or "move_entities" => "cad.move_entities",
+            "copy" or "copy_entities" => "cad.copy_entities",
+            "rotate" or "rotate_entities" => "cad.rotate_entities",
+            "scale" or "scale_entities" => "cad.scale_entities",
+            "offset" or "offset_entities" => "cad.offset_entities",
+            "delete" or "delete_entities" => "cad.delete_entities",
+            "change_layer" => "cad.change_layer",
+            "set_properties" or "properties" => "cad.set_properties",
+            _ => "",
+        };
+    }
+
+    private static bool HasMinimumArgs(string toolName, JsonObject args)
+    {
+        bool Has(string key) => args[key] != null;
+        return toolName.ToLowerInvariant() switch
+        {
+            "cad.create_layer" => Has("name"),
+            "cad.draw_line" => (Has("x1") && Has("y1") && Has("x2") && Has("y2")) || (Has("start") && Has("end")),
+            "cad.draw_polyline" => Has("points"),
+            "cad.draw_circle" => Has("radius") && (Has("x") || Has("center")),
+            "cad.draw_arc" => Has("radius") && Has("start_angle") && Has("end_angle"),
+            "cad.draw_rectangle" => Has("width") && Has("height"),
+            "cad.draw_room" => Has("width") && Has("height"),
+            "cad.draw_wall" => Has("thickness") || Has("x1") || Has("start"),
+            "cad.draw_stair" => Has("width") || Has("tread_depth") || Has("floor_height"),
+            "cad.draw_text" => Has("text"),
+            "cad.draw_mtext" => Has("text"),
+            "cad.draw_dimension" => (Has("x1") && Has("y1") && Has("x2") && Has("y2")) || (Has("start") && Has("end")),
+            "cad.insert_block" => Has("name"),
+            _ => true,
+        };
+    }
+
+    private static bool IsCadWriteToolName(string toolName)
+    {
+        var name = (toolName ?? "").ToLowerInvariant();
+        return name is "cad.create_layer" or "cad.draw_line" or "cad.draw_polyline" or "cad.draw_circle" or
+            "cad.draw_arc" or "cad.draw_rectangle" or "cad.draw_room" or "cad.draw_wall" or
+            "cad.draw_stair" or "cad.draw_text" or "cad.draw_mtext" or "cad.draw_dimension" or
+            "cad.insert_block" or "cad.move_entities" or "cad.copy_entities" or "cad.rotate_entities" or
+            "cad.scale_entities" or "cad.offset_entities" or "cad.delete_entities" or "cad.change_layer" or
+            "cad.set_properties";
+    }
+
+    private static JsonNode? CloneJsonNode(JsonNode node) => JsonNode.Parse(node.ToJsonString());
+
+    private static JsonObject? CloneJsonObject(JsonObject? obj) =>
+        obj == null ? null : JsonNode.Parse(obj.ToJsonString())?.AsObject();
+
+    private static JsonArray CloneJsonArray(JsonArray arr) =>
+        JsonNode.Parse(arr.ToJsonString())?.AsArray() ?? new JsonArray();
 
     private static string AgentSystemPrompt() => """
 You are VoiceCAD, an AutoCAD agent.

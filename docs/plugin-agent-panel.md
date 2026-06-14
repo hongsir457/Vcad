@@ -101,6 +101,10 @@ Response:
 
 The plugin executes `cad.*` calls because only the AutoCAD process has safe
 access to the drawing. It calls `/agent/turn` again with the tool results.
+AgentLite must return executable `tool_calls` to the plugin. If a model returns
+CAD-IR operations without `tool_calls`, AgentLite compiles those operations
+before responding; the plugin no longer performs local fallback conversion or
+guesses CAD actions from natural language.
 
 ## Tool Ownership
 

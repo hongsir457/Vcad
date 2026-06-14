@@ -60,6 +60,91 @@ public class HttpEndpointTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public void Agent_response_compiles_cad_ir_to_tool_calls()
+    {
+        var req = new AgentTurnRequest
+        {
+            session_id = "cad-ir-compile-test",
+            message = "draw a 6000 x 4000 rectangle on E2E-TEST",
+        };
+        var modelContent = """
+        {
+          "assistant_message": "我会在当前 DWG 中绘制矩形。",
+          "cad_brief": {
+            "task_type": "new_geometry",
+            "objective": "draw a 6000 x 4000 rectangle",
+            "primary_artifact": "active AutoCAD DWG",
+            "units": "mm",
+            "assumptions": [],
+            "validation_targets": ["E2E-TEST layer exists", "rectangle exists"]
+          },
+          "task_plan": {
+            "steps": ["observe DWG", "prepare CAD-IR", "execute via tools"],
+            "next_step": "execute cad.draw_rectangle"
+          },
+          "cad_ir": {
+            "operations": [
+              {
+                "action": "create_layer",
+                "target_layer": "E2E-TEST",
+                "parameters": { "color": 3 }
+              },
+              {
+                "action": "draw_rectangle",
+                "target_layer": "E2E-TEST",
+                "parameters": { "x": 0, "y": 0, "width": 6000, "height": 4000, "color": 3 }
+              }
+            ],
+            "expected_effect": {
+              "layers": ["E2E-TEST"],
+              "object_types": ["Polyline"]
+            }
+          },
+          "safety": {
+            "risk_level": "low",
+            "writes_dwg": true,
+            "destructive": false,
+            "requires_confirmation": false,
+            "reason": "adds new geometry only"
+          },
+          "validation": {
+            "planned_checks": ["cad.validate_dwg_state"],
+            "success_criteria": ["rectangle is created"]
+          },
+          "trace": [],
+          "tool_calls": [],
+          "requires_user_input": false,
+          "clarification": null,
+          "done": false
+        }
+        """;
+
+        var parse = typeof(AgentTurnService).GetMethod(
+            "ParseAgentResponse",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        var compile = typeof(AgentTurnService).GetMethod(
+            "CompileCadIrToToolCalls",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        Assert.NotNull(parse);
+        Assert.NotNull(compile);
+
+        var response = Assert.IsType<AgentTurnResponse>(parse!.Invoke(null, new object[] { modelContent, req }));
+        Assert.Empty(response.tool_calls);
+
+        compile!.Invoke(null, new object[] { response });
+
+        Assert.Contains(response.tool_calls, call => call.name == "cad.preview_plan");
+        Assert.Contains(response.tool_calls, call => call.name == "cad.create_layer");
+        var draw = Assert.Single(response.tool_calls.Where(call => call.name == "cad.draw_rectangle"));
+        Assert.Equal("E2E-TEST", draw.args["layer"]!.GetValue<string>());
+        Assert.Equal(6000, draw.args["width"]!.GetValue<int>());
+        Assert.Equal(4000, draw.args["height"]!.GetValue<int>());
+        Assert.False(response.requires_user_input);
+        Assert.Null(response.clarification);
+    }
+
+    [Fact]
     public async Task Tools_returns_registered_tool_manifest()
     {
         var client = _factory.CreateClient();
