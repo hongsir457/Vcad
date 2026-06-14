@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 
 namespace Vcad.AgentLite;
 
@@ -12,6 +13,11 @@ public sealed class AgentTurnService
     public async Task<AgentTurnResponse> RunAsync(AgentTurnRequest req)
     {
         var options = ProviderRequestOptions.From(req.provider);
+        if (TryCreateDeterministicToolResponse(req, options, out var deterministic))
+        {
+            return deterministic;
+        }
+
         var provider = string.IsNullOrWhiteSpace(options.Name) ? "echo" : options.Name.ToLowerInvariant();
         return provider switch
         {
@@ -24,6 +30,15 @@ public sealed class AgentTurnService
     public async Task<AgentTurnResponse> RunStreamingAsync(AgentTurnRequest req, Func<string, Task> onDelta)
     {
         var options = ProviderRequestOptions.From(req.provider);
+        if (TryCreateDeterministicToolResponse(req, options, out var deterministic))
+        {
+            if (!string.IsNullOrWhiteSpace(deterministic.assistant_message) && onDelta != null)
+            {
+                await onDelta(deterministic.assistant_message);
+            }
+            return deterministic;
+        }
+
         var provider = string.IsNullOrWhiteSpace(options.Name) ? "echo" : options.Name.ToLowerInvariant();
         if (provider is "openai" or "deepseek" or "custom")
         {
@@ -83,6 +98,7 @@ public sealed class AgentTurnService
 
         var response = ParseAgentResponse(content, req);
         CompileCadIrToToolCalls(response);
+        EnsureDeterministicToolPlan(req, response);
         response.usage = ExtractOpenAiUsage(parsed, options, parsed?["model"]?.GetValue<string>() ?? model, req, content);
         return response;
     }
@@ -185,6 +201,7 @@ public sealed class AgentTurnService
 
         var response = ParseAgentResponse(raw, req);
         CompileCadIrToToolCalls(response);
+        EnsureDeterministicToolPlan(req, response);
         if (onDelta != null && visibleChars == 0 && !string.IsNullOrWhiteSpace(response.assistant_message))
         {
             await onDelta(response.assistant_message);
@@ -235,6 +252,7 @@ public sealed class AgentTurnService
 
         var response = ParseAgentResponse(content, req);
         CompileCadIrToToolCalls(response);
+        EnsureDeterministicToolPlan(req, response);
         response.usage = ExtractAnthropicUsage(parsed, options, parsed?["model"]?.GetValue<string>() ?? model, req, content);
         return response;
     }
@@ -494,6 +512,192 @@ public sealed class AgentTurnService
             summary = "AgentLite 已将模型返回的 CAD-IR 编译为可执行 cad.* tool_calls。",
         });
     }
+
+    private static void EnsureDeterministicToolPlan(AgentTurnRequest req, AgentTurnResponse response)
+    {
+        if (response.tool_calls.Count > 0) return;
+        if (req.tool_results is { Count: > 0 }) return;
+        if (!TryParseRectangleRequest(req.message ?? "", out var rect)) return;
+
+        var operations = new JsonArray(
+            new JsonObject
+            {
+                ["action"] = "create_layer",
+                ["target_layer"] = rect.Layer,
+                ["parameters"] = new JsonObject { ["color"] = 7 },
+            },
+            new JsonObject
+            {
+                ["action"] = "draw_rectangle",
+                ["target_layer"] = rect.Layer,
+                ["parameters"] = new JsonObject
+                {
+                    ["x"] = rect.X,
+                    ["y"] = rect.Y,
+                    ["width"] = rect.Width,
+                    ["height"] = rect.Height,
+                    ["color"] = 7,
+                },
+            });
+
+        response.assistant_message = string.IsNullOrWhiteSpace(response.assistant_message)
+            ? $"我会调用 CAD 工具创建图层 {rect.Layer}，并在 ({rect.X},{rect.Y}) 绘制 {rect.Width} x {rect.Height} 的矩形。"
+            : response.assistant_message;
+        response.cad_brief ??= new JsonObject
+        {
+            ["task_type"] = "new_geometry",
+            ["objective"] = $"draw rectangle {rect.Width} x {rect.Height}",
+            ["primary_artifact"] = "active AutoCAD DWG",
+            ["units"] = "mm",
+        };
+        response.task_plan ??= new JsonObject
+        {
+            ["steps"] = new JsonArray("prepare deterministic CAD tool plan", "preview writes", "execute rectangle tool", "validate result"),
+            ["next_step"] = "execute cad.draw_rectangle",
+        };
+        response.cad_ir = new JsonObject
+        {
+            ["operations"] = operations.DeepClone(),
+            ["expected_effect"] = new JsonObject
+            {
+                ["layers"] = new JsonArray(rect.Layer),
+                ["object_types"] = new JsonArray("Polyline"),
+                ["bounds"] = new JsonObject
+                {
+                    ["min_x"] = rect.X,
+                    ["min_y"] = rect.Y,
+                    ["max_x"] = rect.X + rect.Width,
+                    ["max_y"] = rect.Y + rect.Height,
+                },
+            },
+        };
+        response.safety ??= new JsonObject
+        {
+            ["risk_level"] = "low",
+            ["writes_dwg"] = true,
+            ["destructive"] = false,
+            ["requires_confirmation"] = false,
+            ["reason"] = "adds one new rectangle and layer only",
+        };
+        response.validation ??= new JsonObject
+        {
+            ["planned_checks"] = new JsonArray("cad.validate_dwg_state", "cad.measure_bounds"),
+            ["success_criteria"] = new JsonArray("layer exists", "one rectangle polyline exists", "bounds match requested size"),
+        };
+
+        response.tool_calls.Add(new AgentToolCall
+        {
+            id = "det-preview-" + Guid.NewGuid().ToString("N"),
+            name = "cad.preview_plan",
+            args = new JsonObject
+            {
+                ["writes_dwg"] = true,
+                ["operations"] = operations.DeepClone(),
+                ["expected_effect"] = response.cad_ir["expected_effect"]!.DeepClone(),
+            },
+        });
+        response.tool_calls.Add(new AgentToolCall
+        {
+            id = "det-layer-" + Guid.NewGuid().ToString("N"),
+            name = "cad.create_layer",
+            args = new JsonObject { ["name"] = rect.Layer, ["color"] = 7 },
+        });
+        response.tool_calls.Add(new AgentToolCall
+        {
+            id = "det-rect-" + Guid.NewGuid().ToString("N"),
+            name = "cad.draw_rectangle",
+            args = new JsonObject
+            {
+                ["layer"] = rect.Layer,
+                ["color"] = 7,
+                ["x"] = rect.X,
+                ["y"] = rect.Y,
+                ["width"] = rect.Width,
+                ["height"] = rect.Height,
+            },
+        });
+
+        response.requires_user_input = false;
+        response.clarification = null;
+        response.done = false;
+        response.trace.Add(new AgentTraceEvent
+        {
+            title = "确定性工具计划",
+            summary = "模型未返回工具调用；AgentLite 从明确的矩形绘图请求生成 cad.* tool_calls。",
+        });
+    }
+
+    private static bool TryCreateDeterministicToolResponse(
+        AgentTurnRequest req,
+        ProviderRequestOptions options,
+        out AgentTurnResponse response)
+    {
+        response = new AgentTurnResponse();
+        if (req.tool_results is { Count: > 0 }) return false;
+        if (!TryParseRectangleRequest(req.message ?? "", out _)) return false;
+
+        response = new AgentTurnResponse
+        {
+            session_id = FirstNonEmpty(req.session_id, "agent-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff")),
+            assistant_message = "我识别到这是明确的矩形绘图指令，会直接调用 CAD 工具创建图层并绘制矩形。",
+            done = false,
+            usage = EstimateUsage(options, string.IsNullOrWhiteSpace(options.Model) ? "deterministic-tool-plan" : options.Model, req, "deterministic-tool-plan"),
+        };
+        EnsureDeterministicToolPlan(req, response);
+        return response.tool_calls.Count > 0;
+    }
+
+    private sealed record RectanglePlan(double X, double Y, double Width, double Height, string Layer);
+
+    private static bool TryParseRectangleRequest(string text, out RectanglePlan plan)
+    {
+        plan = new RectanglePlan(0, 0, 0, 0, "A-GEOM");
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        var s = text.Replace('×', 'x');
+        if (!ContainsAny(s, "rectangle", "rect", "矩形", "长方形")) return false;
+        if (!ContainsAny(s, "draw", "create", "绘制", "画", "新增", "生成")) return false;
+
+        var dimMatch = Regex.Match(s,
+            @"(?<w>-?\d+(?:\.\d+)?)\s*(?<wu>mm|毫米|m|米)?\s*(?:x|by|\*)\s*(?<h>-?\d+(?:\.\d+)?)\s*(?<hu>mm|毫米|m|米)?",
+            RegexOptions.IgnoreCase);
+        if (!dimMatch.Success) return false;
+
+        var width = ParseLength(dimMatch.Groups["w"].Value, dimMatch.Groups["wu"].Value);
+        var height = ParseLength(dimMatch.Groups["h"].Value, dimMatch.Groups["hu"].Value);
+        if (width <= 0 || height <= 0) return false;
+
+        var x = 0d;
+        var y = 0d;
+        var pointMatch = Regex.Match(s,
+            @"(?:lower[- ]?left(?:\s+at)?|at|origin|base(?:\s+point)?|左下角|基点|原点)\s*[:：]?\s*\(?\s*(?<x>-?\d+(?:\.\d+)?)\s*[,，]\s*(?<y>-?\d+(?:\.\d+)?)",
+            RegexOptions.IgnoreCase);
+        if (pointMatch.Success)
+        {
+            x = ParseDouble(pointMatch.Groups["x"].Value);
+            y = ParseDouble(pointMatch.Groups["y"].Value);
+        }
+
+        var layer = FirstNonEmpty(
+            Regex.Match(s, @"(?:layer|图层)\s*[:：]?\s*(?<layer>[A-Za-z0-9_.#-]+)", RegexOptions.IgnoreCase).Groups["layer"].Value,
+            "A-GEOM");
+
+        plan = new RectanglePlan(x, y, width, height, layer);
+        return true;
+    }
+
+    private static double ParseLength(string value, string unit)
+    {
+        var n = ParseDouble(value);
+        if (unit.Equals("m", StringComparison.OrdinalIgnoreCase) || unit == "米")
+        {
+            return n * 1000d;
+        }
+        return n;
+    }
+
+    private static double ParseDouble(string value) =>
+        double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var n) ? n : 0d;
 
     private static JsonObject BuildToolArgsFromCadIrOperation(JsonObject operation, string toolName)
     {

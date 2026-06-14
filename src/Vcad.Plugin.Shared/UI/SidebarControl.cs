@@ -2364,6 +2364,7 @@ Copy-Item ""bundle\Acad2017"" $dest -Recurse -Force
         {
             if (string.IsNullOrWhiteSpace(text)) return false;
             var s = text.Trim();
+            if (LooksLikeCadWriteRequest(s)) return false;
             if (!LooksLikeCapabilityQuestion(s)) return false;
 
             _txtNaturalLanguage.Text = "";

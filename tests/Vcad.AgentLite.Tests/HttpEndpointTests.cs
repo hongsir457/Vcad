@@ -145,6 +145,58 @@ public class HttpEndpointTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public void Agent_response_adds_deterministic_rectangle_tool_plan_when_model_only_talks()
+    {
+        var req = new AgentTurnRequest
+        {
+            session_id = "det-rectangle-test",
+            message = "draw rectangle 1000x600 at 0,0 layer E2E-TEST",
+        };
+        var modelContent = """
+        {
+          "assistant_message": "I will draw the requested rectangle.",
+          "cad_brief": null,
+          "task_plan": null,
+          "cad_ir": null,
+          "safety": null,
+          "validation": null,
+          "trace": [],
+          "tool_calls": [],
+          "requires_user_input": true,
+          "clarification": {
+            "question": "Please confirm dimensions.",
+            "options": ["1000x600"]
+          },
+          "done": false
+        }
+        """;
+
+        var parse = typeof(AgentTurnService).GetMethod(
+            "ParseAgentResponse",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        var ensure = typeof(AgentTurnService).GetMethod(
+            "EnsureDeterministicToolPlan",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        Assert.NotNull(parse);
+        Assert.NotNull(ensure);
+
+        var response = Assert.IsType<AgentTurnResponse>(parse!.Invoke(null, new object[] { modelContent, req }));
+        Assert.Empty(response.tool_calls);
+
+        ensure!.Invoke(null, new object[] { req, response });
+
+        Assert.Contains(response.tool_calls, call => call.name == "cad.preview_plan");
+        Assert.Contains(response.tool_calls, call => call.name == "cad.create_layer");
+        var draw = Assert.Single(response.tool_calls.Where(call => call.name == "cad.draw_rectangle"));
+        Assert.Equal("E2E-TEST", draw.args["layer"]!.GetValue<string>());
+        Assert.Equal(1000, draw.args["width"]!.GetValue<double>());
+        Assert.Equal(600, draw.args["height"]!.GetValue<double>());
+        Assert.False(response.requires_user_input);
+        Assert.Null(response.clarification);
+    }
+
+    [Fact]
     public async Task Tools_returns_registered_tool_manifest()
     {
         var client = _factory.CreateClient();
