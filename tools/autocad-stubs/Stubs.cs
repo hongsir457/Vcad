@@ -67,6 +67,24 @@ namespace Autodesk.AutoCAD.Geometry
     {
         public double X, Y;
         public Point2d(double x, double y) { X = x; Y = y; }
+        public static Point2d Origin => new Point2d(0, 0);
+        public double GetDistanceTo(Point2d p)
+        {
+            double dx = p.X - X, dy = p.Y - Y;
+            return System.Math.Sqrt(dx * dx + dy * dy);
+        }
+        public static Vector2d operator -(Point2d a, Point2d b) => new Vector2d(a.X - b.X, a.Y - b.Y);
+        public static Point2d operator +(Point2d a, Vector2d v) => new Point2d(a.X + v.X, a.Y + v.Y);
+    }
+
+    public struct Vector2d
+    {
+        public double X, Y;
+        public Vector2d(double x, double y) { X = x; Y = y; }
+        public double Length => System.Math.Sqrt(X * X + Y * Y);
+        public double DotProduct(Vector2d o) => X * o.X + Y * o.Y;
+        public static Vector2d operator *(Vector2d v, double s) => new Vector2d(v.X * s, v.Y * s);
+        public static Vector2d operator *(double s, Vector2d v) => new Vector2d(v.X * s, v.Y * s);
     }
 
     public struct Point3d
@@ -74,6 +92,13 @@ namespace Autodesk.AutoCAD.Geometry
         public double X, Y, Z;
         public Point3d(double x, double y, double z) { X = x; Y = y; Z = z; }
         public static Point3d Origin => new Point3d(0, 0, 0);
+        public double DistanceTo(Point3d p)
+        {
+            double dx = p.X - X, dy = p.Y - Y, dz = p.Z - Z;
+            return System.Math.Sqrt(dx * dx + dy * dy + dz * dz);
+        }
+        public static Vector3d operator -(Point3d a, Point3d b) => new Vector3d(a.X - b.X, a.Y - b.Y, a.Z - b.Z);
+        public static Point3d operator +(Point3d a, Vector3d v) => new Point3d(a.X + v.X, a.Y + v.Y, a.Z + v.Z);
     }
 
     public struct Vector3d
@@ -81,12 +106,28 @@ namespace Autodesk.AutoCAD.Geometry
         public double X, Y, Z;
         public Vector3d(double x, double y, double z) { X = x; Y = y; Z = z; }
         public static Vector3d ZAxis => new Vector3d(0, 0, 1);
+        public double Length => System.Math.Sqrt(X * X + Y * Y + Z * Z);
+        public double DotProduct(Vector3d o) => X * o.X + Y * o.Y + Z * o.Z;
+        public Vector3d GetNormal() => new Vector3d(0, 0, 1);
+        public Vector3d CrossProduct(Vector3d o) =>
+            new Vector3d(Y * o.Z - Z * o.Y, Z * o.X - X * o.Z, X * o.Y - Y * o.X);
+        public static Vector3d operator *(Vector3d v, double s) => new Vector3d(v.X * s, v.Y * s, v.Z * s);
+        public static Vector3d operator *(double s, Vector3d v) => new Vector3d(v.X * s, v.Y * s, v.Z * s);
+        public static Vector3d operator +(Vector3d a, Vector3d b) => new Vector3d(a.X + b.X, a.Y + b.Y, a.Z + b.Z);
+        public static Vector3d operator -(Vector3d a, Vector3d b) => new Vector3d(a.X - b.X, a.Y - b.Y, a.Z - b.Z);
+    }
+
+    public struct Scale3d
+    {
+        public Scale3d(double s) { }
+        public Scale3d(double x, double y, double z) { }
     }
 
     public struct Matrix3d
     {
         public static Matrix3d Rotation(double angleRad, Vector3d axis, Point3d center) => default(Matrix3d);
         public static Matrix3d Displacement(Vector3d v) => default(Matrix3d);
+        public static Matrix3d Scaling(double factor, Point3d center) => default(Matrix3d);
     }
 }
 
@@ -123,6 +164,7 @@ namespace Autodesk.AutoCAD.DatabaseServices
     {
         public static readonly ObjectId Null = default(ObjectId);
         public Handle Handle => default(Handle);
+        public bool IsNull => true;
         public override string ToString() => "0";
     }
 
@@ -169,8 +211,19 @@ namespace Autodesk.AutoCAD.DatabaseServices
     public class Entity : DBObject
     {
         public string Layer { get; set; }
+        public string Linetype { get; set; }
+        public LineWeight LineWeight { get; set; }
         public Autodesk.AutoCAD.Colors.Color Color { get; set; }
         public void TransformBy(Autodesk.AutoCAD.Geometry.Matrix3d m) { }
+        public Entity Clone() => this;
+        public void Erase() { }
+    }
+
+    public class Curve : Entity
+    {
+        public Autodesk.AutoCAD.Geometry.Point3d StartPoint { get; set; }
+        public Autodesk.AutoCAD.Geometry.Point3d EndPoint { get; set; }
+        public DBObjectCollection GetOffsetCurves(double distance) => new DBObjectCollection();
     }
 
     public class SymbolTable : DBObject, IEnumerable<ObjectId>
@@ -193,6 +246,7 @@ namespace Autodesk.AutoCAD.DatabaseServices
     {
         public const string ModelSpace = "*MODEL_SPACE";
         public const string PaperSpace = "*PAPER_SPACE";
+        public Autodesk.AutoCAD.Geometry.Point3d Origin { get; set; }
         public ObjectId AppendEntity(Entity ent) => default(ObjectId);
         public IEnumerator<ObjectId> GetEnumerator() { yield break; }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
@@ -220,13 +274,57 @@ namespace Autodesk.AutoCAD.DatabaseServices
         public Line(Autodesk.AutoCAD.Geometry.Point3d start, Autodesk.AutoCAD.Geometry.Point3d end) { }
     }
 
-    public class Polyline : Entity
+    public class Polyline : Curve
     {
         public Polyline() { }
         public Polyline(int capacity) { }
         public bool Closed { get; set; }
+        public double ConstantWidth { get; set; }
+        public int NumberOfVertices => 0;
         public void AddVertexAt(int index, Autodesk.AutoCAD.Geometry.Point2d p, double bulge, double startWidth, double endWidth) { }
+        public Autodesk.AutoCAD.Geometry.Point2d GetPoint2dAt(int i) => default(Autodesk.AutoCAD.Geometry.Point2d);
+        public Autodesk.AutoCAD.Geometry.Point3d GetPoint3dAt(int i) => default(Autodesk.AutoCAD.Geometry.Point3d);
     }
+
+    public class Circle : Curve
+    {
+        public Circle() { }
+        public Circle(Autodesk.AutoCAD.Geometry.Point3d center, Autodesk.AutoCAD.Geometry.Vector3d normal, double radius) { }
+        public Autodesk.AutoCAD.Geometry.Point3d Center { get; set; }
+        public double Radius { get; set; }
+    }
+
+    public class Arc : Curve
+    {
+        public Arc() { }
+        public Arc(Autodesk.AutoCAD.Geometry.Point3d center, double radius, double startAngle, double endAngle) { }
+        public Autodesk.AutoCAD.Geometry.Point3d Center { get; set; }
+        public double Radius { get; set; }
+        public double StartAngle { get; set; }
+        public double EndAngle { get; set; }
+    }
+
+    public class MText : Entity
+    {
+        public string Contents { get; set; }
+        public Autodesk.AutoCAD.Geometry.Point3d Location { get; set; }
+        public double TextHeight { get; set; }
+        public double Rotation { get; set; }
+        public double Width { get; set; }
+        public ObjectId TextStyleId { get; set; }
+    }
+
+    public class AlignedDimension : Entity
+    {
+        public AlignedDimension() { }
+        public AlignedDimension(Autodesk.AutoCAD.Geometry.Point3d p1, Autodesk.AutoCAD.Geometry.Point3d p2,
+            Autodesk.AutoCAD.Geometry.Point3d dimLinePoint, string text, ObjectId dimStyle) { }
+        public string DimensionText { get; set; }
+        public ObjectId DimensionStyle { get; set; }
+    }
+
+    public class DimStyleTable : SymbolTable { }
+    public class DimStyleTableRecord : SymbolTableRecord { }
 
     public class DBText : Entity
     {
@@ -244,10 +342,13 @@ namespace Autodesk.AutoCAD.DatabaseServices
 
     public class BlockReference : Entity
     {
+        public BlockReference() { }
+        public BlockReference(Autodesk.AutoCAD.Geometry.Point3d position, ObjectId blockId) { }
         public string Name { get; set; }
         public string BlockName { get; set; }
         public Autodesk.AutoCAD.Geometry.Point3d Position { get; set; }
         public double Rotation { get; set; }
+        public Autodesk.AutoCAD.Geometry.Scale3d ScaleFactors { get; set; }
         public void Explode(DBObjectCollection collection) { }
     }
 
@@ -270,6 +371,11 @@ namespace Autodesk.AutoCAD.DatabaseServices
         public ObjectId LayerTableId => default(ObjectId);
         public ObjectId LinetypeTableId => default(ObjectId);
         public ObjectId TextStyleTableId => default(ObjectId);
+        public ObjectId DimStyleTableId => default(ObjectId);
+        public ObjectId Clayer { get; set; }
+        public ObjectId Celtype { get; set; }
+        public ObjectId Textstyle { get; set; }
+        public ObjectId Dimstyle { get; set; }
         public TransactionManager TransactionManager { get; } = new TransactionManager();
         public string Filename { get; set; }
     }
