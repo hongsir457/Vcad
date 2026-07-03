@@ -1,0 +1,50 @@
+{
+  "meta": {
+    "name": "两开间框架结构平面图",
+    "desc": "12.0m × 5.0m 两跨框架, 6 柱, 内隔墙带门, 多樘窗",
+    "scale": "1:100",
+    "units": "mm",
+    "region": "上海"
+  },
+  "levels": [
+    { "name": "1F", "elev": 0, "height": 3900 }
+  ],
+  "entities": [
+    { "layer": "AXIS", "type": "line", "p1": [0, -500], "p2": [0, 5500], "label": "1" },
+    { "layer": "AXIS", "type": "line", "p1": [6000, -500], "p2": [6000, 5500], "label": "2" },
+    { "layer": "AXIS", "type": "line", "p1": [12000, -500], "p2": [12000, 5500], "label": "3" },
+    { "layer": "AXIS", "type": "line", "p1": [-500, 0], "p2": [12500, 0], "label": "A" },
+    { "layer": "AXIS", "type": "line", "p1": [-500, 5000], "p2": [12500, 5000], "label": "B" },
+
+    { "layer": "COL", "type": "insert", "at": [0, 0], "tag": "KZ1 400x400" },
+    { "layer": "COL", "type": "insert", "at": [6000, 0], "tag": "KZ1 400x400" },
+    { "layer": "COL", "type": "insert", "at": [12000, 0], "tag": "KZ1 400x400" },
+    { "layer": "COL", "type": "insert", "at": [0, 5000], "tag": "KZ1 400x400" },
+    { "layer": "COL", "type": "insert", "at": [6000, 5000], "tag": "KZ1 400x400" },
+    { "layer": "COL", "type": "insert", "at": [12000, 5000], "tag": "KZ1 400x400" },
+
+    { "layer": "BEAM", "type": "line", "p1": [0, 0], "p2": [6000, 0], "tag": "KL1 300x600" },
+    { "layer": "BEAM", "type": "line", "p1": [6000, 0], "p2": [12000, 0], "tag": "KL1 300x600" },
+    { "layer": "BEAM", "type": "line", "p1": [0, 5000], "p2": [6000, 5000], "tag": "KL2 300x600" },
+    { "layer": "BEAM", "type": "line", "p1": [6000, 5000], "p2": [12000, 5000], "tag": "KL2 300x600" },
+    { "layer": "BEAM", "type": "line", "p1": [0, 0], "p2": [0, 5000], "tag": "KL3 300x600" },
+    { "layer": "BEAM", "type": "line", "p1": [6000, 0], "p2": [6000, 5000], "tag": "KL3 300x600" },
+    { "layer": "BEAM", "type": "line", "p1": [12000, 0], "p2": [12000, 5000], "tag": "KL3 300x600" },
+
+    { "layer": "WALL", "type": "line", "p1": [0, 0], "p2": [6000, 0], "width": 200, "tag": "加气混凝土砌块" },
+    { "layer": "WALL", "type": "line", "p1": [6000, 0], "p2": [12000, 0], "width": 200, "tag": "加气混凝土砌块" },
+    { "layer": "WALL", "type": "line", "p1": [0, 5000], "p2": [6000, 5000], "width": 200, "tag": "加气混凝土砌块" },
+    { "layer": "WALL", "type": "line", "p1": [6000, 5000], "p2": [12000, 5000], "width": 200, "tag": "加气混凝土砌块" },
+    { "layer": "WALL", "type": "line", "p1": [0, 0], "p2": [0, 5000], "width": 200, "tag": "加气混凝土砌块" },
+    { "layer": "WALL", "type": "line", "p1": [12000, 0], "p2": [12000, 5000], "width": 200, "tag": "加气混凝土砌块" },
+    { "layer": "WALL", "type": "line", "p1": [6000, 0], "p2": [6000, 5000], "width": 200, "tag": "加气混凝土砌块" },
+
+    { "layer": "DOOR", "type": "insert", "at": [3000, 0], "tag": "M1521" },
+    { "layer": "DOOR", "type": "insert", "at": [6000, 2500], "tag": "M0921" },
+    { "layer": "WIN", "type": "insert", "at": [9000, 0], "tag": "C1515", "sill": 900 },
+    { "layer": "WIN", "type": "insert", "at": [3000, 5000], "tag": "C2415", "sill": 900 },
+    { "layer": "WIN", "type": "insert", "at": [9000, 5000], "tag": "C2415", "sill": 900 },
+
+    { "layer": "SLAB", "type": "hatch", "pts": [[-200, -200], [12200, -200], [12200, 5200], [-200, 5200]], "tag": "h=130" }
+  ]
+}
