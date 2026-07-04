@@ -1,0 +1,62 @@
+{
+  "meta": {
+    "name": "全专业样例: 单间办公室(结构+水暖电)",
+    "desc": "在 case01 结构基础上叠加给排水(管道/阀门/器具)、暖通(风管/风口)、电气(桥架/灯具/开关插座)",
+    "scale": "1:100",
+    "units": "mm",
+    "region": "上海"
+  },
+  "levels": [
+    { "name": "1F", "elev": 0, "height": 3600 }
+  ],
+  "entities": [
+    { "layer": "AXIS", "type": "line", "p1": [0, -500], "p2": [0, 5000], "label": "1" },
+    { "layer": "AXIS", "type": "line", "p1": [6000, -500], "p2": [6000, 5000], "label": "2" },
+    { "layer": "AXIS", "type": "line", "p1": [-500, 0], "p2": [6500, 0], "label": "A" },
+    { "layer": "AXIS", "type": "line", "p1": [-500, 4500], "p2": [6500, 4500], "label": "B" },
+
+    { "layer": "COL", "type": "insert", "at": [0, 0], "tag": "KZ1 400x400" },
+    { "layer": "COL", "type": "insert", "at": [6000, 0], "tag": "KZ1 400x400" },
+    { "layer": "COL", "type": "insert", "at": [0, 4500], "tag": "KZ1 400x400" },
+    { "layer": "COL", "type": "insert", "at": [6000, 4500], "tag": "KZ1 400x400" },
+
+    { "layer": "BEAM", "type": "line", "p1": [0, 0], "p2": [6000, 0], "tag": "KL1 250x500" },
+    { "layer": "BEAM", "type": "line", "p1": [0, 4500], "p2": [6000, 4500], "tag": "KL2 250x500" },
+    { "layer": "BEAM", "type": "line", "p1": [0, 0], "p2": [0, 4500], "tag": "KL3 250x500" },
+    { "layer": "BEAM", "type": "line", "p1": [6000, 0], "p2": [6000, 4500], "tag": "KL3 250x500" },
+
+    { "layer": "WALL", "type": "line", "p1": [0, 0], "p2": [6000, 0], "width": 200, "tag": "加气混凝土砌块" },
+    { "layer": "WALL", "type": "line", "p1": [0, 4500], "p2": [6000, 4500], "width": 200, "tag": "加气混凝土砌块" },
+    { "layer": "WALL", "type": "line", "p1": [0, 0], "p2": [0, 4500], "width": 200, "tag": "加气混凝土砌块" },
+    { "layer": "WALL", "type": "line", "p1": [6000, 0], "p2": [6000, 4500], "width": 200, "tag": "加气混凝土砌块" },
+
+    { "layer": "DOOR", "type": "insert", "at": [2500, 0], "tag": "M1021" },
+    { "layer": "WIN", "type": "insert", "at": [3000, 4500], "tag": "C1815", "sill": 900 },
+
+    { "layer": "SLAB", "type": "hatch", "pts": [[-200, -200], [6200, -200], [6200, 4700], [-200, 4700]], "tag": "h=120" },
+
+    { "layer": "PIPE", "type": "polyline", "pts": [[0, 2250], [3000, 2250], [3000, 4500]],
+      "tag": "DN50", "system": "给水", "material": "镀锌钢管", "elev": 2800 },
+    { "layer": "PIPE", "type": "polyline", "pts": [[5000, 0], [5000, 2000], [2000, 2000]],
+      "tag": "DN110", "system": "排水", "material": "UPVC", "elev": 300 },
+    { "layer": "VALVE", "type": "insert", "at": [500, 2250], "tag": "DN50" },
+    { "layer": "FIXTURE", "type": "insert", "at": [3000, 4200], "tag": "洗脸盆" },
+    { "layer": "FIXTURE", "type": "insert", "at": [2000, 1800], "tag": "大便器" },
+
+    { "layer": "DUCT", "type": "polyline", "pts": [[500, 3500], [5500, 3500]],
+      "w": 400, "h": 250, "system": "送风", "elev": 2900 },
+    { "layer": "AIRT", "type": "insert", "at": [1500, 3500], "tag": "方形散流器 300x300" },
+    { "layer": "AIRT", "type": "insert", "at": [4500, 3500], "tag": "方形散流器 300x300" },
+
+    { "layer": "TRAY", "type": "polyline", "pts": [[500, 1000], [5500, 1000]],
+      "w": 200, "h": 100, "elev": 2700 },
+    { "layer": "LUM", "type": "insert", "at": [1500, 1500], "tag": "LED面板灯 600x600" },
+    { "layer": "LUM", "type": "insert", "at": [4500, 1500], "tag": "LED面板灯 600x600" },
+    { "layer": "LUM", "type": "insert", "at": [1500, 3000], "tag": "LED面板灯 600x600" },
+    { "layer": "LUM", "type": "insert", "at": [4500, 3000], "tag": "LED面板灯 600x600" },
+    { "layer": "SWITCH", "type": "insert", "at": [3200, 100], "tag": "单联开关" },
+    { "layer": "SOCKET", "type": "insert", "at": [1000, 100], "tag": "五孔插座" },
+    { "layer": "SOCKET", "type": "insert", "at": [5000, 100], "tag": "五孔插座" },
+    { "layer": "SOCKET", "type": "insert", "at": [100, 2250], "tag": "五孔插座" }
+  ]
+}

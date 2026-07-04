@@ -22,7 +22,19 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from .drawing import Beam, Column, Opening, ParsedDrawing, SteelBeam, SteelColumn, Wall
+from .drawing import (
+    Beam,
+    Column,
+    Device,
+    Duct,
+    Opening,
+    ParsedDrawing,
+    Pipe,
+    SteelBeam,
+    SteelColumn,
+    Tray,
+    Wall,
+)
 
 EPS = 1e-6
 
@@ -248,6 +260,95 @@ def build_slab(slab, elev: float, story_h: float) -> ModelElement:
         "points": [[round(x, 5), round(y, 5)] for x, y in slab.polygon],
         "z0": round(z_top - slab.thickness, 5), "z1": round(z_top, 5),
     })
+    return e
+
+
+# ---------------------------------------------------------------------------
+# 安装专业建模: 管道(圆柱) / 风管、桥架(矩形) / 点式器具
+# ---------------------------------------------------------------------------
+
+PIPE_DN_RADIUS = {  # 公称直径 -> 外半径近似, m
+    "DN15": 0.011, "DN20": 0.013, "DN25": 0.017, "DN32": 0.021,
+    "DN40": 0.024, "DN50": 0.030, "DN65": 0.038, "DN80": 0.044,
+    "DN100": 0.057, "DN110": 0.055, "DN125": 0.070, "DN150": 0.084,
+}
+
+
+def build_pipe(pipe: Pipe, elev0: float) -> ModelElement:
+    r = PIPE_DN_RADIUS.get(pipe.dn.upper(), 0.03)
+    z = elev0 + pipe.elev
+    e = ModelElement(
+        eid=pipe.eid, category="pipe", tag=f"{pipe.system} {pipe.dn}",
+        level=pipe.level,
+        params={"system": pipe.system, "material": pipe.material, "dn": pipe.dn,
+                "length": round(pipe.length, 4), "elev": pipe.elev,
+                "segments": [[list(a), list(b)] for a, b in
+                             zip(pipe.pts[:-1], pipe.pts[1:])]},
+    )
+    for (x1, y1), (x2, y2) in zip(pipe.pts[:-1], pipe.pts[1:]):
+        e.primitives.append({
+            "kind": "cylinder", "eid": pipe.eid, "category": "pipe",
+            "system": pipe.system,
+            "p1": [round(x1, 5), round(y1, 5), round(z, 5)],
+            "p2": [round(x2, 5), round(y2, 5), round(z, 5)],
+            "r": r,
+        })
+    return e
+
+
+def _run_boxes(e: ModelElement, cat: str, pts, w: float, h: float, z: float) -> None:
+    for (x1, y1), (x2, y2) in zip(pts[:-1], pts[1:]):
+        L = math.hypot(x2 - x1, y2 - y1)
+        if L < EPS:
+            continue
+        rot = math.atan2(y2 - y1, x2 - x1)
+        e.primitives.append(box(e.eid, cat, (x1 + x2) / 2, (y1 + y2) / 2,
+                                z, L, w, h, rot))
+
+
+def build_duct(duct: Duct, elev0: float) -> ModelElement:
+    e = ModelElement(
+        eid=duct.eid, category="duct",
+        tag=f"{duct.system} {int(duct.w * 1000)}×{int(duct.h * 1000)}",
+        level=duct.level,
+        params={"system": duct.system, "w": duct.w, "h": duct.h,
+                "length": round(duct.length, 4), "elev": duct.elev},
+    )
+    _run_boxes(e, "duct", duct.pts, duct.w, duct.h, elev0 + duct.elev)
+    return e
+
+
+def build_tray(tray: Tray, elev0: float) -> ModelElement:
+    e = ModelElement(
+        eid=tray.eid, category="tray",
+        tag=f"桥架 {int(tray.w * 1000)}×{int(tray.h * 1000)}",
+        level=tray.level,
+        params={"w": tray.w, "h": tray.h,
+                "length": round(tray.length, 4), "elev": tray.elev},
+    )
+    _run_boxes(e, "tray", tray.pts, tray.w, tray.h, elev0 + tray.elev)
+    return e
+
+
+DEVICE_SIZE = {  # 点式项的三维示意尺寸 (x, y, z), m
+    "valve": (0.12, 0.12, 0.12),
+    "fixture": (0.55, 0.45, 0.40),
+    "air_terminal": (0.30, 0.30, 0.06),
+    "luminaire": (0.60, 0.60, 0.05),
+    "switch": (0.09, 0.04, 0.09),
+    "socket": (0.09, 0.04, 0.09),
+}
+
+
+def build_device(dev: Device, elev0: float) -> ModelElement:
+    sx, sy, sz = DEVICE_SIZE.get(dev.kind, (0.2, 0.2, 0.2))
+    e = ModelElement(
+        eid=dev.eid, category=f"device_{dev.kind}", tag=dev.tag, level=dev.level,
+        params={"kind": dev.kind, "tag": dev.tag, "elev": dev.elev,
+                "x": dev.x, "y": dev.y},
+    )
+    e.primitives.append(box(dev.eid, f"device_{dev.kind}", dev.x, dev.y,
+                            elev0 + dev.elev + sz / 2, sx, sy, sz))
     return e
 
 

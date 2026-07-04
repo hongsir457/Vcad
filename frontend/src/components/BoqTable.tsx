@@ -12,6 +12,7 @@ export function BoqTable({ boq, checks }: { boq: BoqItem[]; checks: CrossCheck[]
           <tr>
             <th style={{ width: 36 }}>#</th>
             <th>项目编码</th>
+            <th>专业</th>
             <th>项目名称</th>
             <th>项目特征</th>
             <th style={{ textAlign: "right" }}>工程量</th>
@@ -29,6 +30,11 @@ export function BoqTable({ boq, checks }: { boq: BoqItem[]; checks: CrossCheck[]
               >
                 <td>{i + 1}</td>
                 <td className="code">{item.code}</td>
+                <td>
+                  <span className={"disc-chip d-" + (item.discipline ?? "结构")}>
+                    {item.discipline ?? "结构"}
+                  </span>
+                </td>
                 <td>{item.name}</td>
                 <td className="spec">{item.spec.join("；")}</td>
                 <td className="num">{item.qty.toFixed(item.unit === "樘" ? 0 : 2)}</td>
@@ -39,7 +45,7 @@ export function BoqTable({ boq, checks }: { boq: BoqItem[]; checks: CrossCheck[]
               </tr>
               {openCode === item.code && (
                 <tr>
-                  <td colSpan={7} style={{ background: "var(--c-surface-2)", padding: "10px 16px" }}>
+                  <td colSpan={8} style={{ background: "var(--c-surface-2)", padding: "10px 16px" }}>
                     <CalcLines lines={item.calc} />
                   </td>
                 </tr>

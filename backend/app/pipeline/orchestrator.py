@@ -24,9 +24,13 @@ from ..core.geometry import (
     build_beam,
     build_column,
     build_opening_panel,
+    build_device,
+    build_duct,
+    build_pipe,
     build_slab,
     build_steel_beam,
     build_steel_column,
+    build_tray,
     build_wall,
     check_model,
 )
@@ -66,7 +70,10 @@ def modeling_steps(raw: dict, params: QtoParams) -> Iterator[Event]:
                      f"梁 {len(dwg.beams)}, 墙 {len(dwg.walls)}, 板 {len(dwg.slabs)}, "
                      f"门窗 {sum(len(w.openings) for w in dwg.walls)}"
                      + (f", 钢柱 {len(dwg.steel_columns)}, 钢梁 {len(dwg.steel_beams)}"
-                        if dwg.steel_columns or dwg.steel_beams else ""))
+                        if dwg.steel_columns or dwg.steel_beams else "")
+                     + (f", 管道 {len(dwg.pipes)}, 风管 {len(dwg.ducts)}, "
+                        f"桥架 {len(dwg.trays)}, 点式设备 {len(dwg.devices)}"
+                        if dwg.pipes or dwg.ducts or dwg.trays or dwg.devices else ""))
     recog = raw.get("meta", {}).get("recognition")
     if recog:
         for line in recog.get("log", []):
@@ -166,6 +173,52 @@ def modeling_steps(raw: dict, params: QtoParams) -> Iterator[Event]:
         yield _log("m8", f"{e.eid}: 板厚 {slab.thickness:g}m, 面积 {slab.area:.2f}m²")
     yield _done("m8", f"布置板 {len(dwg.slabs)} 块")
 
+    # M10 给排水
+    if dwg.pipes or any(d.kind in ("valve", "fixture") for d in dwg.devices):
+        yield _start("m10", "给排水: 敷设管道与器具(按系统/标高)")
+        for pipe in dwg.pipes:
+            model.elements.append(build_pipe(pipe, lv.elevation))
+            yield _log("m10", f"{pipe.eid}: {pipe.system} {pipe.material} {pipe.dn}, "
+                              f"L={pipe.length:.2f}m, 标高 {pipe.elev:g}m")
+        n_dev = 0
+        for dev in dwg.devices:
+            if dev.kind in ("valve", "fixture"):
+                model.elements.append(build_device(dev, lv.elevation))
+                n_dev += 1
+        yield _done("m10", f"管道 {len(dwg.pipes)} 路, 阀门/器具 {n_dev} 个")
+
+    # M11 暖通
+    if dwg.ducts or any(d.kind == "air_terminal" for d in dwg.devices):
+        yield _start("m11", "暖通: 布置风管与风口")
+        for duct in dwg.ducts:
+            model.elements.append(build_duct(duct, lv.elevation))
+            yield _log("m11", f"{duct.eid}: {duct.system} "
+                              f"{int(duct.w * 1000)}×{int(duct.h * 1000)}, "
+                              f"L={duct.length:.2f}m, 标高 {duct.elev:g}m")
+        n_at = 0
+        for dev in dwg.devices:
+            if dev.kind == "air_terminal":
+                model.elements.append(build_device(dev, lv.elevation))
+                n_at += 1
+        yield _done("m11", f"风管 {len(dwg.ducts)} 路, 风口 {n_at} 个")
+
+    # M12 电气
+    elec_kinds = ("luminaire", "switch", "socket")
+    if dwg.trays or any(d.kind in elec_kinds for d in dwg.devices):
+        yield _start("m12", "电气: 敷设桥架与安装末端")
+        for tray in dwg.trays:
+            model.elements.append(build_tray(tray, lv.elevation))
+            yield _log("m12", f"{tray.eid}: 桥架 {int(tray.w * 1000)}×{int(tray.h * 1000)}, "
+                              f"L={tray.length:.2f}m, 标高 {tray.elev:g}m")
+        counts: dict[str, int] = {}
+        for dev in dwg.devices:
+            if dev.kind in elec_kinds:
+                model.elements.append(build_device(dev, lv.elevation))
+                counts[dev.kind] = counts.get(dev.kind, 0) + 1
+        names = {"luminaire": "灯具", "switch": "开关", "socket": "插座"}
+        yield _done("m12", f"桥架 {len(dwg.trays)} 路, " +
+                    ", ".join(f"{names[k]} {v}" for k, v in counts.items()))
+
     # M9 自检
     yield _start("m9", "模型自检(悬空/重叠/洞口越界)")
     issues = check_model(model, dwg)
@@ -222,6 +275,14 @@ def qto_steps(dwg: ParsedDrawing, model: BuildingModel,
         plan.append(("010801001", "木质门"))
     if model.by_category("window"):
         plan.append(("010807001", "金属(塑钢)窗"))
+    if model.by_category("pipe"):
+        plan.append(("0310010xx", "给排水管道(按系统/材质分列)"))
+    if model.by_category("duct"):
+        plan.append(("030902001", "通风管道(展开面积)"))
+    if model.by_category("tray"):
+        plan.append(("030411003", "电缆桥架"))
+    if any(e.category.startswith("device_") for e in model.elements):
+        plan.append(("0310/0304", "阀门/器具/风口/灯具/开关插座(按数量)"))
     if model.by_category("column"):
         plan.append(("011702002", "矩形柱模板(措施)"))
     if model.by_category("beam"):
@@ -238,6 +299,9 @@ def qto_steps(dwg: ParsedDrawing, model: BuildingModel,
          [qto_mod.calc_walls, qto_mod.calc_steel]),
         ("q5", "门窗与措施项目(模板)",
          [qto_mod.calc_doors_windows, qto_mod.calc_formwork]),
+        ("q5b", "安装工程: 给排水/暖通/电气 逐项列式",
+         [qto_mod.calc_pipes, qto_mod.calc_ducts, qto_mod.calc_trays,
+          qto_mod.calc_devices]),
     ]
     for step_id, title, fns in calcs:
         yield _start(step_id, title)

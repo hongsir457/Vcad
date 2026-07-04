@@ -169,11 +169,11 @@ def api_boq_csv(drawing_id: str) -> Response:
 
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["序号", "项目编码", "项目名称", "项目特征", "计量单位", "工程量", "备注"])
+    w.writerow(["序号", "项目编码", "专业", "项目名称", "项目特征", "计量单位", "工程量", "备注"])
     for i, item in enumerate(result["boq"], 1):
         extra = "; ".join(f"{k}{v}" for k, v in item.get("extra", {}).items())
-        w.writerow([i, item["code"], item["name"], "; ".join(item["spec"]),
-                    item["unit"], item["qty"], extra])
+        w.writerow([i, item["code"], item.get("discipline", "结构"), item["name"],
+                    "; ".join(item["spec"]), item["unit"], item["qty"], extra])
     data = "\ufeff" + buf.getvalue()  # BOM 使 Excel 正确识别 UTF-8
     return Response(
         content=data, media_type="text/csv; charset=utf-8",

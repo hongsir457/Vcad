@@ -286,6 +286,16 @@ body {
 .status-chip.warn { color: var(--c-accent); background: var(--wash-review); }
 .status-chip.info { color: var(--c-info); background: #e9f1f7; }
 
+.disc-chip {
+  display: inline-block; font-size: 11px; font-weight: 600;
+  padding: 1px 7px; border-radius: var(--radius-sm); white-space: nowrap;
+}
+.disc-chip.d-结构 { color: #35597a; background: #e7eef4; }
+.disc-chip.d-建筑 { color: #6a5a3a; background: #f2ede2; }
+.disc-chip.d-给排水 { color: var(--c-success); background: #e7f3ee; }
+.disc-chip.d-暖通 { color: #6a4a9c; background: #efe9f7; }
+.disc-chip.d-电气 { color: var(--c-warning); background: #f8f0dd; }
+
 /* ---- 计算书 ---- */
 .calc-sheet { padding: 16px 20px; max-width: 880px; }
 .calc-item {

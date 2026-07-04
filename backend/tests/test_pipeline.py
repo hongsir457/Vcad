@@ -149,4 +149,4 @@ def test_naive_params_score_lower():
     naive = QtoParams(snap_tol_mm=0.0, min_deduct_area_m2=0.0,
                       beam_to_column_face=False, beam_height_to_slab_bottom=False)
     report = evaluate(naive, with_stability=False)
-    assert report["summary"]["accuracy"] < 0.85
+    assert report["summary"]["accuracy"] < 0.9

@@ -149,6 +149,73 @@ class Slab:
         return polygon_area(self.polygon)
 
 
+# ---- 安装专业(给排水/暖通/电气) ----
+
+@dataclass
+class Pipe:
+    """管道(给水/排水/消防等), 按中心线长度计量。"""
+    eid: str
+    system: str        # 给水 | 排水 | 消防 | 采暖...
+    material: str      # 镀锌钢管 | PPR | UPVC...
+    dn: str            # DN50
+    pts: list[tuple[float, float]]  # 中心线折线, m
+    elev: float        # 敷设标高, m
+    level: str = "1F"
+
+    @property
+    def length(self) -> float:
+        return sum(math.hypot(self.pts[i + 1][0] - self.pts[i][0],
+                              self.pts[i + 1][1] - self.pts[i][1])
+                   for i in range(len(self.pts) - 1))
+
+
+@dataclass
+class Duct:
+    """矩形风管, 按展开面积计量 S = 2(w+h)×L。"""
+    eid: str
+    system: str        # 送风 | 回风 | 排风...
+    w: float           # 宽, m
+    h: float           # 高, m
+    pts: list[tuple[float, float]]
+    elev: float
+    level: str = "1F"
+
+    @property
+    def length(self) -> float:
+        return sum(math.hypot(self.pts[i + 1][0] - self.pts[i][0],
+                              self.pts[i + 1][1] - self.pts[i][1])
+                   for i in range(len(self.pts) - 1))
+
+
+@dataclass
+class Tray:
+    """电缆桥架, 按长度计量。"""
+    eid: str
+    w: float
+    h: float
+    pts: list[tuple[float, float]]
+    elev: float
+    level: str = "1F"
+
+    @property
+    def length(self) -> float:
+        return sum(math.hypot(self.pts[i + 1][0] - self.pts[i][0],
+                              self.pts[i + 1][1] - self.pts[i][1])
+                   for i in range(len(self.pts) - 1))
+
+
+@dataclass
+class Device:
+    """点式安装项: 阀门/卫生器具/风口/灯具/开关/插座等, 按个(套/组)计量。"""
+    eid: str
+    kind: str          # valve | fixture | air_terminal | luminaire | switch | socket
+    tag: str           # DN50 / 洗脸盆 / 方形散流器 / LED面板灯...
+    x: float
+    y: float
+    elev: float
+    level: str = "1F"
+
+
 @dataclass
 class ParsedDrawing:
     name: str
@@ -161,6 +228,10 @@ class ParsedDrawing:
     slabs: list[Slab]
     steel_columns: list[SteelColumn] = field(default_factory=list)
     steel_beams: list[SteelBeam] = field(default_factory=list)
+    pipes: list[Pipe] = field(default_factory=list)
+    ducts: list[Duct] = field(default_factory=list)
+    trays: list[Tray] = field(default_factory=list)
+    devices: list[Device] = field(default_factory=list)
 
     def level(self, name: str) -> Level:
         for lv in self.levels:
@@ -247,6 +318,10 @@ def parse_drawing(raw: dict, snap_tol_mm: float = 5.0) -> ParsedDrawing:
     slabs: list[Slab] = []
     steel_columns: list[SteelColumn] = []
     steel_beams: list[SteelBeam] = []
+    pipes: list[Pipe] = []
+    ducts: list[Duct] = []
+    trays: list[Tray] = []
+    devices: list[Device] = []
     pending_openings: list[tuple[Opening, tuple[float, float]]] = []
 
     counters: dict[str, int] = {}
@@ -314,6 +389,41 @@ def parse_drawing(raw: dict, snap_tol_mm: float = 5.0) -> ParsedDrawing:
                 inherited=bool(ent.get("inherited")), level=level,
             ))
 
+        elif layer == "PIPE":
+            pipes.append(Pipe(
+                next_eid("P"), system=ent.get("system", "给水"),
+                material=ent.get("material", "镀锌钢管"),
+                dn=ent.get("tag", "DN50"),
+                pts=[pt(p) for p in ent["pts"]],
+                elev=ent.get("elev", 2800) * MM, level=level,
+            ))
+
+        elif layer == "DUCT":
+            ducts.append(Duct(
+                next_eid("F"), system=ent.get("system", "送风"),
+                w=ent.get("w", 400) * MM, h=ent.get("h", 250) * MM,
+                pts=[pt(p) for p in ent["pts"]],
+                elev=ent.get("elev", 2900) * MM, level=level,
+            ))
+
+        elif layer == "TRAY":
+            trays.append(Tray(
+                next_eid("QJ"), w=ent.get("w", 200) * MM, h=ent.get("h", 100) * MM,
+                pts=[pt(p) for p in ent["pts"]],
+                elev=ent.get("elev", 2700) * MM, level=level,
+            ))
+
+        elif layer in ("VALVE", "FIXTURE", "AIRT", "LUM", "SWITCH", "SOCKET"):
+            kind = {"VALVE": "valve", "FIXTURE": "fixture", "AIRT": "air_terminal",
+                    "LUM": "luminaire", "SWITCH": "switch", "SOCKET": "socket"}[layer]
+            default_elev = {"valve": 2800, "fixture": 0, "air_terminal": 2900,
+                            "luminaire": 2950, "switch": 1300, "socket": 300}[kind]
+            x, y = pt(ent["at"])
+            devices.append(Device(
+                next_eid("D"), kind=kind, tag=ent.get("tag", ""),
+                x=x, y=y, elev=ent.get("elev", default_elev) * MM, level=level,
+            ))
+
         elif layer == "SLAB":
             th_m = re.search(r"h\s*=\s*(\d+)", ent.get("tag", "h=100"))
             slabs.append(Slab(
@@ -348,6 +458,10 @@ def parse_drawing(raw: dict, snap_tol_mm: float = 5.0) -> ParsedDrawing:
         slabs=slabs,
         steel_columns=steel_columns,
         steel_beams=steel_beams,
+        pipes=pipes,
+        ducts=ducts,
+        trays=trays,
+        devices=devices,
     )
 
 

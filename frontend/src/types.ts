@@ -31,7 +31,7 @@ export interface RawDrawing {
 }
 
 export interface Primitive {
-  kind: "box" | "extrude";
+  kind: "box" | "extrude" | "cylinder";
   eid: string;
   category: string;
   center?: number[];
@@ -40,6 +40,10 @@ export interface Primitive {
   points?: number[][];
   z0?: number;
   z1?: number;
+  p1?: number[];
+  p2?: number[];
+  r?: number;
+  system?: string;
 }
 
 export interface ModelElement {
@@ -72,6 +76,7 @@ export interface BoqItem {
   calc: CalcLine[];
   elements: string[];
   extra: Record<string, number>;
+  discipline?: string;
 }
 
 export interface CrossCheck {

@@ -82,11 +82,38 @@ RULES: dict[str, dict] = {
                   "rule": "按模板与现浇混凝土构件的接触面积计算: 断面周长 × 柱高"},
     "011702006": {"name": "矩形梁模板", "unit": "m²",
                   "rule": "按模板与现浇混凝土构件的接触面积计算: (梁底宽 + 2×梁侧净高) × 梁净长"},
+    # ---- 安装工程 GB50856-2013 (简化实现) ----
+    "031001001": {"name": "镀锌钢管", "unit": "m",
+                  "rule": "按设计图示管道中心线以长度计算, 不扣除阀门、管件及附件所占长度"},
+    "031001006": {"name": "塑料管", "unit": "m",
+                  "rule": "按设计图示管道中心线以长度计算, 不扣除阀门、管件及附件所占长度"},
+    "031003001": {"name": "螺纹阀门", "unit": "个", "rule": "按设计图示数量计算"},
+    "031004003": {"name": "洗脸盆", "unit": "组", "rule": "按设计图示数量计算(成组安装)"},
+    "031004006": {"name": "大便器", "unit": "组", "rule": "按设计图示数量计算(成组安装)"},
+    "030902001": {"name": "碳钢通风管道(矩形)", "unit": "m²",
+                  "rule": "按设计图示内径尺寸以展开面积计算: S = 2×(宽+高)×长, 不扣除检查孔、测定孔、送风口、吸风口等所占面积"},
+    "030903013": {"name": "风口、散流器", "unit": "个", "rule": "按设计图示数量计算"},
+    "030411003": {"name": "电缆桥架", "unit": "m", "rule": "按设计图示中心线以长度计算"},
+    "030412001": {"name": "普通灯具", "unit": "套", "rule": "按设计图示数量计算"},
+    "030404034": {"name": "照明开关", "unit": "个", "rule": "按设计图示数量计算"},
+    "030404035": {"name": "插座", "unit": "个", "rule": "按设计图示数量计算"},
 }
+
+PIPE_MATERIAL_CODE = {"镀锌钢管": "031001001", "钢管": "031001001",
+                      "UPVC": "031001006", "PPR": "031001006", "塑料": "031001006"}
+
+DEVICE_CODE = {
+    "valve": "031003001",
+    "air_terminal": "030903013",
+    "luminaire": "030412001",
+    "switch": "030404034",
+    "socket": "030404035",
+}
+FIXTURE_CODE = {"洗脸盆": "031004003", "大便器": "031004006", "坐便器": "031004006"}
 
 WALL_MATERIAL_CODE = {"砖": "010401003", "砌块": "010402001"}
 
-ROUNDING = {"m³": 2, "m²": 2, "m": 2, "樘": 0, "t": 3}
+ROUNDING = {"m³": 2, "m²": 2, "m": 2, "樘": 0, "t": 3, "个": 0, "套": 0, "组": 0}
 
 
 def round_qty(value: float, unit: str) -> float:
@@ -110,12 +137,14 @@ class BoqItem:
     calc: list[dict] = field(default_factory=list)   # 计算书行
     elements: list[str] = field(default_factory=list)
     extra: dict = field(default_factory=dict)        # 附加量(如门窗樘数)
+    discipline: str = "结构"                          # 专业: 结构/建筑/给排水/暖通/电气
 
     def to_dict(self) -> dict:
         return {
             "code": self.code, "name": self.name, "spec": self.spec,
             "unit": self.unit, "qty": self.qty, "calc": self.calc,
             "elements": self.elements, "extra": self.extra,
+            "discipline": self.discipline,
         }
 
 
@@ -290,6 +319,7 @@ def calc_walls(model: BuildingModel, seq: _CodeSeq, params: QtoParams) -> list[B
             code=seq.next(code9), name=rule["name"],
             spec=[f"墙厚 {int(t * 1000)}mm", f"{mat}砌体", "M5.0 混合砂浆砌筑"],
             unit="m³", qty=qty, calc=calc, elements=[e.eid for e in els],
+            discipline="建筑",
         ))
     return items
 
@@ -316,6 +346,7 @@ def calc_doors_windows(model: BuildingModel, seq: _CodeSeq, params: QtoParams) -
                 spec=[f"洞口尺寸 {int(w * 1000)}×{int(h * 1000)}", f"编号 {tag}"],
                 unit="m²", qty=qty, calc=calc,
                 elements=[e.eid for e in els], extra={"樘数": len(els)},
+                discipline="建筑",
             ))
     return items
 
@@ -366,6 +397,138 @@ def calc_formwork(model: BuildingModel, seq: _CodeSeq, params: QtoParams) -> lis
         items.append(BoqItem(
             code=seq.next("011702006"), name=rule["name"], spec=["复合模板、钢支撑"],
             unit="m²", qty=qty, calc=calc, elements=[e.eid for e in beams],
+        ))
+    return items
+
+
+def calc_pipes(model: BuildingModel, seq: _CodeSeq, params: QtoParams) -> list[BoqItem]:
+    """给排水管道: 按系统+材质+管径分列, 中心线长度计量。"""
+    items: list[BoqItem] = []
+    groups: dict[tuple, list[ModelElement]] = {}
+    for e in model.by_category("pipe"):
+        groups.setdefault((e.params["system"], e.params["material"], e.params["dn"]),
+                          []).append(e)
+
+    for (system, material, dn), els in sorted(groups.items()):
+        code9 = "031001001"
+        for key, code in PIPE_MATERIAL_CODE.items():
+            if key in material:
+                code9 = code
+                break
+        rule = RULES[code9]
+        calc = [
+            _line("rule", f"计算规则: {rule['rule']}"),
+            _line("formula", "L = Σ 各段中心线长"),
+        ]
+        total = 0.0
+        for e in els:
+            for (x1, y1), (x2, y2) in e.params["segments"]:
+                seg = math.hypot(x2 - x1, y2 - y1)
+                total += seg
+                calc.append(_line("subst",
+                                  f"{e.eid}: ({_f(x1)},{_f(y1)}) → ({_f(x2)},{_f(y2)}) = {_f(seg)} m"))
+        qty = round_qty(total, "m")
+        calc.append(_line("sum", f"合计 {_f(total, 4)} m, 工程量取 {qty:.2f} m"))
+        items.append(BoqItem(
+            code=seq.next(code9), name=rule["name"],
+            spec=[f"系统: {system}", f"材质 {material}", f"规格 {dn}", "螺纹/热熔连接"],
+            unit="m", qty=qty, calc=calc, elements=[e.eid for e in els],
+            discipline="给排水",
+        ))
+    return items
+
+
+def calc_ducts(model: BuildingModel, seq: _CodeSeq, params: QtoParams) -> list[BoqItem]:
+    """通风管道: 按断面分列, 展开面积计量 S = 2(w+h)L。"""
+    items: list[BoqItem] = []
+    groups: dict[tuple, list[ModelElement]] = {}
+    for e in model.by_category("duct"):
+        groups.setdefault((e.params["w"], e.params["h"], e.params["system"]), []).append(e)
+
+    for (w, h, system), els in sorted(groups.items()):
+        rule = RULES["030902001"]
+        calc = [
+            _line("rule", f"计算规则: {rule['rule']}"),
+            _line("formula", "S = 2 × (宽 + 高) × L"),
+        ]
+        total = 0.0
+        for e in els:
+            L = e.params["length"]
+            s = 2 * (w + h) * L
+            total += s
+            calc.append(_line("subst",
+                              f"{e.eid}: 2 × ({_f(w)} + {_f(h)}) × {_f(L)} = {_f(s, 4)} m²"))
+        qty = round_qty(total, "m²")
+        calc.append(_line("sum", f"合计 {_f(total, 4)} m², 工程量取 {qty:.2f} m²"))
+        items.append(BoqItem(
+            code=seq.next("030902001"), name=rule["name"],
+            spec=[f"系统: {system}", f"断面 {int(w * 1000)}×{int(h * 1000)}",
+                  "镀锌钢板 δ=0.6", "咬口连接"],
+            unit="m²", qty=qty, calc=calc, elements=[e.eid for e in els],
+            discipline="暖通",
+        ))
+    return items
+
+
+def calc_trays(model: BuildingModel, seq: _CodeSeq, params: QtoParams) -> list[BoqItem]:
+    items: list[BoqItem] = []
+    groups: dict[tuple, list[ModelElement]] = {}
+    for e in model.by_category("tray"):
+        groups.setdefault((e.params["w"], e.params["h"]), []).append(e)
+
+    for (w, h), els in sorted(groups.items()):
+        rule = RULES["030411003"]
+        calc = [
+            _line("rule", f"计算规则: {rule['rule']}"),
+            _line("formula", "L = Σ 各段中心线长"),
+        ]
+        total = 0.0
+        for e in els:
+            total += e.params["length"]
+            calc.append(_line("subst", f"{e.eid}: {_f(e.params['length'])} m"))
+        qty = round_qty(total, "m")
+        calc.append(_line("sum", f"合计 {_f(total, 4)} m, 工程量取 {qty:.2f} m"))
+        items.append(BoqItem(
+            code=seq.next("030411003"), name=rule["name"],
+            spec=[f"规格 {int(w * 1000)}×{int(h * 1000)}", "热镀锌槽式桥架"],
+            unit="m", qty=qty, calc=calc, elements=[e.eid for e in els],
+            discipline="电气",
+        ))
+    return items
+
+
+DEVICE_DISCIPLINE = {"valve": "给排水", "fixture": "给排水",
+                     "air_terminal": "暖通",
+                     "luminaire": "电气", "switch": "电气", "socket": "电气"}
+
+
+def calc_devices(model: BuildingModel, seq: _CodeSeq, params: QtoParams) -> list[BoqItem]:
+    """点式安装项: 阀门/器具/风口/灯具/开关/插座, 按数量计算。"""
+    items: list[BoqItem] = []
+    groups: dict[tuple, list[ModelElement]] = {}
+    for e in model.elements:
+        if not e.category.startswith("device_"):
+            continue
+        kind = e.params["kind"]
+        if kind == "fixture":
+            code9 = FIXTURE_CODE.get(e.params["tag"], "031004003")
+        else:
+            code9 = DEVICE_CODE[kind]
+        groups.setdefault((code9, kind, e.params["tag"]), []).append(e)
+
+    for (code9, kind, tag), els in sorted(groups.items()):
+        rule = RULES[code9]
+        calc = [
+            _line("rule", f"计算规则: {rule['rule']}"),
+            _line("subst", f"{tag or rule['name']}: 图示共 {len(els)} {rule['unit']}"),
+            _line("result", f"工程量取 {len(els)} {rule['unit']}"),
+        ]
+        items.append(BoqItem(
+            code=seq.next(code9), name=rule["name"],
+            spec=[f"规格/型号: {tag}" if tag else "规格详见设计"],
+            unit=rule["unit"], qty=float(len(els)), calc=calc,
+            elements=[e.eid for e in els],
+            discipline=DEVICE_DISCIPLINE[kind],
         ))
     return items
 

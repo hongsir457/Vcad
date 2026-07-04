@@ -13,17 +13,35 @@ const CATEGORY_STYLE: Record<string, { color: number; opacity?: number }> = {
   window: { color: 0x7fb3d3, opacity: 0.55 },
   steel_column: { color: 0x35597a },
   steel_beam: { color: 0x5d87a8 },
+  pipe: { color: 0x1d7a57 },
+  duct: { color: 0x8a63b8, opacity: 0.85 },
+  tray: { color: 0xc2891d },
+  device_valve: { color: 0x1d7a57 },
+  device_fixture: { color: 0xe8eef2 },
+  device_air_terminal: { color: 0x8a63b8 },
+  device_luminaire: { color: 0xf2e9c9 },
+  device_switch: { color: 0xc2891d },
+  device_socket: { color: 0xc2891d },
+};
+
+/** 排水管道用棕色区分 */
+const PIPE_SYSTEM_COLOR: Record<string, number> = {
+  给水: 0x1d7a57,
+  排水: 0x8a6d3b,
+  消防: 0xb33d34,
 };
 
 export const CATEGORY_LEGEND: [string, string, string][] = [
   ["column", "#8fa3b0", "柱"],
   ["beam", "#a8b8c2", "梁"],
-  ["slab", "#738594", "板"],
   ["wall", "#cfc3ad", "墙"],
-  ["door", "#b56b2f", "门"],
-  ["window", "#7fb3d3", "窗"],
   ["steel_column", "#35597a", "钢柱"],
   ["steel_beam", "#5d87a8", "钢梁"],
+  ["pipe", "#1d7a57", "给水管"],
+  ["pipe_drain", "#8a6d3b", "排水管"],
+  ["duct", "#8a63b8", "风管"],
+  ["tray", "#c2891d", "桥架"],
+  ["device_luminaire", "#f2e9c9", "灯具"],
 ];
 
 export function Viewer3D({ model }: { model: BuildingModel }) {
@@ -64,6 +82,24 @@ export function Viewer3D({ model }: { model: BuildingModel }) {
       });
       for (const p of el.primitives) {
         let mesh: THREE.Mesh;
+        if (p.kind === "cylinder" && p.p1 && p.p2 && p.r) {
+          const a = new THREE.Vector3(...p.p1);
+          const b = new THREE.Vector3(...p.p2);
+          const dir = b.clone().sub(a);
+          const len = dir.length();
+          if (len < 1e-6) continue;
+          const geo = new THREE.CylinderGeometry(p.r, p.r, len, 14);
+          const sysColor = p.system ? PIPE_SYSTEM_COLOR[p.system] : undefined;
+          const cylMat = sysColor !== undefined
+            ? new THREE.MeshLambertMaterial({ color: sysColor })
+            : mat;
+          mesh = new THREE.Mesh(geo, cylMat);
+          mesh.position.copy(a.clone().add(b).multiplyScalar(0.5));
+          mesh.quaternion.setFromUnitVectors(
+            new THREE.Vector3(0, 1, 0), dir.normalize());
+          root.add(mesh);
+          continue; // 圆柱不加线框
+        }
         if (p.kind === "box" && p.center && p.size) {
           const geo = new THREE.BoxGeometry(p.size[0], p.size[1], p.size[2]);
           mesh = new THREE.Mesh(geo, mat);

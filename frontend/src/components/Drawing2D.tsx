@@ -141,6 +141,38 @@ export function Drawing2D({ drawing }: { drawing: RawDrawing }) {
             />
           );
         })}
+        {/* 安装专业: 管道/风管/桥架 */}
+        {ents.map((e, i) => {
+          if (!e.pts || !["PIPE", "DUCT", "TRAY"].includes(e.layer)) return null;
+          const color =
+            e.layer === "TRAY" ? "#c2891d"
+            : e.layer === "DUCT" ? "#8a63b8"
+            : (e as { system?: string }).system === "排水" ? "#8a6d3b" : "#1d7a57";
+          const width = e.layer === "DUCT" ? (e as { w?: number }).w ?? 300 : 90;
+          return (
+            <polyline
+              key={"mep" + i}
+              points={e.pts.map((p) => p.join(",")).join(" ")}
+              fill="none" stroke={color} strokeWidth={width}
+              opacity={e.layer === "DUCT" ? 0.45 : 0.9}
+            />
+          );
+        })}
+        {/* 点式设备 */}
+        {ents.map((e, i) => {
+          if (!e.at || !["VALVE", "FIXTURE", "AIRT", "LUM", "SWITCH", "SOCKET"].includes(e.layer)) {
+            return null;
+          }
+          const color = { VALVE: "#1d7a57", FIXTURE: "#2e7da7", AIRT: "#8a63b8",
+                          LUM: "#c2891d", SWITCH: "#b56b2f", SOCKET: "#b56b2f" }[e.layer]!;
+          return e.layer === "LUM" ? (
+            <rect key={"dv" + i} x={e.at[0] - 300} y={e.at[1] - 300} width={600} height={600}
+              fill="none" stroke={color} strokeWidth={50} />
+          ) : (
+            <circle key={"dv" + i} cx={e.at[0]} cy={e.at[1]} r={160}
+              fill="#fff" stroke={color} strokeWidth={50} />
+          );
+        })}
         {/* 钢梁(型钢中心线) */}
         {ents.map((e, i) =>
           e.layer === "SBEAM" && e.p1 && e.p2 ? (
