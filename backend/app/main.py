@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
+import re
+import subprocess
+import tempfile
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .core.drawing import list_samples, load_sample
+from .core import steel_recognizer
+from .core.drawing import delete_upload, list_samples, load_sample, save_upload
 from .core.qto import QtoParams
 from .eval import loop as eval_loop
 from .eval.benchmark import evaluate, list_cases, save_report
@@ -48,6 +53,73 @@ def api_drawing(drawing_id: str) -> dict:
         return load_sample(drawing_id)
     except FileNotFoundError as e:
         raise HTTPException(404, str(e)) from e
+
+
+DWG_TOOL = Path(__file__).resolve().parents[1] / "tools" / "dwg2json.mjs"
+MAX_UPLOAD_BYTES = 80 * 1024 * 1024
+
+
+def _dwg_to_entities(data: bytes, suffix: str) -> dict:
+    """DWG/DXF -> 通用实体 JSON (Node + WASM LibreDWG)。"""
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / f"input{suffix}"
+        dst = Path(td) / "entities.json"
+        src.write_bytes(data)
+        proc = subprocess.run(
+            ["node", str(DWG_TOOL), str(src), str(dst)],
+            capture_output=True, text=True, timeout=180)
+        if proc.returncode != 0 or not dst.exists():
+            raise HTTPException(422, f"图纸解析失败: {proc.stderr[-400:]}")
+        return json.loads(dst.read_text(encoding="utf-8"))
+
+
+@app.post("/api/drawings/upload")
+async def api_upload(file: UploadFile) -> dict:
+    name = file.filename or "drawing"
+    suffix = Path(name).suffix.lower()
+    data = await file.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "文件超过 80MB 限制")
+
+    stem = re.sub(r"[^\w一-鿿]+", "_", Path(name).stem).strip("_")[:48] or "drawing"
+    drawing_id = f"up_{stem}_{hashlib.md5(data).hexdigest()[:6]}"
+
+    if suffix == ".json":
+        try:
+            raw = json.loads(data)
+        except json.JSONDecodeError as e:
+            raise HTTPException(422, f"JSON 解析失败: {e}") from e
+    elif suffix in (".dwg", ".dxf"):
+        entities = _dwg_to_entities(data, suffix)
+        try:
+            raw = steel_recognizer.recognize(entities, Path(name).stem)
+        except ValueError as e:
+            raise HTTPException(
+                422, f"识别失败: {e}。当前识别器支持“平面布置图+钢材型号表”类钢结构图纸, "
+                     f"混凝土图纸请使用 VCAD 实体流 JSON 格式") from e
+    elif suffix == ".pdf":
+        raise HTTPException(415, "暂不支持 PDF, 请上传 DWG/DXF 或 VCAD JSON")
+    else:
+        raise HTTPException(415, f"不支持的文件类型: {suffix}")
+
+    try:
+        save_upload(drawing_id, raw)
+    except Exception as e:  # noqa: BLE001 — 解析验证失败要给出可读错误
+        raise HTTPException(422, f"图纸校验失败: {e}") from e
+
+    meta = raw.get("meta", {})
+    return {"id": drawing_id, "name": meta.get("name", stem),
+            "desc": meta.get("desc", ""), "region": meta.get("region", ""),
+            "recognition": meta.get("recognition", {}).get("log", [])}
+
+
+@app.delete("/api/drawings/{drawing_id}")
+def api_delete_drawing(drawing_id: str) -> dict:
+    if not drawing_id.startswith("up_"):
+        raise HTTPException(403, "内置样例不可删除")
+    if not delete_upload(drawing_id):
+        raise HTTPException(404, "图纸不存在")
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

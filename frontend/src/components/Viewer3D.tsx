@@ -11,6 +11,8 @@ const CATEGORY_STYLE: Record<string, { color: number; opacity?: number }> = {
   wall: { color: 0xcfc3ad },
   door: { color: 0xb56b2f },
   window: { color: 0x7fb3d3, opacity: 0.55 },
+  steel_column: { color: 0x35597a },
+  steel_beam: { color: 0x5d87a8 },
 };
 
 export const CATEGORY_LEGEND: [string, string, string][] = [
@@ -20,6 +22,8 @@ export const CATEGORY_LEGEND: [string, string, string][] = [
   ["wall", "#cfc3ad", "墙"],
   ["door", "#b56b2f", "门"],
   ["window", "#7fb3d3", "窗"],
+  ["steel_column", "#35597a", "钢柱"],
+  ["steel_beam", "#5d87a8", "钢梁"],
 ];
 
 export function Viewer3D({ model }: { model: BuildingModel }) {

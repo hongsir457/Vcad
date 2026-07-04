@@ -3,11 +3,11 @@ import type { RawDrawing, RawEntity } from "../types";
 
 /** 二维图纸 SVG 渲染: 按图层还原施工图表达(轴线/柱/梁/墙/门窗/板)。 */
 
-const SECTION_RE = /(\d+)\s*[xX×]\s*(\d+)/;
+const SECTION_RE = /(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)/;
 
 function sectionOf(tag?: string): [number, number] {
   const m = tag?.match(SECTION_RE);
-  return m ? [parseInt(m[1]), parseInt(m[2])] : [300, 300];
+  return m ? [parseFloat(m[1]), parseFloat(m[2])] : [300, 300];
 }
 
 function doorWinSize(tag?: string): number {
@@ -59,6 +59,15 @@ export function Drawing2D({ drawing }: { drawing: RawDrawing }) {
       }
       if (e.layer === "COL" && e.at && e.tag) {
         texts.push({ x: e.at[0] + 260, y: e.at[1] + 320, s: e.tag.split(" ")[0], cls: "tag" });
+      }
+      if (e.layer === "SCOL" && e.at && e.tag) {
+        texts.push({ x: e.at[0] + 300, y: e.at[1] + 380, s: e.tag, cls: "tag" });
+      }
+      if (e.layer === "SBEAM" && e.p1 && e.p2 && e.tag) {
+        texts.push({
+          x: (e.p1[0] + e.p2[0]) / 2, y: (e.p1[1] + e.p2[1]) / 2 + 160,
+          s: e.tag, cls: "beam",
+        });
       }
       if ((e.layer === "DOOR" || e.layer === "WIN") && e.at && e.tag) {
         texts.push({ x: e.at[0], y: e.at[1] + 330, s: e.tag, cls: "opening" });
@@ -129,6 +138,28 @@ export function Drawing2D({ drawing }: { drawing: RawDrawing }) {
               key={"c" + i}
               x={e.at[0] - b / 2} y={e.at[1] - h / 2} width={b} height={h}
               fill="#101a22"
+            />
+          );
+        })}
+        {/* 钢梁(型钢中心线) */}
+        {ents.map((e, i) =>
+          e.layer === "SBEAM" && e.p1 && e.p2 ? (
+            <line
+              key={"sb" + i}
+              x1={e.p1[0]} y1={e.p1[1]} x2={e.p2[0]} y2={e.p2[1]}
+              stroke="#2e5d7d" strokeWidth={160} opacity={0.8}
+            />
+          ) : null,
+        )}
+        {/* 钢柱(H 型钢符号: 按截面外轮廓画矩形) */}
+        {ents.map((e, i) => {
+          if (e.layer !== "SCOL" || !e.at) return null;
+          const [h, b] = sectionOf(e.section ?? "300x300");
+          return (
+            <rect
+              key={"sc" + i}
+              x={e.at[0] - b / 2} y={e.at[1] - h / 2} width={b} height={h}
+              fill="#163a59" stroke="#0f2740" strokeWidth={30}
             />
           );
         })}

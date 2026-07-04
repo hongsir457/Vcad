@@ -1,3 +1,5 @@
+import { useRef, useState } from "react";
+import { api } from "../api";
 import type { DrawingMeta } from "../types";
 
 const PARAM_LABELS: Record<string, string> = {
@@ -11,22 +13,103 @@ export function Sidebar(props: {
   drawings: DrawingMeta[];
   selectedId: string;
   onSelect: (id: string) => void;
+  onChanged: (selectId?: string) => void;
   params: Record<string, unknown>;
 }) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+
+  const doUpload = async (file: File) => {
+    setUploading(true);
+    setError("");
+    try {
+      const res = await api.upload(file);
+      props.onChanged(res.id);
+    } catch (e) {
+      setError(String(e).slice(0, 300));
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const doDelete = async (id: string) => {
+    try {
+      await api.deleteDrawing(id);
+      props.onChanged();
+    } catch (e) {
+      setError(String(e).slice(0, 200));
+    }
+  };
+
+  const samples = props.drawings.filter((d) => d.source !== "upload");
+  const uploads = props.drawings.filter((d) => d.source === "upload");
+
+  const item = (d: DrawingMeta, deletable: boolean) => (
+    <div
+      key={d.id}
+      className={"drawing-item" + (d.id === props.selectedId ? " active" : "")}
+      onClick={() => props.onSelect(d.id)}
+    >
+      <div className="name">
+        {d.name}
+        {deletable && (
+          <button
+            className="del-btn"
+            title="删除"
+            onClick={(e) => {
+              e.stopPropagation();
+              doDelete(d.id);
+            }}
+          >
+            ×
+          </button>
+        )}
+      </div>
+      <div className="desc">{d.desc}</div>
+      <div className="meta">项目地区: {d.region || "—"}</div>
+    </div>
+  );
+
   return (
     <aside className="col-left">
-      <div className="section-label">图纸库</div>
-      {props.drawings.map((d) => (
-        <div
-          key={d.id}
-          className={"drawing-item" + (d.id === props.selectedId ? " active" : "")}
-          onClick={() => props.onSelect(d.id)}
+      <div className="section-label">上传图纸</div>
+      <div style={{ padding: "0 14px 6px" }}>
+        <button
+          className="btn"
+          style={{ width: "100%" }}
+          disabled={uploading}
+          onClick={() => fileRef.current?.click()}
         >
-          <div className="name">{d.name}</div>
-          <div className="desc">{d.desc}</div>
-          <div className="meta">项目地区: {d.region}</div>
-        </div>
-      ))}
+          {uploading ? "解析中…" : "上传 DWG / DXF / JSON"}
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".dwg,.dxf,.json"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void doUpload(f);
+          }}
+        />
+        {error && (
+          <div style={{ color: "var(--c-error)", fontSize: 12, marginTop: 6, lineHeight: 1.5 }}>
+            {error}
+          </div>
+        )}
+      </div>
+
+      {uploads.length > 0 && (
+        <>
+          <div className="section-label">已上传</div>
+          {uploads.map((d) => item(d, true))}
+        </>
+      )}
+
+      <div className="section-label">内置样例</div>
+      {samples.map((d) => item(d, false))}
 
       <div className="section-label">当前计量口径参数</div>
       <div className="params-box">

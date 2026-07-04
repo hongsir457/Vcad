@@ -74,6 +74,10 @@ RULES: dict[str, dict] = {
                   "rule": "按设计图示洞口尺寸以面积计算(附樘数)"},
     "010807001": {"name": "金属(塑钢)窗", "unit": "m²",
                   "rule": "按设计图示洞口尺寸以面积计算(附樘数)"},
+    "010603001": {"name": "实腹钢柱", "unit": "t",
+                  "rule": "按设计图示尺寸以质量计算, 不扣除孔眼的质量, 焊条、铆钉、螺栓等不另增加质量"},
+    "010604001": {"name": "钢梁", "unit": "t",
+                  "rule": "按设计图示尺寸以质量计算, 不扣除孔眼的质量, 焊条、铆钉、螺栓等不另增加质量"},
     "011702002": {"name": "矩形柱模板", "unit": "m²",
                   "rule": "按模板与现浇混凝土构件的接触面积计算: 断面周长 × 柱高"},
     "011702006": {"name": "矩形梁模板", "unit": "m²",
@@ -366,6 +370,59 @@ def calc_formwork(model: BuildingModel, seq: _CodeSeq, params: QtoParams) -> lis
     return items
 
 
+def calc_steel(model: BuildingModel, seq: _CodeSeq, params: QtoParams) -> list[BoqItem]:
+    """金属结构工程: 钢柱/钢梁按吨计量, 米重取自型号表(澳标型号尾数即 kg/m)。"""
+    items: list[BoqItem] = []
+
+    for cat, code9 in (("steel_column", "010603001"), ("steel_beam", "010604001")):
+        groups: dict[str, list[ModelElement]] = {}
+        for e in model.by_category(cat):
+            groups.setdefault(e.tag, []).append(e)
+        for tag, els in sorted(groups.items()):
+            rule = RULES[code9]
+            p0 = els[0].params
+            calc = [
+                _line("rule", f"计算规则: {rule['rule']}"),
+                _line("formula", "W = Σ( 长度 L × 米重 g ),  g 取自钢材型号表"),
+            ]
+            if p0["kg_per_m"] > 0:
+                calc.append(_line("rule",
+                                  f"{tag}: 型号 {p0['model']} ({p0['section']}), "
+                                  f"g = {_f(p0['kg_per_m'])} kg/m"))
+            total_kg = 0.0
+            total_len = 0.0
+            for e in els:
+                L = e.params.get("H") or e.params.get("length") or 0.0
+                w = e.params["weight_kg"]
+                total_kg += w
+                total_len += L
+            n = len(els)
+            if cat == "steel_column":
+                calc.append(_line("subst",
+                                  f"共 {n} 根, 合计柱长 {_f(total_len)} m: "
+                                  f"{_f(total_len)} × {_f(p0['kg_per_m'])} = {_f(total_kg, 1)} kg"))
+            else:
+                calc.append(_line("subst",
+                                  f"共 {n} 段, 合计梁长 {_f(total_len)} m: "
+                                  f"{_f(total_len)} × {_f(p0['kg_per_m'])} = {_f(total_kg, 1)} kg"))
+                inherited = [e for e in els if e.params.get("inherited")]
+                if inherited:
+                    calc.append(_line("deduct",
+                                      f"其中 {len(inherited)} 段编号由相邻平行梁继承, 建议人工复核"))
+            qty = round_qty(total_kg / 1000.0, "t")
+            calc.append(_line("sum", f"工程量取 {qty:.3f} t"))
+            items.append(BoqItem(
+                code=seq.next(code9),
+                name=f"{rule['name']}",
+                spec=[f"编号 {tag}", f"型号 {p0['model']}" if p0['model'] else "型号待定",
+                      p0["section"], p0["grade"] or "钢材等级见设计"],
+                unit="t", qty=qty, calc=calc,
+                elements=[e.eid for e in els],
+                extra={"根数" if cat == "steel_column" else "段数": len(els)},
+            ))
+    return items
+
+
 # ---------------------------------------------------------------------------
 # 复核: 双算对比(独立口径粗算 vs 清单精算)
 # ---------------------------------------------------------------------------
@@ -403,5 +460,25 @@ def cross_check(model: BuildingModel, items: list[BoqItem]) -> list[dict]:
             "deviation": round(dev, 4),
             "pass": bool(dev < 0.02),
             "note": "三维实体体积与清单量一致" if dev < 0.02 else "偏差超 2%, 需人工复核",
+        })
+
+    # 钢构件: 三维实体体积×密度(理论质量) vs 型号名义米重清单量
+    steel_boq = {
+        "steel_column": sum(i.qty for i in items if i.code.startswith("010603")),
+        "steel_beam": sum(i.qty for i in items if i.code.startswith("010604")),
+    }
+    steel_labels = {"steel_column": "钢柱", "steel_beam": "钢梁"}
+    for cat, boq_t in steel_boq.items():
+        if boq_t <= 0:
+            continue
+        geo_t = prim_volume(cat) * 7.85  # m³ × 7850kg/m³ / 1000
+        dev = abs(geo_t - boq_t) / boq_t
+        checks.append({
+            "item": f"{steel_labels[cat]}质量双算对比(截面理论质量 vs 型号名义米重)",
+            "geometry": round(geo_t, 3), "boq": round(boq_t, 3),
+            "deviation": round(dev, 4),
+            "pass": bool(dev < 0.05),
+            "note": "截面几何质量与型号名义质量一致" if dev < 0.05
+                    else "偏差超 5%, 检查型号表匹配",
         })
     return checks

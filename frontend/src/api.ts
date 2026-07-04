@@ -14,6 +14,16 @@ async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   drawings: () => getJson<DrawingMeta[]>("/api/drawings"),
+  upload: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return getJson<{ id: string; name: string; recognition: string[] }>(
+      "/api/drawings/upload",
+      { method: "POST", body: fd },
+    );
+  },
+  deleteDrawing: (id: string) =>
+    getJson<{ ok: boolean }>(`/api/drawings/${id}`, { method: "DELETE" }),
   drawing: (id: string) => getJson<RawDrawing>(`/api/drawings/${id}`),
   evalRun: () => getJson<EvalReport>("/api/eval/run", { method: "POST" }),
   evalLoop: (fromScratch: boolean) =>

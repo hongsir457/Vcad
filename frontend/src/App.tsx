@@ -41,6 +41,17 @@ export default function App() {
   const [tab, setTab] = useState<WorkTab>("2d");
   const cancelRef = useRef<(() => void) | null>(null);
 
+  const refreshDrawings = useCallback((selectId?: string) => {
+    api.drawings().then((list) => {
+      setDrawings(list);
+      if (selectId && list.some((d) => d.id === selectId)) {
+        setSelectedId(selectId);
+      } else if (list.length && !list.some((d) => d.id === selectedId)) {
+        setSelectedId(list[0].id);
+      }
+    });
+  }, [selectedId]);
+
   useEffect(() => {
     api.drawings().then((list) => {
       setDrawings(list);
@@ -239,6 +250,7 @@ export default function App() {
           drawings={drawings}
           selectedId={selectedId}
           onSelect={(id) => !busy && setSelectedId(id)}
+          onChanged={refreshDrawings}
           params={params}
         />
         <ChatPanel

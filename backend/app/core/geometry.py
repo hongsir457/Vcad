@@ -22,7 +22,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from .drawing import Beam, Column, Opening, ParsedDrawing, Wall
+from .drawing import Beam, Column, Opening, ParsedDrawing, SteelBeam, SteelColumn, Wall
 
 EPS = 1e-6
 
@@ -252,6 +252,85 @@ def build_slab(slab, elev: float, story_h: float) -> ModelElement:
 
 
 # ---------------------------------------------------------------------------
+# 钢构件建模: H 型钢 = 上翼缘 + 腹板 + 下翼缘 三块实体
+# ---------------------------------------------------------------------------
+
+from .steel_recognizer import STEEL_DENSITY, parse_h_section  # noqa: E402
+
+
+def _h_profile_boxes(eid: str, cat: str, sec: dict,
+                     cx: float, cy: float, z0: float, z1: float,
+                     length: float | None = None, rot: float = 0.0,
+                     vertical: bool = True) -> list[dict]:
+    """生成 H 型钢三块实体。竖直构件沿 z, 水平构件沿局部 x(rot 方位)。"""
+    h, b, tw, tf = (sec[k] * 0.001 for k in ("h", "b", "tw", "tf"))
+    out = []
+    if vertical:
+        H = z1 - z0
+        zm = (z0 + z1) / 2
+        # 翼缘位于截面 y 两侧, 腹板居中 (截面局部: x=b 方向, y=h 方向)
+        out.append(box(eid, cat, cx, cy + (h - tf) / 2, zm, b, tf, H, rot))
+        out.append(box(eid, cat, cx, cy - (h - tf) / 2, zm, b, tf, H, rot))
+        out.append(box(eid, cat, cx, cy, zm, tw, h - 2 * tf, H, rot))
+    else:
+        L = length or 0.0
+        zm_top = z1 - tf / 2
+        zm_bot = z1 - h + tf / 2
+        zm_web = z1 - h / 2
+        out.append(box(eid, cat, cx, cy, zm_top, L, b, tf, rot))
+        out.append(box(eid, cat, cx, cy, zm_bot, L, b, tf, rot))
+        out.append(box(eid, cat, cx, cy, zm_web, L, tw, h - 2 * tf, rot))
+    return out
+
+
+def build_steel_column(col: SteelColumn, elev: float) -> ModelElement:
+    sec = parse_h_section(col.section) or {"h": 300, "b": 300, "tw": 10, "tf": 16}
+    H = col.top - elev
+    weight = col.kg_per_m * H
+    e = ModelElement(
+        eid=col.eid, category="steel_column", tag=col.tag, level=col.level,
+        params={
+            "model": col.model, "grade": col.grade, "section": col.section,
+            "kg_per_m": col.kg_per_m, "H": round(H, 4),
+            "weight_kg": round(weight, 2), "x": col.x, "y": col.y,
+            "sec": sec,
+        },
+    )
+    e.primitives = _h_profile_boxes(col.eid, "steel_column", sec,
+                                    col.x, col.y, elev, col.top)
+    return e
+
+
+def build_steel_beam(beam: SteelBeam, elev: float) -> ModelElement:
+    sec = parse_h_section(beam.section) or {"h": 300, "b": 150, "tw": 8, "tf": 12}
+    L = beam.length
+    weight = beam.kg_per_m * L
+    rot = math.atan2(beam.y2 - beam.y1, beam.x2 - beam.x1)
+    e = ModelElement(
+        eid=beam.eid, category="steel_beam", tag=beam.tag, level=beam.level,
+        params={
+            "model": beam.model, "grade": beam.grade, "section": beam.section,
+            "kg_per_m": beam.kg_per_m, "length": round(L, 4),
+            "weight_kg": round(weight, 2), "top": beam.top,
+            "inherited": beam.inherited, "sec": sec,
+        },
+    )
+    e.primitives = _h_profile_boxes(
+        beam.eid, "steel_beam", sec,
+        (beam.x1 + beam.x2) / 2, (beam.y1 + beam.y2) / 2,
+        0.0, beam.top, length=L, rot=rot, vertical=False)
+    return e
+
+
+def steel_model_volume(e: ModelElement) -> float:
+    """钢构件三维实体体积(m³), 用于双算复核(体积×密度 vs 米重×长度)。"""
+    v = 0.0
+    for p in e.primitives:
+        v += p["size"][0] * p["size"][1] * p["size"][2]
+    return v
+
+
+# ---------------------------------------------------------------------------
 # 模型自检
 # ---------------------------------------------------------------------------
 
@@ -284,5 +363,31 @@ def check_model(model: BuildingModel, dwg: ParsedDrawing) -> list[str]:
         lv = dwg.level(slab.level)
         if slab.thickness >= lv.height:
             issues.append(f"板 {slab.eid} 厚度异常: {slab.thickness}m")
+
+    # 5. 钢梁端部应有支承(钢柱或另一根钢梁)
+    import math as _m
+
+    def _near_seg(px, py, sb: SteelBeam, tol: float) -> bool:
+        dx, dy = sb.x2 - sb.x1, sb.y2 - sb.y1
+        l2 = dx * dx + dy * dy
+        if l2 == 0:
+            return False
+        t = max(0.0, min(1.0, ((px - sb.x1) * dx + (py - sb.y1) * dy) / l2))
+        return _m.hypot(px - (sb.x1 + t * dx), py - (sb.y1 + t * dy)) < tol
+
+    for sb in dwg.steel_beams:
+        for px, py, side in ((sb.x1, sb.y1, "起点"), (sb.x2, sb.y2, "终点")):
+            ok = any(_m.hypot(px - c.x, py - c.y) < 0.45 for c in dwg.steel_columns) or \
+                 any(o is not sb and _near_seg(px, py, o, 0.25) for o in dwg.steel_beams)
+            if not ok:
+                issues.append(f"钢梁 {sb.eid}({sb.tag}) {side}无支承构件, 需人工复核")
+
+    # 6. 缺规格的钢构件
+    for sc in dwg.steel_columns:
+        if sc.kg_per_m <= 0:
+            issues.append(f"钢柱 {sc.eid}({sc.tag}) 未匹配到型号表规格")
+    for sb in dwg.steel_beams:
+        if sb.kg_per_m <= 0:
+            issues.append(f"钢梁 {sb.eid}({sb.tag}) 未匹配到型号表规格")
 
     return issues

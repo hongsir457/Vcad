@@ -25,6 +25,7 @@ from pathlib import Path
 MM = 0.001  # mm -> m
 
 SAMPLES_DIR = Path(__file__).resolve().parent.parent / "data" / "samples"
+UPLOADS_DIR = Path(__file__).resolve().parent.parent / "data" / "uploads"
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +103,41 @@ class Wall:
 
 
 @dataclass
+class SteelColumn:
+    eid: str
+    tag: str            # C1
+    x: float
+    y: float
+    top: float          # 柱顶标高, m
+    model: str          # 310UC118
+    grade: str
+    section: str        # H314.6x307.0x11.9x18.7
+    kg_per_m: float
+    level: str = "1F"
+
+
+@dataclass
+class SteelBeam:
+    eid: str
+    tag: str            # B2
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    top: float          # 梁顶标高, m
+    model: str
+    grade: str
+    section: str
+    kg_per_m: float
+    inherited: bool = False
+    level: str = "1F"
+
+    @property
+    def length(self) -> float:
+        return math.hypot(self.x2 - self.x1, self.y2 - self.y1)
+
+
+@dataclass
 class Slab:
     eid: str
     polygon: list[tuple[float, float]]  # 板边界(外边线), m
@@ -123,6 +159,8 @@ class ParsedDrawing:
     beams: list[Beam]
     walls: list[Wall]
     slabs: list[Slab]
+    steel_columns: list[SteelColumn] = field(default_factory=list)
+    steel_beams: list[SteelBeam] = field(default_factory=list)
 
     def level(self, name: str) -> Level:
         for lv in self.levels:
@@ -207,6 +245,8 @@ def parse_drawing(raw: dict, snap_tol_mm: float = 5.0) -> ParsedDrawing:
     beams: list[Beam] = []
     walls: list[Wall] = []
     slabs: list[Slab] = []
+    steel_columns: list[SteelColumn] = []
+    steel_beams: list[SteelBeam] = []
     pending_openings: list[tuple[Opening, tuple[float, float]]] = []
 
     counters: dict[str, int] = {}
@@ -253,6 +293,27 @@ def parse_drawing(raw: dict, snap_tol_mm: float = 5.0) -> ParsedDrawing:
             )
             pending_openings.append((op, pt(ent["at"])))
 
+        elif layer == "SCOL":
+            x, y = pt(ent["at"])
+            steel_columns.append(SteelColumn(
+                next_eid("GZ"), ent["tag"], x, y,
+                top=ent.get("top", 4500) * MM,
+                model=ent.get("model", ""), grade=ent.get("grade", ""),
+                section=ent.get("section", ""),
+                kg_per_m=float(ent.get("kg_per_m") or 0), level=level,
+            ))
+
+        elif layer == "SBEAM":
+            (x1, y1), (x2, y2) = pt(ent["p1"]), pt(ent["p2"])
+            steel_beams.append(SteelBeam(
+                next_eid("GL"), ent["tag"], x1, y1, x2, y2,
+                top=ent.get("top", 4500) * MM,
+                model=ent.get("model", ""), grade=ent.get("grade", ""),
+                section=ent.get("section", ""),
+                kg_per_m=float(ent.get("kg_per_m") or 0),
+                inherited=bool(ent.get("inherited")), level=level,
+            ))
+
         elif layer == "SLAB":
             th_m = re.search(r"h\s*=\s*(\d+)", ent.get("tag", "h=100"))
             slabs.append(Slab(
@@ -285,6 +346,8 @@ def parse_drawing(raw: dict, snap_tol_mm: float = 5.0) -> ParsedDrawing:
         beams=beams,
         walls=walls,
         slabs=slabs,
+        steel_columns=steel_columns,
+        steel_beams=steel_beams,
     )
 
 
@@ -305,19 +368,40 @@ def _point_to_segment(px, py, x1, y1, x2, y2) -> tuple[float, float]:
 
 def list_samples() -> list[dict]:
     out = []
-    for p in sorted(SAMPLES_DIR.glob("*.json")):
-        raw = json.loads(p.read_text(encoding="utf-8"))
-        out.append({
-            "id": p.stem,
-            "name": raw.get("meta", {}).get("name", p.stem),
-            "region": raw.get("meta", {}).get("region", ""),
-            "desc": raw.get("meta", {}).get("desc", ""),
-        })
+    for source, folder in (("sample", SAMPLES_DIR), ("upload", UPLOADS_DIR)):
+        if not folder.exists():
+            continue
+        for p in sorted(folder.glob("*.json")):
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            out.append({
+                "id": p.stem,
+                "name": raw.get("meta", {}).get("name", p.stem),
+                "region": raw.get("meta", {}).get("region", ""),
+                "desc": raw.get("meta", {}).get("desc", ""),
+                "source": source,
+            })
     return out
 
 
 def load_sample(sample_id: str) -> dict:
-    p = SAMPLES_DIR / f"{sample_id}.json"
-    if not p.exists():
-        raise FileNotFoundError(f"图纸不存在: {sample_id}")
-    return json.loads(p.read_text(encoding="utf-8"))
+    for folder in (SAMPLES_DIR, UPLOADS_DIR):
+        p = folder / f"{sample_id}.json"
+        if p.exists():
+            return json.loads(p.read_text(encoding="utf-8"))
+    raise FileNotFoundError(f"图纸不存在: {sample_id}")
+
+
+def save_upload(drawing_id: str, raw: dict) -> None:
+    """保存上传图纸(先做一次解析验证)。"""
+    parse_drawing(raw)  # 无法解析则抛异常, 不落盘
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    (UPLOADS_DIR / f"{drawing_id}.json").write_text(
+        json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+
+def delete_upload(drawing_id: str) -> bool:
+    p = UPLOADS_DIR / f"{drawing_id}.json"
+    if p.exists():
+        p.unlink()
+        return True
+    return False

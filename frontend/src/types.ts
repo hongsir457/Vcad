@@ -5,6 +5,7 @@ export interface DrawingMeta {
   name: string;
   region: string;
   desc: string;
+  source?: "sample" | "upload";
 }
 
 export interface RawEntity {
@@ -18,6 +19,9 @@ export interface RawEntity {
   label?: string;
   width?: number;
   sill?: number;
+  section?: string;
+  model?: string;
+  top?: number;
 }
 
 export interface RawDrawing {

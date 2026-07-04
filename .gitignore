@@ -16,3 +16,7 @@ frontend/dist/
 .DS_Store
 nohup.out
 frontend/tsconfig.tsbuildinfo
+
+# 上传图纸(运行时产物)
+backend/app/data/uploads/
+backend/tools/node_modules/

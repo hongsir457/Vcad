@@ -102,7 +102,12 @@ body {
 .drawing-item.active {
   background: var(--wash-select); border-left-color: var(--c-secondary);
 }
-.drawing-item .name { font-weight: 600; font-size: 13px; color: var(--c-text-strong); }
+.drawing-item .name { font-weight: 600; font-size: 13px; color: var(--c-text-strong); display: flex; align-items: center; }
+.drawing-item .del-btn {
+  margin-left: auto; border: none; background: none; cursor: pointer;
+  color: var(--c-text-muted); font-size: 15px; line-height: 1; padding: 0 2px;
+}
+.drawing-item .del-btn:hover { color: var(--c-error); }
 .drawing-item .desc {
   font-size: 12px; color: var(--c-text-muted); margin-top: 2px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;

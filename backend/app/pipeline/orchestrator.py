@@ -25,6 +25,8 @@ from ..core.geometry import (
     build_column,
     build_opening_panel,
     build_slab,
+    build_steel_beam,
+    build_steel_column,
     build_wall,
     check_model,
 )
@@ -62,11 +64,19 @@ def modeling_steps(raw: dict, params: QtoParams) -> Iterator[Event]:
     yield _log("m1", f"图纸: {dwg.name} (地区: {dwg.region})")
     yield _log("m1", f"识别实体: 轴线 {len(dwg.grids)}, 柱 {len(dwg.columns)}, "
                      f"梁 {len(dwg.beams)}, 墙 {len(dwg.walls)}, 板 {len(dwg.slabs)}, "
-                     f"门窗 {sum(len(w.openings) for w in dwg.walls)}")
+                     f"门窗 {sum(len(w.openings) for w in dwg.walls)}"
+                     + (f", 钢柱 {len(dwg.steel_columns)}, 钢梁 {len(dwg.steel_beams)}"
+                        if dwg.steel_columns or dwg.steel_beams else ""))
+    recog = raw.get("meta", {}).get("recognition")
+    if recog:
+        for line in recog.get("log", []):
+            yield _log("m1", "识别器: " + line)
     for c in dwg.columns[:1]:
         yield _log("m1", f"示例: 柱标注 “{c.tag}” 识别为截面 "
                          f"{int(c.b * 1000)}×{int(c.h * 1000)}")
-    yield _done("m1", f"识图完成, 共 {len(dwg.columns) + len(dwg.beams) + len(dwg.walls) + len(dwg.slabs)} 个构件")
+    n_all = (len(dwg.columns) + len(dwg.beams) + len(dwg.walls) + len(dwg.slabs)
+             + len(dwg.steel_columns) + len(dwg.steel_beams))
+    yield _done("m1", f"识图完成, 共 {n_all} 个构件")
 
     # M2 轴网
     yield _start("m2", "建立轴网")
@@ -91,7 +101,16 @@ def modeling_steps(raw: dict, params: QtoParams) -> Iterator[Event]:
         model.elements.append(build_column(col, lv.elevation, lv.height))
     if dwg.columns:
         yield _log("m4", f"柱高取层高 {lv.height:g}m (楼面至上层楼面)")
-    yield _done("m4", f"布置柱 {len(dwg.columns)} 根")
+    for scol in dwg.steel_columns:
+        e = build_steel_column(scol, lv.elevation)
+        model.elements.append(e)
+    if dwg.steel_columns:
+        tags = {}
+        for c in dwg.steel_columns:
+            tags[c.tag] = tags.get(c.tag, 0) + 1
+        yield _log("m4", "钢柱按 H 型钢截面放样(翼缘+腹板), 柱高取所在分区板顶标高")
+        yield _log("m4", "钢柱分类: " + ", ".join(f"{k}×{v}" for k, v in sorted(tags.items())))
+    yield _done("m4", f"布置柱 {len(dwg.columns) + len(dwg.steel_columns)} 根")
 
     # M5 梁
     yield _start("m5", "布置水平构件: 梁(净长算至柱侧面)")
@@ -105,7 +124,14 @@ def modeling_steps(raw: dict, params: QtoParams) -> Iterator[Event]:
             cut = sum(d["cut"] for d in e.params["deductions"])
             yield _log("m5", f"{e.eid}({beam.tag}): 原长 {e.params['gross_len']:g}m, "
                              f"扣柱侧 {cut:g}m, 净长 {e.params['net_len']:g}m")
-    yield _done("m5", f"布置梁 {len(dwg.beams)} 根, 其中 {n_trim} 根做了柱侧裁剪")
+    for sbeam in dwg.steel_beams:
+        model.elements.append(build_steel_beam(sbeam, lv.elevation))
+    if dwg.steel_beams:
+        n_inh = sum(1 for b in dwg.steel_beams if b.inherited)
+        yield _log("m5", f"钢梁按 H 型钢截面放样, 梁顶取所在分区板顶标高, 共 {len(dwg.steel_beams)} 段")
+        if n_inh:
+            yield _log("m5", f"⚠ 其中 {n_inh} 段编号由相邻平行梁继承, 已标记待复核")
+    yield _done("m5", f"布置梁 {len(dwg.beams) + len(dwg.steel_beams)} 根, 其中 {n_trim} 根做了柱侧裁剪")
 
     # M6 墙
     yield _start("m6", "布置墙体(净高 = 楼面至梁底/板底)")
@@ -183,6 +209,10 @@ def qto_steps(dwg: ParsedDrawing, model: BuildingModel,
         plan.append(("010503002", "矩形梁"))
     if model.by_category("slab"):
         plan.append(("010505003", "平板"))
+    if model.by_category("steel_column"):
+        plan.append(("010603001", "实腹钢柱(按吨)"))
+    if model.by_category("steel_beam"):
+        plan.append(("010604001", "钢梁(按吨)"))
     mats = {("砖" if "砖" in e.params["material"] else "砌块")
             for e in model.by_category("wall")}
     for m in sorted(mats):
@@ -204,8 +234,8 @@ def qto_steps(dwg: ParsedDrawing, model: BuildingModel,
     calcs = [
         ("q3", "混凝土构件: 柱、梁、板 逐项列式",
          [qto_mod.calc_columns, qto_mod.calc_beams, qto_mod.calc_slabs]),
-        ("q4", "砌体墙: 列式并做洞口/嵌入构件扣减",
-         [qto_mod.calc_walls]),
+        ("q4", "砌体墙与金属结构: 列式与吨位计算",
+         [qto_mod.calc_walls, qto_mod.calc_steel]),
         ("q5", "门窗与措施项目(模板)",
          [qto_mod.calc_doors_windows, qto_mod.calc_formwork]),
     ]
