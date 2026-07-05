@@ -63,6 +63,9 @@ export function Drawing2D({ drawing }: { drawing: RawDrawing }) {
       if (e.layer === "SCOL" && e.at && e.tag) {
         texts.push({ x: e.at[0] + 300, y: e.at[1] + 380, s: e.tag, cls: "tag" });
       }
+      if (e.layer === "RCOL" && e.at && e.tag) {
+        texts.push({ x: e.at[0] + 320, y: e.at[1] + 420, s: e.tag, cls: "opening" });
+      }
       if (e.layer === "SBEAM" && e.p1 && e.p2 && e.tag) {
         texts.push({
           x: (e.p1[0] + e.p2[0]) / 2, y: (e.p1[1] + e.p2[1]) / 2 + 160,
@@ -183,6 +186,21 @@ export function Drawing2D({ drawing }: { drawing: RawDrawing }) {
             />
           ) : null,
         )}
+        {/* 加固柱: 原柱黑框 + 加固层铜色描边 */}
+        {ents.map((e, i) => {
+          if (e.layer !== "RCOL" || !e.at) return null;
+          const b = (e as { b?: number }).b ?? 400;
+          const h = (e as { h?: number }).h ?? 400;
+          return (
+            <g key={"rc" + i}>
+              <rect x={e.at[0] - b / 2 - 100} y={e.at[1] - h / 2 - 100}
+                width={b + 200} height={h + 200}
+                fill="rgba(181,107,47,0.25)" stroke="#b56b2f" strokeWidth={40} />
+              <rect x={e.at[0] - b / 2} y={e.at[1] - h / 2} width={b} height={h}
+                fill="#101a22" />
+            </g>
+          );
+        })}
         {/* 钢柱(H 型钢符号: 按截面外轮廓画矩形) */}
         {ents.map((e, i) => {
           if (e.layer !== "SCOL" || !e.at) return null;

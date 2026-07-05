@@ -149,6 +149,32 @@ class Slab:
         return polygon_area(self.polygon)
 
 
+@dataclass
+class ReinforcedColumn:
+    """加固柱(增大截面法/外包钢法)。"""
+    eid: str
+    tag: str            # JKZ1
+    method: str         # 增大截面 | 外包钢
+    x: float
+    y: float
+    b: float            # 原柱截面, m
+    h: float
+    height: float       # 加固高度, m
+    db1: float = 0.0    # 增大截面: 四侧新增尺寸, m
+    db2: float = 0.0
+    dh1: float = 0.0
+    dh2: float = 0.0
+    hoop: str = ""
+    bars: str = ""
+    angle_n: int = 0    # 外包钢: 角钢数量/边宽/厚, mm
+    angle_b: float = 0.0
+    angle_t: float = 0.0
+    angle_spec: str = ""
+    kg_per_m_each: float = 0.0
+    assumed_delta: bool = False
+    level: str = "1F"
+
+
 # ---- 安装专业(给排水/暖通/电气) ----
 
 @dataclass
@@ -232,6 +258,7 @@ class ParsedDrawing:
     ducts: list[Duct] = field(default_factory=list)
     trays: list[Tray] = field(default_factory=list)
     devices: list[Device] = field(default_factory=list)
+    reinforced_columns: list[ReinforcedColumn] = field(default_factory=list)
 
     def level(self, name: str) -> Level:
         for lv in self.levels:
@@ -322,6 +349,7 @@ def parse_drawing(raw: dict, snap_tol_mm: float = 5.0) -> ParsedDrawing:
     ducts: list[Duct] = []
     trays: list[Tray] = []
     devices: list[Device] = []
+    reinforced_columns: list[ReinforcedColumn] = []
     pending_openings: list[tuple[Opening, tuple[float, float]]] = []
 
     counters: dict[str, int] = {}
@@ -387,6 +415,24 @@ def parse_drawing(raw: dict, snap_tol_mm: float = 5.0) -> ParsedDrawing:
                 section=ent.get("section", ""),
                 kg_per_m=float(ent.get("kg_per_m") or 0),
                 inherited=bool(ent.get("inherited")), level=level,
+            ))
+
+        elif layer == "RCOL":
+            x, y = pt(ent["at"])
+            reinforced_columns.append(ReinforcedColumn(
+                next_eid("JG"), tag=ent["tag"], method=ent.get("method", "未知"),
+                x=x, y=y,
+                b=ent.get("b", 400) * MM, h=ent.get("h", 400) * MM,
+                height=ent.get("height", 4000) * MM,
+                db1=ent.get("db1", 0) * MM, db2=ent.get("db2", 0) * MM,
+                dh1=ent.get("dh1", 0) * MM, dh2=ent.get("dh2", 0) * MM,
+                hoop=ent.get("hoop", ""), bars=str(ent.get("bars", "")),
+                angle_n=int(ent.get("angle_n", 0)),
+                angle_b=float(ent.get("angle_b", 0)),
+                angle_t=float(ent.get("angle_t", 0)),
+                angle_spec=ent.get("angle_spec", ""),
+                kg_per_m_each=float(ent.get("kg_per_m_each", 0)),
+                assumed_delta=bool(ent.get("assumed_delta")), level=level,
             ))
 
         elif layer == "PIPE":
@@ -462,6 +508,7 @@ def parse_drawing(raw: dict, snap_tol_mm: float = 5.0) -> ParsedDrawing:
         ducts=ducts,
         trays=trays,
         devices=devices,
+        reinforced_columns=reinforced_columns,
     )
 
 

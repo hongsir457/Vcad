@@ -97,6 +97,11 @@ RULES: dict[str, dict] = {
     "030412001": {"name": "普通灯具", "unit": "套", "rule": "按设计图示数量计算"},
     "030404034": {"name": "照明开关", "unit": "个", "rule": "按设计图示数量计算"},
     "030404035": {"name": "插座", "unit": "个", "rule": "按设计图示数量计算"},
+    # ---- 加固工程补充子目(GB50500 允许 xxB 补充编码) ----
+    "01B001": {"name": "柱增大截面加固(混凝土)", "unit": "m³",
+               "rule": "补充子目: 按新增截面面积乘以加固高度以体积计算; 新增钢筋、界面处理另列"},
+    "01B002": {"name": "柱外包型钢加固(角钢)", "unit": "t",
+               "rule": "补充子目: 按角钢理论质量乘以加固高度计算; 缀板、灌注胶未计入需另列"},
 }
 
 PIPE_MATERIAL_CODE = {"镀锌钢管": "031001001", "钢管": "031001001",
@@ -530,6 +535,69 @@ def calc_devices(model: BuildingModel, seq: _CodeSeq, params: QtoParams) -> list
             elements=[e.eid for e in els],
             discipline=DEVICE_DISCIPLINE[kind],
         ))
+    return items
+
+
+def calc_reinforcement(model: BuildingModel, seq: _CodeSeq,
+                       params: QtoParams) -> list[BoqItem]:
+    """柱加固: 增大截面混凝土(m³) + 外包角钢(t), 假设量显式标注。"""
+    items: list[BoqItem] = []
+    groups: dict[str, list[ModelElement]] = {}
+    for e in model.by_category("rcol"):
+        groups.setdefault(e.tag, []).append(e)
+
+    for tag, els in sorted(groups.items()):
+        p0 = els[0].params
+        n = len(els)
+        H = p0["height"]
+        if p0["method"] == "增大截面":
+            rule = RULES["01B001"]
+            dA = p0["delta_area"]
+            calc = [
+                _line("rule", f"计算规则: {rule['rule']}"),
+                _line("formula", "V = [ (b+Δb1+Δb2)(h+Δh1+Δh2) − b×h ] × 加固高度 × n"),
+                _line("subst",
+                      f"{tag}: [({_f(p0['b'])}+{_f(p0['db1'])}+{_f(p0['db2'])}) × "
+                      f"({_f(p0['h'])}+{_f(p0['dh1'])}+{_f(p0['dh2'])}) − "
+                      f"{_f(p0['b'])}×{_f(p0['h'])}] = {_f(dA, 4)} m²"),
+                _line("subst", f"V = {_f(dA, 4)} × {_f(H)} × {n} 根 = {_f(dA * H * n, 4)} m³"),
+                _line("deduct", f"加固高度按 {_f(H)}m 假设(图面未注明层高), 待人工复核"),
+            ]
+            if p0["assumed_delta"]:
+                calc.append(_line("deduct", "表中“按实际”尺寸按 100mm 假设计入, 待现场实测复核"))
+            qty = round_qty(dA * H * n, "m³")
+            calc.append(_line("sum", f"工程量取 {qty:.2f} m³"))
+            items.append(BoqItem(
+                code=seq.next("01B001"), name=rule["name"],
+                spec=[f"编号 {tag}", f"原柱 {int(p0['b'] * 1000)}×{int(p0['h'] * 1000)}",
+                      f"新增箍筋 {p0['hoop']}" if p0['hoop'] else "箍筋详表",
+                      "灌注 C35 微膨胀混凝土"],
+                unit="m³", qty=qty, calc=calc, elements=[e.eid for e in els],
+                extra={"根数": n}, discipline="结构",
+            ))
+        elif p0["method"] == "外包钢" and p0["kg_per_m_each"] > 0:
+            rule = RULES["01B002"]
+            kg = p0["angle_n"] * p0["kg_per_m_each"] * H * n
+            calc = [
+                _line("rule", f"计算规则: {rule['rule']}"),
+                _line("formula", "W = 角钢根数 × 米重 × 加固高度 × n"),
+                _line("rule",
+                      f"{tag}: {p0['angle_spec']}, 单根角钢 "
+                      f"g = t(2b−t)×7850 = {_f(p0['kg_per_m_each'])} kg/m"),
+                _line("subst",
+                      f"W = {p0['angle_n']} × {_f(p0['kg_per_m_each'])} × {_f(H)} × {n} 根 "
+                      f"= {_f(kg, 1)} kg"),
+                _line("deduct", f"加固高度按 {_f(H)}m 假设; 缀板未计入, 待人工复核"),
+            ]
+            qty = round_qty(kg / 1000, "t")
+            calc.append(_line("sum", f"工程量取 {qty:.3f} t"))
+            items.append(BoqItem(
+                code=seq.next("01B002"), name=rule["name"],
+                spec=[f"编号 {tag}", f"外包角钢 {p0['angle_spec']}",
+                      "Q235B, 结构胶灌注"],
+                unit="t", qty=qty, calc=calc, elements=[e.eid for e in els],
+                extra={"根数": n}, discipline="结构",
+            ))
     return items
 
 

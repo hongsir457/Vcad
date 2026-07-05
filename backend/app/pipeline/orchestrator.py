@@ -27,6 +27,7 @@ from ..core.geometry import (
     build_device,
     build_duct,
     build_pipe,
+    build_reinforced_column,
     build_slab,
     build_steel_beam,
     build_steel_column,
@@ -173,6 +174,22 @@ def modeling_steps(raw: dict, params: QtoParams) -> Iterator[Event]:
         yield _log("m8", f"{e.eid}: 板厚 {slab.thickness:g}m, 面积 {slab.area:.2f}m²")
     yield _done("m8", f"布置板 {len(dwg.slabs)} 块")
 
+    # M4b 加固柱
+    if dwg.reinforced_columns:
+        yield _start("m4b", "布置加固柱(增大截面/外包钢)")
+        by_method: dict[str, int] = {}
+        for rc in dwg.reinforced_columns:
+            model.elements.append(build_reinforced_column(rc, lv.elevation))
+            by_method[rc.method] = by_method.get(rc.method, 0) + 1
+        yield _log("m4b", "按方法分类: " +
+                   ", ".join(f"{k} {v} 根" for k, v in sorted(by_method.items())))
+        assumptions = (raw.get("meta", {}).get("recognition", {})
+                       .get("assumptions", []))
+        for a in assumptions:
+            yield _log("m4b", "⚠ 假设: " + a)
+            model.issues.append("假设: " + a)
+        yield _done("m4b", f"布置加固柱 {len(dwg.reinforced_columns)} 根")
+
     # M10 给排水
     if dwg.pipes or any(d.kind in ("valve", "fixture") for d in dwg.devices):
         yield _start("m10", "给排水: 敷设管道与器具(按系统/标高)")
@@ -222,12 +239,14 @@ def modeling_steps(raw: dict, params: QtoParams) -> Iterator[Event]:
     # M9 自检
     yield _start("m9", "模型自检(悬空/重叠/洞口越界)")
     issues = check_model(model, dwg)
-    model.issues = issues
+    model.issues.extend(issues)   # 保留建模阶段登记的假设项
     for it in issues:
         yield _log("m9", "⚠ " + it)
+    n_all_issues = len(model.issues)
     yield _done("m9",
-                "自检通过, 未发现问题" if not issues else f"发现 {len(issues)} 个问题, 已标记待复核",
-                payload={"issues": issues})
+                "自检通过, 未发现问题" if not n_all_issues
+                else f"发现 {n_all_issues} 个问题/假设, 已标记待复核",
+                payload={"issues": model.issues})
 
     yield _done("modeling", f"三维模型完成: {len(model.elements)} 个构件实体",
                 payload={"_dwg": dwg, "_model": model})
@@ -262,6 +281,10 @@ def qto_steps(dwg: ParsedDrawing, model: BuildingModel,
         plan.append(("010503002", "矩形梁"))
     if model.by_category("slab"):
         plan.append(("010505003", "平板"))
+    if any(e.params.get("method") == "增大截面" for e in model.by_category("rcol")):
+        plan.append(("01B001", "柱增大截面加固(补充子目)"))
+    if any(e.params.get("method") == "外包钢" for e in model.by_category("rcol")):
+        plan.append(("01B002", "柱外包型钢加固(补充子目)"))
     if model.by_category("steel_column"):
         plan.append(("010603001", "实腹钢柱(按吨)"))
     if model.by_category("steel_beam"):
@@ -295,8 +318,8 @@ def qto_steps(dwg: ParsedDrawing, model: BuildingModel,
     calcs = [
         ("q3", "混凝土构件: 柱、梁、板 逐项列式",
          [qto_mod.calc_columns, qto_mod.calc_beams, qto_mod.calc_slabs]),
-        ("q4", "砌体墙与金属结构: 列式与吨位计算",
-         [qto_mod.calc_walls, qto_mod.calc_steel]),
+        ("q4", "砌体墙、金属结构与加固: 列式与吨位计算",
+         [qto_mod.calc_walls, qto_mod.calc_steel, qto_mod.calc_reinforcement]),
         ("q5", "门窗与措施项目(模板)",
          [qto_mod.calc_doors_windows, qto_mod.calc_formwork]),
         ("q5b", "安装工程: 给排水/暖通/电气 逐项列式",

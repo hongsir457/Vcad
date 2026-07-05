@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .core import steel_recognizer
+from .core import reinforcement_recognizer, steel_recognizer
 from .core.drawing import delete_upload, list_samples, load_sample, save_upload
 from .core.qto import QtoParams
 from .eval import loop as eval_loop
@@ -89,16 +89,26 @@ async def api_upload(file: UploadFile) -> dict:
             raw = json.loads(data)
         except json.JSONDecodeError as e:
             raise HTTPException(422, f"JSON 解析失败: {e}") from e
-    elif suffix in (".dwg", ".dxf"):
-        entities = _dwg_to_entities(data, suffix)
-        try:
-            raw = steel_recognizer.recognize(entities, Path(name).stem)
-        except ValueError as e:
+    elif suffix in (".dwg", ".dxf", ".pdf"):
+        if suffix == ".pdf":
+            from .core.pdf_import import extract_pdf
+            entities = extract_pdf(data)   # 矢量 + 原生文本 + 分块 OCR, 可能耗时数分钟
+        else:
+            entities = _dwg_to_entities(data, suffix)
+        raw = None
+        errors: list[str] = []
+        for recog in (steel_recognizer.recognize, reinforcement_recognizer.recognize):
+            try:
+                raw = recog(entities, Path(name).stem)
+                break
+            except ValueError as e:
+                errors.append(str(e))
+        if raw is None:
+            diag = "; ".join(errors)
+            extra = "; ".join(entities.get("log", [])[:4])
             raise HTTPException(
-                422, f"识别失败: {e}。当前识别器支持“平面布置图+钢材型号表”类钢结构图纸, "
-                     f"混凝土图纸请使用 VCAD 实体流 JSON 格式") from e
-    elif suffix == ".pdf":
-        raise HTTPException(415, "暂不支持 PDF, 请上传 DWG/DXF 或 VCAD JSON")
+                422, f"识别失败: {diag}。已尝试识别器: 钢结构平面 / 柱加固平面。"
+                     f"提取诊断: {extra}") from None
     else:
         raise HTTPException(415, f"不支持的文件类型: {suffix}")
 

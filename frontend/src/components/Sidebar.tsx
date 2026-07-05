@@ -82,12 +82,12 @@ export function Sidebar(props: {
           disabled={uploading}
           onClick={() => fileRef.current?.click()}
         >
-          {uploading ? "解析中…" : "上传 DWG / DXF / JSON"}
+          {uploading ? "解析中…(PDF 含 OCR 需数分钟)" : "上传 DWG / DXF / PDF / JSON"}
         </button>
         <input
           ref={fileRef}
           type="file"
-          accept=".dwg,.dxf,.json"
+          accept=".dwg,.dxf,.pdf,.json"
           style={{ display: "none" }}
           onChange={(e) => {
             const f = e.target.files?.[0];

@@ -264,6 +264,65 @@ def build_slab(slab, elev: float, story_h: float) -> ModelElement:
 
 
 # ---------------------------------------------------------------------------
+# 加固柱建模: 原柱芯 + 增大截面外圈 / 外包角钢
+# ---------------------------------------------------------------------------
+
+def build_reinforced_column(rc, elev: float) -> ModelElement:
+    """加固柱: 原柱(灰) + 加固层(增大截面=四侧围套; 外包钢=四角角钢)。"""
+    H = rc.height
+    zm = elev + H / 2
+    e = ModelElement(
+        eid=rc.eid, category="rcol", tag=rc.tag, level=rc.level,
+        params={
+            "method": rc.method, "b": rc.b, "h": rc.h, "height": H,
+            "db1": rc.db1, "db2": rc.db2, "dh1": rc.dh1, "dh2": rc.dh2,
+            "hoop": rc.hoop, "bars": rc.bars,
+            "angle_n": rc.angle_n, "angle_b": rc.angle_b, "angle_t": rc.angle_t,
+            "angle_spec": rc.angle_spec, "kg_per_m_each": rc.kg_per_m_each,
+            "assumed_delta": rc.assumed_delta,
+            "delta_area": round((rc.b + rc.db1 + rc.db2) * (rc.h + rc.dh1 + rc.dh2)
+                                - rc.b * rc.h, 5),
+        },
+    )
+    # 原柱芯
+    e.primitives.append(box(rc.eid, "rcol_core", rc.x, rc.y, zm, rc.b, rc.h, H))
+
+    if rc.method == "增大截面":
+        B = rc.b + rc.db1 + rc.db2
+        cx = rc.x + (rc.db2 - rc.db1) / 2  # 两侧增量不等时外圈中心偏移
+        cy = rc.y + (rc.dh2 - rc.dh1) / 2
+        if rc.db1 > EPS:
+            e.primitives.append(box(rc.eid, "rcol_jacket",
+                                    rc.x - rc.b / 2 - rc.db1 / 2, rc.y, zm,
+                                    rc.db1, rc.h, H))
+        if rc.db2 > EPS:
+            e.primitives.append(box(rc.eid, "rcol_jacket",
+                                    rc.x + rc.b / 2 + rc.db2 / 2, rc.y, zm,
+                                    rc.db2, rc.h, H))
+        if rc.dh1 > EPS:
+            e.primitives.append(box(rc.eid, "rcol_jacket",
+                                    cx, rc.y - rc.h / 2 - rc.dh1 / 2, zm, B, rc.dh1, H))
+        if rc.dh2 > EPS:
+            e.primitives.append(box(rc.eid, "rcol_jacket",
+                                    cx, rc.y + rc.h / 2 + rc.dh2 / 2, zm, B, rc.dh2, H))
+    elif rc.method == "外包钢" and rc.angle_b > 0:
+        bb = rc.angle_b * 0.001
+        tt = max(rc.angle_t * 0.001, 0.008)
+        for sx in (-1, 1):
+            for sy in (-1, 1):
+                cx = rc.x + sx * rc.b / 2
+                cy = rc.y + sy * rc.h / 2
+                # 每角两块肢板(L 形)
+                e.primitives.append(box(rc.eid, "rcol_steel",
+                                        cx - sx * bb / 2, cy + sy * tt / 2,
+                                        zm, bb, tt, H))
+                e.primitives.append(box(rc.eid, "rcol_steel",
+                                        cx + sx * tt / 2, cy - sy * bb / 2,
+                                        zm, tt, bb, H))
+    return e
+
+
+# ---------------------------------------------------------------------------
 # 安装专业建模: 管道(圆柱) / 风管、桥架(矩形) / 点式器具
 # ---------------------------------------------------------------------------
 

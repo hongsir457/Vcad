@@ -22,6 +22,9 @@ const CATEGORY_STYLE: Record<string, { color: number; opacity?: number }> = {
   device_luminaire: { color: 0xf2e9c9 },
   device_switch: { color: 0xc2891d },
   device_socket: { color: 0xc2891d },
+  rcol_core: { color: 0x8fa3b0 },
+  rcol_jacket: { color: 0xb56b2f, opacity: 0.85 },
+  rcol_steel: { color: 0x35597a },
 };
 
 /** 排水管道用棕色区分 */
@@ -73,14 +76,25 @@ export function Viewer3D({ model }: { model: BuildingModel }) {
 
     const edgeMat = new THREE.LineBasicMaterial({ color: 0x0f1820 });
 
+    const matCache = new Map<string, THREE.MeshLambertMaterial>();
+    const matFor = (cat: string) => {
+      let m = matCache.get(cat);
+      if (!m) {
+        const style = CATEGORY_STYLE[cat] ?? { color: 0x999999 };
+        m = new THREE.MeshLambertMaterial({
+          color: style.color,
+          transparent: style.opacity !== undefined,
+          opacity: style.opacity ?? 1,
+        });
+        matCache.set(cat, m);
+      }
+      return m;
+    };
+
     for (const el of model.elements) {
-      const style = CATEGORY_STYLE[el.category] ?? { color: 0x999999 };
-      const mat = new THREE.MeshLambertMaterial({
-        color: style.color,
-        transparent: style.opacity !== undefined,
-        opacity: style.opacity ?? 1,
-      });
       for (const p of el.primitives) {
+        // 图元可携带比构件更细的类别(如加固柱的芯/围套/角钢)
+        const mat = matFor(p.category ?? el.category);
         let mesh: THREE.Mesh;
         if (p.kind === "cylinder" && p.p1 && p.p2 && p.r) {
           const a = new THREE.Vector3(...p.p1);
