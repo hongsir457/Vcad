@@ -44,19 +44,28 @@
 ## 快速开始
 
 ```bash
-# 后端 (Python 3.11+)
+# 1. 后端 (Python 3.11+; PDF 的 OCR 依赖已包含, 模型离线内置无需联网下载)
 cd backend
 pip install -r requirements.txt
-uvicorn app.main:app --port 8000
 
-# 前端 (Node 20+, pnpm)
-cd frontend
+# 2. DWG/DXF 转换工具依赖 (Node 20+; 只上传 PDF/JSON 可跳过)
+cd tools && npm install && cd ..
+
+# 3. 前端 (pnpm 或 npm 均可)
+cd ../frontend
 pnpm install
 pnpm build        # 构建后由后端 8000 端口直接托管
 # 或开发模式: pnpm dev  (5173 端口, /api 代理到 8000)
+
+# 4. 启动
+cd ../backend
+uvicorn app.main:app --port 8000
 ```
 
 打开 `http://localhost:8000`, 选择图纸, 点击「对当前图纸自动建模并计算工程量」。
+
+平台说明: Windows / macOS / Linux 均可运行(纯 pip/npm 依赖, 无需编译,
+DWG 解析用 WASM 版 LibreDWG, 不依赖系统 CAD 库); PDF 上传含 OCR 约需 2~3 分钟。
 
 ## 命令行
 
