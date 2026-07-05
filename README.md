@@ -67,6 +67,23 @@ uvicorn app.main:app --port 8000
 平台说明: Windows / macOS / Linux 均可运行(纯 pip/npm 依赖, 无需编译,
 DWG 解析用 WASM 版 LibreDWG, 不依赖系统 CAD 库); PDF 上传含 OCR 约需 2~3 分钟。
 
+### Windows (PowerShell) 注意事项
+
+Windows PowerShell 5.x 不支持 `&&` 连接符, 请逐行执行或改用分号:
+
+```powershell
+cd Vcad\backend
+pip install -r requirements.txt
+cd tools; npm install; cd ..
+cd ..\frontend
+npm install          # 未安装 pnpm 时用 npm 等效
+npm run build
+cd ..\backend
+python -m uvicorn app.main:app --port 8000   # 用 python -m 避免 PATH 问题
+```
+
+若 `python`/`pip` 不可用, 换用 `py -m pip` / `py -m uvicorn`。
+
 ## 命令行
 
 ```bash
