@@ -12,12 +12,16 @@ import tempfile
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from pydantic import BaseModel
+
+from .core import auth as auth_mod
 from .core import reinforcement_recognizer, steel_recognizer
+from .core.auth import AuthError, BalanceError
 from .core.drawing import delete_upload, list_samples, load_sample, save_upload
 from .core.qto import QtoParams
 from .eval import loop as eval_loop
@@ -34,8 +38,126 @@ app.add_middleware(
 STEP_DELAY_S = 0.08  # 步骤间的最小间隔, 让前端步骤流有可读的节奏
 
 
+@app.exception_handler(Exception)
+async def _unhandled(request, exc):  # noqa: ANN001 — FastAPI 约定签名
+    """兜底: 任何未捕获异常都返回可读 JSON 并在服务端打印堆栈。"""
+    import traceback
+    traceback.print_exc()
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"服务端错误: {type(exc).__name__}: {exc}. "
+                           f"完整堆栈见后端终端输出"})
+
+
 def current_params() -> QtoParams:
     return eval_loop.load_params()
+
+
+# ---------------------------------------------------------------------------
+# 账号 / 计费
+# ---------------------------------------------------------------------------
+
+def _require_user(request: Request) -> str:
+    """从 Authorization: Bearer 头或 ?token= 查询参数取用户(GET/SSE 用查询参数)。"""
+    token = ""
+    authz = request.headers.get("authorization", "")
+    if authz.lower().startswith("bearer "):
+        token = authz[7:]
+    if not token:
+        token = request.query_params.get("token", "")
+    if not token:
+        raise HTTPException(401, "请先登录")
+    try:
+        return auth_mod.verify_token(token)
+    except AuthError as e:
+        raise HTTPException(401, str(e)) from e
+
+
+def _charge_or_402(username: str, amount: float, note: str) -> None:
+    try:
+        auth_mod.charge(username, amount, note)
+    except BalanceError as e:
+        raise HTTPException(402, str(e)) from e
+
+
+class Credentials(BaseModel):
+    username: str
+    password: str
+    nickname: str = ""
+
+
+class RechargeReq(BaseModel):
+    amount: float
+
+
+class ProfileReq(BaseModel):
+    nickname: str | None = None
+    region: str | None = None
+
+
+class PasswordReq(BaseModel):
+    old: str
+    new: str
+
+
+@app.post("/api/auth/register")
+def api_register(body: Credentials) -> dict:
+    try:
+        token = auth_mod.register(body.username, body.password, body.nickname)
+    except AuthError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"token": token, "user": auth_mod.get_user(body.username.strip()).to_dict()}
+
+
+@app.post("/api/auth/login")
+def api_login(body: Credentials) -> dict:
+    try:
+        token = auth_mod.login(body.username, body.password)
+    except AuthError as e:
+        raise HTTPException(401, str(e)) from e
+    return {"token": token, "user": auth_mod.get_user(body.username.strip()).to_dict()}
+
+
+@app.get("/api/auth/me")
+def api_me(request: Request) -> dict:
+    return auth_mod.get_user(_require_user(request)).to_dict()
+
+
+@app.post("/api/account/recharge")
+def api_recharge(body: RechargeReq, request: Request) -> dict:
+    user = _require_user(request)
+    try:
+        balance = auth_mod.recharge(user, body.amount)
+    except AuthError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"balance": round(balance, 2), "note": "模拟支付已到账(本地演示版)"}
+
+
+@app.get("/api/account/transactions")
+def api_transactions(request: Request) -> list[dict]:
+    return auth_mod.transactions(_require_user(request))
+
+
+@app.post("/api/account/profile")
+def api_profile(body: ProfileReq, request: Request) -> dict:
+    user = _require_user(request)
+    return auth_mod.update_profile(user, body.nickname, body.region).to_dict()
+
+
+@app.post("/api/account/password")
+def api_password(body: PasswordReq, request: Request) -> dict:
+    user = _require_user(request)
+    try:
+        auth_mod.change_password(user, body.old, body.new)
+    except AuthError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"ok": True}
+
+
+@app.get("/api/pricing")
+def api_pricing() -> dict:
+    return auth_mod.PRICING
 
 
 # ---------------------------------------------------------------------------
@@ -56,30 +178,50 @@ def api_drawing(drawing_id: str) -> dict:
 
 
 DWG_TOOL = Path(__file__).resolve().parents[1] / "tools" / "dwg2json.mjs"
+TOOLS_DIR = DWG_TOOL.parent
 MAX_UPLOAD_BYTES = 80 * 1024 * 1024
 
 
 def _dwg_to_entities(data: bytes, suffix: str) -> dict:
     """DWG/DXF -> 通用实体 JSON (Node + WASM LibreDWG)。"""
+    import shutil
+
+    node = shutil.which("node")
+    if node is None:
+        raise HTTPException(
+            422, "未找到 node 命令: DWG/DXF 解析需要 Node 20+, "
+                 "请安装 Node 并确保 node 在 PATH 中(安装后需重启终端)")
+    if not (TOOLS_DIR / "node_modules" / "@mlightcad").exists():
+        raise HTTPException(
+            422, f"DWG 转换工具依赖未安装: 请在 {TOOLS_DIR} 目录执行 npm install")
     with tempfile.TemporaryDirectory() as td:
         src = Path(td) / f"input{suffix}"
         dst = Path(td) / "entities.json"
         src.write_bytes(data)
-        proc = subprocess.run(
-            ["node", str(DWG_TOOL), str(src), str(dst)],
-            capture_output=True, text=True, timeout=180)
+        try:
+            proc = subprocess.run(
+                [node, str(DWG_TOOL), str(src), str(dst)],
+                capture_output=True, text=True, timeout=180,
+                cwd=str(TOOLS_DIR), encoding="utf-8", errors="replace")
+        except subprocess.TimeoutExpired as e:
+            raise HTTPException(422, "DWG 解析超时(180s), 图纸可能过大") from e
         if proc.returncode != 0 or not dst.exists():
-            raise HTTPException(422, f"图纸解析失败: {proc.stderr[-400:]}")
+            raise HTTPException(422, f"图纸解析失败: {(proc.stderr or '')[-400:]}")
         return json.loads(dst.read_text(encoding="utf-8"))
 
 
 @app.post("/api/drawings/upload")
-async def api_upload(file: UploadFile) -> dict:
+async def api_upload(file: UploadFile, request: Request) -> dict:
+    user = _require_user(request)
     name = file.filename or "drawing"
     suffix = Path(name).suffix.lower()
     data = await file.read()
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, "文件超过 80MB 限制")
+    price = {".dwg": auth_mod.PRICING["upload_dwg"], ".dxf": auth_mod.PRICING["upload_dwg"],
+             ".pdf": auth_mod.PRICING["upload_pdf"]}.get(suffix, 0.0)
+    if price > 0:
+        _charge_or_402(user, price, f"上传解析 {suffix} 图纸")
 
     stem = re.sub(r"[^\w一-鿿]+", "_", Path(name).stem).strip("_")[:48] or "drawing"
     drawing_id = f"up_{stem}_{hashlib.md5(data).hexdigest()[:6]}"
@@ -91,8 +233,17 @@ async def api_upload(file: UploadFile) -> dict:
             raise HTTPException(422, f"JSON 解析失败: {e}") from e
     elif suffix in (".dwg", ".dxf", ".pdf"):
         if suffix == ".pdf":
-            from .core.pdf_import import extract_pdf
-            entities = extract_pdf(data)   # 矢量 + 原生文本 + 分块 OCR, 可能耗时数分钟
+            try:
+                from .core.pdf_import import extract_pdf
+            except ImportError as e:
+                raise HTTPException(
+                    422, f"PDF 解析依赖缺失({e}): 请执行 "
+                         f"pip install pymupdf rapidocr-onnxruntime onnxruntime") from e
+            try:
+                entities = extract_pdf(data)  # 矢量+原生文本+分块 OCR, 可能耗时数分钟
+            except Exception as e:  # noqa: BLE001 — OCR/解析环境问题需给出可读诊断
+                raise HTTPException(
+                    422, f"PDF 提取失败: {type(e).__name__}: {e}") from e
         else:
             entities = _dwg_to_entities(data, suffix)
         raw = None
@@ -103,6 +254,8 @@ async def api_upload(file: UploadFile) -> dict:
                 break
             except ValueError as e:
                 errors.append(str(e))
+            except Exception as e:  # noqa: BLE001 — 识别器内部错误也转成诊断
+                errors.append(f"{type(e).__name__}: {e}")
         if raw is None:
             diag = "; ".join(errors)
             extra = "; ".join(entities.get("log", [])[:4])
@@ -124,7 +277,8 @@ async def api_upload(file: UploadFile) -> dict:
 
 
 @app.delete("/api/drawings/{drawing_id}")
-def api_delete_drawing(drawing_id: str) -> dict:
+def api_delete_drawing(drawing_id: str, request: Request) -> dict:
+    _require_user(request)
     if not drawing_id.startswith("up_"):
         raise HTTPException(403, "内置样例不可删除")
     if not delete_upload(drawing_id):
@@ -137,11 +291,13 @@ def api_delete_drawing(drawing_id: str) -> dict:
 # ---------------------------------------------------------------------------
 
 @app.get("/api/run/{drawing_id}/stream")
-def api_run_stream(drawing_id: str) -> StreamingResponse:
+def api_run_stream(drawing_id: str, request: Request) -> StreamingResponse:
+    user = _require_user(request)
     try:
         raw = load_sample(drawing_id)
     except FileNotFoundError as e:
         raise HTTPException(404, str(e)) from e
+    _charge_or_402(user, auth_mod.PRICING["run_pipeline"], f"建模算量: {drawing_id}")
     params = current_params()
 
     def gen():
@@ -170,7 +326,8 @@ def api_run_result(drawing_id: str) -> dict:
 
 
 @app.get("/api/run/{drawing_id}/boq.csv")
-def api_boq_csv(drawing_id: str) -> Response:
+def api_boq_csv(drawing_id: str, request: Request) -> Response:
+    _require_user(request)
     try:
         raw = load_sample(drawing_id)
     except FileNotFoundError as e:

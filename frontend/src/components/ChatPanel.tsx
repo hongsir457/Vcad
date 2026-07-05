@@ -60,6 +60,7 @@ export function ChatPanel(props: {
   messages: ChatMessage[];
   busy: boolean;
   disabled: boolean;
+  expand?: boolean;
   onSend: (text: string) => void;
 }) {
   const [input, setInput] = useState("");
@@ -83,7 +84,7 @@ export function ChatPanel(props: {
   ];
 
   return (
-    <section className="col-chat">
+    <section className={"col-chat" + (props.expand ? " expand" : "")}>
       <div className="chat-scroll" ref={scrollRef}>
         {props.messages.map((m, i) => (
           <Message key={i} msg={m} />

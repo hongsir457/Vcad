@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, streamRun } from "./api";
+import { api, ApiError, streamRun, tokenStore, type UserInfo } from "./api";
+import { AccountModal, type AccountTab } from "./components/AccountModal";
 import { ChatPanel } from "./components/ChatPanel";
 import { Sidebar } from "./components/Sidebar";
 import { Workspace, type WorkTab } from "./components/Workspace";
@@ -19,6 +20,13 @@ export default function App() {
   const [rawDrawing, setRawDrawing] = useState<RawDrawing | null>(null);
   const [params, setParams] = useState<Record<string, unknown>>({});
 
+  const [user, setUser] = useState<UserInfo | null>(null);
+  const [accountTab, setAccountTab] = useState<AccountTab | null>(null);
+  const [accountNotice, setAccountNotice] = useState("");
+
+  const [leftOpen, setLeftOpen] = useState(true);
+  const [rightOpen, setRightOpen] = useState(true);
+
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "agent",
@@ -26,7 +34,8 @@ export default function App() {
         "你好, 我是 VCAD 建模算量助手。\n" +
         "在左侧选择一张二维图纸, 然后让我「自动建模并计算工程量」——\n" +
         "我会像人工建模一样逐步建立三维模型, 再像手算一样逐项列式计算, " +
-        "最终输出符合 GB50500 清单体系的工程量清单。",
+        "最终输出符合 GB50500 清单体系的工程量清单。\n" +
+        "(运行与上传需要登录, 注册即送 ¥50 体验金)",
       done: true,
     },
   ]);
@@ -40,6 +49,36 @@ export default function App() {
 
   const [tab, setTab] = useState<WorkTab>("2d");
   const cancelRef = useRef<(() => void) | null>(null);
+  const gotEventRef = useRef(false);
+
+  const openAccount = useCallback((t: AccountTab, notice = "") => {
+    setAccountNotice(notice);
+    setAccountTab(t);
+  }, []);
+
+  /** 401/402 统一入口: 未登录弹登录, 余额不足弹充值。 */
+  const handleAuthError = useCallback(
+    (e: unknown): boolean => {
+      if (e instanceof ApiError && e.status === 401) {
+        openAccount("login", "请先登录后再操作");
+        return true;
+      }
+      if (e instanceof ApiError && e.status === 402) {
+        openAccount("recharge", e.message);
+        return true;
+      }
+      return false;
+    },
+    [openAccount],
+  );
+
+  const refreshUser = useCallback(() => {
+    if (!tokenStore.get()) return;
+    api.me().then(setUser).catch(() => {
+      tokenStore.clear();
+      setUser(null);
+    });
+  }, []);
 
   const refreshDrawings = useCallback((selectId?: string) => {
     api.drawings().then((list) => {
@@ -59,6 +98,8 @@ export default function App() {
     });
     api.params().then(setParams).catch(() => {});
     api.evalHistory().then(setEvalHistory).catch(() => {});
+    refreshUser();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -70,6 +111,7 @@ export default function App() {
 
   /** 把 SSE 事件折叠进当前 agent 消息的阶段/步骤树。 */
   const applyEvent = useCallback((ev: PipelineEvent) => {
+    gotEventRef.current = true;
     if (ev.type === "result") {
       setResult(ev.payload as unknown as RunResult);
       setTab("3d");
@@ -113,8 +155,13 @@ export default function App() {
   const runPipeline = useCallback(
     (userText: string) => {
       if (running || !selectedId) return;
+      if (!user) {
+        openAccount("login", "运行建模算量需要登录(注册即送 ¥50)");
+        return;
+      }
       setRunning(true);
       setResult(null);
+      gotEventRef.current = false;
       setMessages((prev) => [
         ...prev,
         { role: "user", text: userText },
@@ -122,14 +169,20 @@ export default function App() {
       ]);
       cancelRef.current = streamRun(selectedId, applyEvent, () => {
         setRunning(false);
+        refreshUser();
         setMessages((prev) => {
           const msgs = [...prev];
-          msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], done: true };
+          const last = { ...msgs[msgs.length - 1], done: true };
+          if (!gotEventRef.current && !last.error) {
+            last.error =
+              "运行未启动: 请确认已登录且余额充足(建模算量 ¥1/次), 右上角可登录/充值";
+          }
+          msgs[msgs.length - 1] = last;
           return msgs;
         });
       });
     },
-    [running, selectedId, applyEvent],
+    [running, selectedId, user, applyEvent, refreshUser, openAccount],
   );
 
   const runEval = useCallback(async (userText: string) => {
@@ -243,38 +296,80 @@ export default function App() {
           </span>
         )}
         <span className="chip">{busy ? "运行中…" : "就绪"}</span>
+        {user ? (
+          <button className="chip user-chip" onClick={() => openAccount("profile")}>
+            {user.nickname || user.username} · ¥{user.balance.toFixed(2)}
+          </button>
+        ) : (
+          <button className="chip user-chip" onClick={() => openAccount("login")}>
+            登录 / 注册
+          </button>
+        )}
       </header>
 
       <div className="columns">
-        <Sidebar
-          drawings={drawings}
-          selectedId={selectedId}
-          onSelect={(id) => !busy && setSelectedId(id)}
-          onChanged={refreshDrawings}
-          params={params}
-        />
+        {leftOpen && (
+          <Sidebar
+            drawings={drawings}
+            selectedId={selectedId}
+            onSelect={(id) => !busy && setSelectedId(id)}
+            onChanged={refreshDrawings}
+            onAuthError={handleAuthError}
+            onBalanceChanged={refreshUser}
+            params={params}
+          />
+        )}
+        <div
+          className="col-toggle"
+          title={leftOpen ? "折叠图纸栏" : "展开图纸栏"}
+          onClick={() => setLeftOpen(!leftOpen)}
+        >
+          {leftOpen ? "‹" : "›"}
+        </div>
+
         <ChatPanel
           messages={messages}
           busy={busy}
           disabled={!selectedId}
+          expand={!rightOpen}
           onSend={handleSend}
         />
-        <Workspace
-          tab={tab}
-          onTab={setTab}
-          rawDrawing={rawDrawing}
-          result={result}
-          drawingId={selectedId}
-          evalReport={evalReport}
-          evalHistory={evalHistory}
-          loopLogs={loopLogs}
-          evalBusy={evalBusy}
-          onRunEval={() => runEval("运行基准评测")}
-          onRunLoop={(fs) =>
-            runLoop(fs, fs ? "从朴素基线自动生长" : "自动迭代调参")
-          }
-        />
+
+        <div
+          className="col-toggle"
+          title={rightOpen ? "折叠工作区" : "展开工作区"}
+          onClick={() => setRightOpen(!rightOpen)}
+        >
+          {rightOpen ? "›" : "‹"}
+        </div>
+        {rightOpen && (
+          <Workspace
+            tab={tab}
+            onTab={setTab}
+            rawDrawing={rawDrawing}
+            result={result}
+            drawingId={selectedId}
+            evalReport={evalReport}
+            evalHistory={evalHistory}
+            loopLogs={loopLogs}
+            evalBusy={evalBusy}
+            onRunEval={() => runEval("运行基准评测")}
+            onRunLoop={(fs) =>
+              runLoop(fs, fs ? "从朴素基线自动生长" : "自动迭代调参")
+            }
+          />
+        )}
       </div>
+
+      {accountTab && (
+        <AccountModal
+          tab={user ? (accountTab === "login" ? "profile" : accountTab) : "login"}
+          user={user}
+          notice={accountNotice}
+          onClose={() => setAccountTab(null)}
+          onUser={setUser}
+        />
+      )}
     </div>
   );
 }

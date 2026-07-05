@@ -14,6 +14,8 @@ export function Sidebar(props: {
   selectedId: string;
   onSelect: (id: string) => void;
   onChanged: (selectId?: string) => void;
+  onAuthError: (e: unknown) => boolean;
+  onBalanceChanged: () => void;
   params: Record<string, unknown>;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -26,8 +28,11 @@ export function Sidebar(props: {
     try {
       const res = await api.upload(file);
       props.onChanged(res.id);
+      props.onBalanceChanged();
     } catch (e) {
-      setError(String(e).slice(0, 300));
+      if (!props.onAuthError(e)) {
+        setError(e instanceof Error ? e.message.slice(0, 300) : String(e));
+      }
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -39,7 +44,9 @@ export function Sidebar(props: {
       await api.deleteDrawing(id);
       props.onChanged();
     } catch (e) {
-      setError(String(e).slice(0, 200));
+      if (!props.onAuthError(e)) {
+        setError(e instanceof Error ? e.message.slice(0, 200) : String(e));
+      }
     }
   };
 

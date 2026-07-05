@@ -20,3 +20,6 @@ frontend/tsconfig.tsbuildinfo
 # 上传图纸(运行时产物)
 backend/app/data/uploads/
 backend/tools/node_modules/
+
+# 运行时数据(账号数据库/密钥)
+backend/app/data/runtime/
